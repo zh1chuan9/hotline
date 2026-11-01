@@ -337,6 +337,8 @@
   };
   // 暂停按钮（左上角，菜单态也显示）
   const TOUCH_PAUSE = { x: 30, y: 30, r: 20 };
+  // 跳过按钮（整备倒计时期间显示，屏幕中下方）
+  const TOUCH_SKIP = { x: VIEW_W / 2, y: VIEW_H / 2 + 96, w: 96, h: 34 };
 
   /** 判断一个触控点落在哪个控件：'move' | 'aim' | 'fire' | 'btn:r' | 'btn:q' ... | 'pause' | null */
   function classifyTouch(x, y) {
@@ -352,6 +354,11 @@
       if (near(b, L.btnR * 1.2)) return 'btn:' + b.key;
     }
     if (near(TOUCH_PAUSE, TOUCH_PAUSE.r * 1.4)) return 'pause';
+    // 跳过按钮（矩形判定，仅整备倒计时期间有效）
+    if (G && G.state === 'play' && W && W.cleared && G.intermission > 0) {
+      const s = TOUCH_SKIP;
+      if (x >= s.x - s.w / 2 && x <= s.x + s.w / 2 && y >= s.y - s.h / 2 && y <= s.y + s.h / 2) return 'skip';
+    }
     return null;
   }
 
@@ -517,6 +524,8 @@
     } else if (ctl === 'pause') {
       // 暂停按钮：切换暂停（和 ESC 同效果）
       onVirtualKey('escape');
+    } else if (ctl === 'skip') {
+      skipIntermission();
     } else if (ctl && ctl.startsWith('btn:')) {
       const key = ctl.slice(4);
       touchPressed[key] = true;
@@ -3895,6 +3904,19 @@
     ctx.fillRect(pp.x - 4, pp.y - 7, 3, 14);
     ctx.fillRect(pp.x + 1, pp.y - 7, 3, 14);
 
+    // ---- 跳过按钮（整备倒计时期间显示）----
+    if (G.state === 'play' && W.cleared && G.intermission > 0) {
+      const s = TOUCH_SKIP;
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#ffd76e';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, 8); ctx.fill(); }
+      else ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#2a2010';
+      ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+      ctx.fillText('跳过', s.x, s.y + 1);
+    }
+
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -4004,13 +4026,15 @@
       ctx.fillText(txt, VIEW_W / 2 + 1, VIEW_H / 2 + 61);
       ctx.fillStyle = '#ffd76e';
       ctx.fillText(txt, VIEW_W / 2, VIEW_H / 2 + 60);
-      // 提示按空格跳过等待
-      ctx.font = '10px "Microsoft YaHei", monospace';
-      const hint = '按 SPACE 跳过';
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillText(hint, VIEW_W / 2 + 1, VIEW_H / 2 + 78);
-      ctx.fillStyle = '#cfd6e6';
-      ctx.fillText(hint, VIEW_W / 2, VIEW_H / 2 + 77);
+      // 提示按空格跳过等待（触控模式有独立"跳过"按钮，不显示键盘提示）
+      if (inputMode !== 'touch') {
+        ctx.font = '10px "Microsoft YaHei", monospace';
+        const hint = '按 SPACE 跳过';
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(hint, VIEW_W / 2 + 1, VIEW_H / 2 + 78);
+        ctx.fillStyle = '#cfd6e6';
+        ctx.fillText(hint, VIEW_W / 2, VIEW_H / 2 + 77);
+      }
     }
 
     ctx.restore();
@@ -5019,6 +5043,14 @@
     }
   }
 
+  /** 立即跳过整备倒计时，进入下一波（键盘空格/回车 与 触控跳过按钮共用）。 */
+  function skipIntermission() {
+    if (!(G.state === 'play' && W.cleared && G.intermission > 0)) return;
+    G.intermission = 0;
+    if (G.doubleScore > 0) G.doubleScore--;
+    startWave();
+  }
+
   function handleGlobalKeys(advanced) {
     if (advanced === undefined) advanced = true;
     if (pressed['escape']) {
@@ -5094,9 +5126,7 @@
     // 整备期间：空格/回车跳过，立即进下一波
     if (G.state === 'play' && W.cleared && G.intermission > 0 &&
         (pressed[' '] || pressed['enter'])) {
-      G.intermission = 0;
-      if (G.doubleScore > 0) G.doubleScore--;
-      startWave();
+      skipIntermission();
     }
     // E 键：走近补给点开商店，走近升级站开升级界面（第 5 波后解锁）。
     // 都没靠近时，E 交给拾取武器逻辑（updatePlayer 里已用 interactTarget 区分）。
@@ -5357,6 +5387,7 @@
     get inputMode() { return inputMode; },
     classifyTouch,
     applyTouchInput,
+    skipIntermission,
     refillArmor,
     openUpgrade,
     closeUpgrade,

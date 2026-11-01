@@ -889,6 +889,18 @@
     check('左上角暂停键命中', H.classifyTouch(30, 30) === 'pause');
     check('空白处不命中任何控件', H.classifyTouch(320, 180) === null);
 
+    // 整备倒计时期间的"跳过"按钮：命中归类为 skip，非整备期不归类
+    w29.cleared = true; g29.intermission = 5;   // 模拟波次清空后的整备期
+    check('整备期命中跳过按钮', H.classifyTouch(320, 180 + 96) === 'skip');
+    check('整备期跳过按钮外不命中', H.classifyTouch(320, 180) === null);
+    // 触控点按跳过按钮 → 立即进下一波（intermission 归零）
+    const waveBefore = g29.wave;
+    H.skipIntermission();
+    check('点跳过立即进下一波（intermission=' + g29.intermission + '）', g29.intermission === 0 && g29.wave === waveBefore + 1);
+    // 非整备期：skip 不再命中
+    w29.cleared = false; g29.intermission = 0;
+    check('非整备期不再命中跳过按钮', H.classifyTouch(320, 180 + 96) === null);
+
     // 切回电脑，触控残留应被清掉
     H.setInputMode('pc');
     check('切回电脑键鼠（inputMode=' + H.inputMode + '）', H.inputMode === 'pc');
