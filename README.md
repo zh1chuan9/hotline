@@ -1,68 +1,37 @@
 # HOTLINE 2.5D — 俯视角一击必杀框架
 
-一个《迈阿密热线》式的俯视角动作游戏基础框架（Godot 4.6 / GDScript）。
+一个《迈阿密热线》式的俯视角动作游戏（HTML5 / Canvas 2D，纯浏览器运行）。
 不做剧情、不做美术风格，只把**手感与循环**搭好：一击必杀、武器即资源、声音即情报、死亡即重来。
+
+> 早期有一个 Godot 4.6 实现，已于 2026-11-01 废弃，本仓库只保留 H5 版。
 
 ---
 
 ## 运行
 
-引擎已经装在本机：`D:\Tools\Godot4.6.2\Godot_v4.6.2-stable_win64.exe`（4.6.2 标准版，免安装）。
+**双击 `web/index.html` 就能玩**，零依赖、零构建、不用装任何引擎。
 
-**最快方式**：双击项目根目录的 `launch.bat`
+线上版：`https://zh1chuan9.github.io/hotline/`（GitHub Pages）。
 
-| 命令 | 效果 |
+| 方式 | 说明 |
 |---|---|
-| `launch.bat` | 打开编辑器（改代码 / 改关卡） |
-| `launch.bat play` | 跳过编辑器直接跑游戏 |
+| 本地 | 双击 `web/index.html`，或用任意静态服务器托管 `web/` 目录 |
+| 线上 | 推送到 `main` 分支后，GitHub Actions 自动部署 `web/` 到 Pages |
 
-手动方式：
+### 回归测试
 
-1. 打开 Godot，导入 `project.godot`
-2. F5 运行
-
-首次打开时 Godot 会自动导入 `assets/sprites/*.png`（生成 `.import`），等导入完成再运行。
-
-美术资源全部由 `tools/gen_assets.py` 用程序生成（纯标准库，不需要 Pillow），想重画就改脚本重跑：
+改完核心逻辑想确认没崩，跑一遍冒烟测试（无头 Edge 即可，不用开浏览器）：
 
 ```bash
-python tools/gen_assets.py
+# 无头 Edge 直接跑测试页，看结果是否「全部通过」
+"/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" --headless=new \
+  --disable-gpu --virtual-time-budget=8000 --dump-dom \
+  "file:///D:/Games/2.5d/web/test.html" | grep RESULT
 ```
 
-![游戏画面](docs/screenshot.png)
+测试覆盖：开局发枪、备弹换弹、击杀计分、商店、副武器槽、快手技能、散弹枪逐发装填、升级站、换枪动画等。
 
-### 回归测试（可选）
-
-改完核心逻辑想确认没崩，跑一遍冒烟测试：
-
-```bash
-"D:/Tools/Godot4.6.2/Godot_v4.6.2-stable_win64_console.exe" --headless \
-  --path "D:/Games/2.5d" res://tools/smoke.tscn
-```
-
-它会检查：关卡加载、敌人生成、玩家碰撞层、自动拾取、开枪击杀、清场判定、出口激活、进入下一关。全通过时退出码为 0。
-
----
-
-## H5 版（浏览器直接玩，不用装引擎）
-
-`web/` 下是一个独立的 Canvas 2D 实现，**双击 `web/index.html` 就能玩**，零依赖、零构建。
-
-H5 版从 2026-10-31 起**独立演进**：五层楼关卡、掩体、A\* 寻路、分档血迹都只在 `web/` 里，
-不再同步到 `scripts/`。两边只共用同一批 PNG 贴图（`../assets/sprites/`）和基础数值手感。
-2026-11-01 起玩法从「线性闯关」改为「波次生存」（见下）。
-
-![H5 版画面](docs/h5-game.png)
-
-| 项目 | Godot 版 | H5 版 |
-|---|---|---|
-| 运行方式 | 双击 `launch.bat`，F5 | 双击 `web/index.html` |
-| 渲染 | Godot 2D | Canvas 2D（640×360 逻辑分辨率，整数缩放到窗口） |
-| 物理 | CharacterBody2D + 射线 | 自写圆 vs 矩形推出 + 射线求交 |
-| 音效 | AudioStreamGenerator 合成 | WebAudio 振荡器 + 噪声缓冲合成 |
-| 玩法 | 五层楼闯关 | 单地图波次生存（PvE） |
-| AI 寻路 | 直线 + 撞墙换目标 | 网格 A\* + 路径拉直 |
-| 回归测试 | `tools/smoke.tscn`（13 项） | `web/test.html`（33 项，无头 Edge 也能跑） |
+![游戏画面](web/h5-game.png)
 
 ### 玩法：波次生存（类 COD 僵尸 / PvE）
 
@@ -329,43 +298,13 @@ H5 版从 2026-10-31 起**独立演进**：五层楼关卡、掩体、A\* 寻路
 ## 目录结构
 
 ```
-project.godot              自动加载、输入映射、像素渲染设置
-scenes/main.tscn           唯一场景：World + Camera + HUD
-tools/gen_assets.py        程序化生成像素贴图（场景/血/尸体/武器 22 张）
-tools/smoke.tscn           无头冒烟测试（13 项）
-tools/shot.tscn            出图用：杀掉几个敌人后停住，配合 --write-movie 截图
-
-scripts/
-  autoload/
-    events.gd              全局信号总线（跨系统通信只走这里）
-    game.gd                玩家/敌人引用、连击、计分、关卡索引
-    fx.gd                  顿帧 hitstop / 慢动作 slowmo / 震动转发
-    sfx.gd                 程序合成音效（不依赖音频文件）
-  core/
-    actor.gd               角色基类：移动、朝向、一击必杀、掉落武器
-    weapon_data.gd         武器数据（Resource）
-    weapon_db.gd           武器工厂（代码构造，不维护 .tres）
-    weapon.gd              开火、近战扇形判定、hitscan 弹道、掉落
-    pickup.gd              地上的武器 + 被扔出去的飞行判定
-    fx_util.gd             弹道线、血雾/血泊/血痕、火花、尸体、弹孔
-  actors/
-    player.gd              移动与瞄准分离、投掷、拾取
-    enemy.gd               状态机 AI：巡逻 / 调查 / 追击
-  level/
-    levels.gd              ASCII 关卡数据（改字符串就是改关卡）
-    level_builder.gd       地图 → 节点、墙碰撞合并、门/敌人/武器/出口
-    ground_draw.gd         一次性 _draw 出地板与墙
-    door.gd                推门有声，会惊动人
-    exit_zone.gd           清场后激活的出口
-  ui/
-    game_camera.gd         跟随 + 朝鼠标偏移 + 屏幕震动
-    hud.gd                 全代码搭建的 HUD（系统字体，支持中文）
-  main.gd                  关卡加载、重试、切换、暂停
-
-web/                       H5 版（独立实现，不依赖 Godot）
+web/                        H5 版（唯一实现）
   index.html               入口，双击即玩
-  test.html                无头冒烟测试（31 项）
+  test.html                无头冒烟测试（无头 Edge 可跑）
   js/game.js               全部逻辑：关卡、碰撞、AI、渲染、WebAudio
+  assets/sprites/          游戏贴图（地板/墙/掩体/血迹/尸体/武器剪影，27 张 PNG）
+
+.github/workflows/pages.yml  GitHub Pages 自动部署（把 web/ 发布到线上）
 ```
 
 ---
@@ -393,15 +332,11 @@ web/                       H5 版（独立实现，不依赖 Godot）
 
 砍掉躯干之后，信息量只剩"头 / 手 / 眼"，反而每一样都看得清了。代价是角色没有身体，但这套玩法里角色只是一个会动的准星，够用。
 
-配色在引擎里按角色给：`Actor.head_color` / `skin_color`（`player.gd._ready()`、`enemy.gd._configure()` 里设），玩家白发红衣、兜帽兵紫、枪手灰、霰弹兵土黄。
+配色在 `web/js/game.js` 里按角色给（`PALETTE` 表），玩家白发红衣、兜帽兵紫、枪手灰、霰弹兵土黄。
 
-**其余贴图仍由 `tools/gen_assets.py` 程序化生成**（纯标准库，不依赖 Pillow）：
+**尸体、血迹、武器图标等贴图**位于 `web/assets/sprites/`（27 张 PNG）。
 
-```bash
-python tools/gen_assets.py     # 22 张 PNG → assets/sprites/
-```
-
-- **尸体是独立贴图**（`corpse_*.png`，趴着的姿势），不是把活人转个角度。`Actor.corpse_texture()` 返回它，`kill()` 里由 `FxUtil.corpse()` 留在场景中
+- **尸体是独立贴图**（`corpse_*.png`，趴着的姿势），不是把活人转个角度
 - **武器图标侧视**，按"枪口 → 枪托"的遮挡顺序画（先画刀身再画护手，护手才不会被盖掉）。持在手里时按 0.72 缩放，否则一把手枪比头还大
   - 手枪 / 冲锋枪 / 近战是 18×18；**霰弹枪单独用 22×18**：泵动喷子的枪管本来就比手枪长一截，
     18 宽塞不下"长枪管 + 管状弹仓 + 木护木"三层关系，画出来会挤成一根灰管。
@@ -412,42 +347,31 @@ python tools/gen_assets.py     # 22 张 PNG → assets/sprites/
 
 ## 设计上的几个选择
 
-**为什么角色用代码创建，而不是 .tscn？**
-`Actor._build_visual()` 里建 shadow/collision，造型靠 `_draw()` 直接画（一个头 + 两只圆手 + 眼睛）。子类只设配色和 `corpse_texture()`。好处是新增一种敌人不需要复制场景文件，也不用担心场景和脚本不同步；手和眼睛还能逐帧跟着朝向转。想改回场景驱动，把 `_build_visual` 换成一个 `@export var scene: PackedScene` 即可。
+**为什么角色用代码创建，而不是贴图？**
+活人造型靠 `drawActor()` 直接画（一个头 + 两只圆手 + 眼睛），子类只设配色。好处是新增一种敌人不需要复制贴图，手和眼睛还能逐帧跟着朝向转。
 
 **为什么关卡是 ASCII？**
-改一行字符串就能改一个房间，diff 可读，手写速度快，也不用打开编辑器。等地图复杂到需要可视化编辑，再换 TileMapLayer，`level_builder.gd` 是唯一要改的地方。
+改一行字符串就能改一个房间，diff 可读，手写速度快，也不用打开编辑器。地图数据就在 `web/js/game.js` 的 `ARENA` 里。
 
 **为什么用 hitscan 而不是子弹节点？**
 原版就是瞬间命中。hitscan 没有子弹飞行时间、没有穿透 bug、没有节点池，散布靠多次射线实现（霰弹枪 7 条）。
 
 **为什么音效是算出来的？**
-框架阶段不想让你卡在"没有音效素材"上。所有音效都是 `exp(-t·decay)` 包络 × 噪声/正弦，共 12 个。要换真实音效，只改 `sfx.gd::_build()` 里的赋值。
+框架阶段不想让你卡在"没有音效素材"上。所有音效都是 WebAudio 振荡器 + 噪声缓冲合成。要换真实音效，只改 `web/js/game.js` 里 `Sfx.play()` 的分支。
 
 ---
 
 ## 想改什么，改哪里
 
-**加一把武器** → `weapon_db.gd` 加一个 `static func`，`levels.gd` 里给它一个地图字符，`from_code` 里加一条映射。
+**加一把武器** → `web/js/game.js` 的 `WEAPONS` 表加一条（含 `dmg`/`mag`/`spread`/`range`/`blood`），商店 `SHOP` 里加一项，`PALETTE` 补配色。
 
-**加一种敌人** → `enemy.gd::_configure()` 加一个分支（含 `head_color` / `skin_color` 两行配色），`level_builder.gd` 里加一个地图字符，`web/js/game.js` 的 `PALETTE` 里补一组同色。
+**加一种敌人** → `web/js/game.js` 的 `ENEMY_KIND` 加一种，`PALETTE` 里补一组同色。
 
-**做新关卡** → `levels.gd` 的 `LIST` 里追加一项。图例：
-
-```
-#  墙        .  地板      P  玩家出生    X  出口
-E  近战敌    G  手枪手    S  霰弹枪手
-1  手枪      2  霰弹枪    B  棒球棍      K  匕首
-D  门
-```
-
-每行字符数必须一致。门的两侧要留出可通行的格子。
-
-**调手感** → 先调这四个数：
-- `player.gd::SPEED`（134）移动速度
-- `enemy.gd` 各分支的 `reaction` / `aim_error`（敌人有多"讲道理"）
-- `weapon_db.gd` 的 `fire_rate` / `spread_deg` / `shake`
-- `fx.gd::hitstop` 的时长（0.045 是"钉一下"，0.08 就变卡了）
+**调手感** → 先调这几个数：
+- `PLAYER_SPEED`（移动速度）
+- `WEAPONS` 各枪的 `fireRate` / `spread` / `shake` / `dmg`
+- 敌人各分支的 `reaction` / `aim_error`（敌人有多"讲道理"）
+- `FX.hitstop` 的时长（0.045 是"钉一下"，0.08 就变卡了）
 
 ---
 
