@@ -526,6 +526,31 @@
   /** 编辑界面：结束拖拽。 */
   function handleLayoutUp() { layoutDrag = null; }
 
+  /** UI 调节模式下：用一份演示数据渲染真实 HUD 原样，让用户看清元素本来长什么样。 */
+  function drawDemoHUD() {
+    // 备份并临时替换 G 里 drawHUD 依赖的字段，渲染完再恢复，不污染真实游戏状态。
+    const saved = { player: G.player, wave: G.wave, cash: G.cash, combo: G.combo, comboTimer: G.comboTimer, state: G.state, W: W };
+    // 演示玩家：有血有甲、手上拿枪有弹药、背包有消耗品，让血条/装备栏/换弹提示都画得出来。
+    G.player = makePlayer(VIEW_W / 2, VIEW_H / 2);
+    G.player.weapon = 'w_smg';
+    G.player.ammo = 6;            // 低弹药 → 触发"按 R 换弹"提示
+    G.player.reserve = 120;
+    G.player.armor = 100; G.player.armorSlots = 2;
+    G.player.medkits = 1; G.player.armorPlates = 2; G.player.grenades = 3;
+    G.player.side = { weapon: 'w_pistol', ammo: 8, reserve: 32 };
+    G.wave = 3;
+    G.cash = 1750;
+    G.combo = 5; G.comboTimer = 1;
+    G.state = 'play';             // 让 drawReloadHint 的换弹提示能显示
+    if (!W) W = { cleared: false };   // 防止 drawHUD 里 W.cleared 对 null 取值报错
+    drawHUD();
+    W = saved.W;
+    G.state = saved.state;
+    G.player = saved.player;
+    G.wave = saved.wave; G.cash = saved.cash;
+    G.combo = saved.combo; G.comboTimer = saved.comboTimer;
+  }
+
   /** 编辑界面绘制。 */
   function drawLayout() {
     ctx.save();
@@ -555,7 +580,8 @@
     }
 
     if (layoutMode === 'ui') {
-      // ---- UI 模式：绘制 HUD 元素锚点 ----
+      // ---- UI 模式：先渲染真实 HUD 原样（用演示数据），再叠加可拖锚点 ----
+      drawDemoHUD();
       for (const it of HUD_ITEMS) {
         const cx = it.x + HUD_OFF[it.id].x, cy = it.y + HUD_OFF[it.id].y;
         const dragging = layoutDrag === 'hud:' + it.id;
@@ -677,12 +703,13 @@
     }
     // 开火方式二选一：
     //   fireMode='button'：只由独立「开火」按钮触发，右摇杆仅瞄准。
-    //   fireMode='stick' ：右摇杆推到边缘持续射击（也保留开火按钮可用）。
+    //   fireMode='stick' ：右摇杆一有拖动就持续射击（也保留开火按钮可用）。
     let fireByAim = false;
     if (fireMode === 'stick' && touch.aimActive && touch.aimOrigin) {
       const dx = touch.aimOrigin.x - TOUCH_LAYOUT.aimBase.x;
       const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
-      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.55;
+      // 只要拖出一点点（约 18% 半径，8px 左右）就持续射击，几乎贴着手感"拖动即开火"
+      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.18;
     }
     const nextDown = (fireByAim || touch.fireBtnActive || touch.firing);
     // 上升沿 → 记一次"单击"：半自动武器（手枪/霰弹枪/狙击）需要 fireTap 才开枪，
