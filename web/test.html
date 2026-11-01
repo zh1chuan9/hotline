@@ -939,17 +939,17 @@
     // 切到摇杆开火
     H.setFireMode('stick');
     check('切到摇杆开火（fireMode=' + H.fireMode + '）', H.fireMode === 'stick');
-    H.setAimDrag(4, 0);    // 拖 4px，未超过约 8px 的触发阈值
-    check('摇杆开火模式下拖 4px 不开火', H.touchFiring === false);
-    H.setAimDrag(20, 0);   // 拖 20px，超过阈值 → 持续射击
-    check('摇杆开火模式下拖动即持续射击（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
-    // 拖动的上升沿应产生一次"单击"，供半自动武器（手枪/霰弹枪）开火
-    check('拖动产生单击（fireTap）', H.fireTap === true);
+    H.setAimDrag(20, 0);   // 拖 20px，未到边缘（阈值约 37px）
+    check('摇杆开火模式下拖 20px 不开火', H.touchFiring === false);
+    H.setAimDrag(42, 0);   // 拖 42px，超过边缘阈值 → 持续射击
+    check('摇杆开火模式下拖到边缘持续射击（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
+    // 拖到边缘的上升沿应产生一次"单击"，供半自动武器（手枪/霰弹枪）开火
+    check('拖到边缘产生单击（fireTap）', H.fireTap === true);
     H.consumeFireTap();
     H.setAimDrag(0, 0);    // 回中
     check('右摇杆回中停止开火', H.touchFiring === false);
-    H.setAimDrag(20, 0);   // 再次拖动
-    check('再次拖动再次产生单击', H.fireTap === true);
+    H.setAimDrag(42, 0);   // 再次拖到边缘
+    check('再次拖到边缘再次产生单击', H.fireTap === true);
     H.consumeFireTap();
     H.setAimDrag(0, 0);
     // 切回按键开火，摇杆不再开火
@@ -957,6 +957,12 @@
     H.setAimDrag(42, 0);
     check('切回按键开火后拖摇杆不开火', H.touchFiring === false);
     H.setAimDrag(0, 0);
+
+    // 摇杆开火模式下开火键隐藏：不归类为 fire，且该区域归给右摇杆判定
+    H.setFireMode('stick');
+    check('摇杆开火模式下开火键不再命中 fire', H.classifyTouch(640 - 176, 360 - 150) !== 'fire');
+    H.setFireMode('button');
+    check('切回按键开火后开火键恢复命中', H.classifyTouch(640 - 176, 360 - 150) === 'fire');
 
     // 按键自定义：移动控件位置 → 持久化 → 恢复默认
     const defaultFire = H.getLayoutPos('fire');

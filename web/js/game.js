@@ -644,8 +644,9 @@
     const near = (c, r) => Math.hypot(x - c.x, y - c.y) <= r;
     // 左摇杆（仅在未激活时，或按距离就近归因）
     if (near(L.moveBase, L.moveBase.r * 1.4)) return 'move';
-    // 独立开火键优先于右摇杆判定（它在右摇杆边缘外）
-    if (near(L.fireBtn, L.fireBtn.r * 1.2)) return 'fire';
+    // 独立开火键优先于右摇杆判定（它在右摇杆边缘外）。
+    // 摇杆开火模式下开火键已隐藏，此区域不归为 'fire'，交给右摇杆（aimBase）判定。
+    if (fireMode !== 'stick' && near(L.fireBtn, L.fireBtn.r * 1.2)) return 'fire';
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
     // 动作按钮
     for (const b of L.buttons) {
@@ -702,16 +703,19 @@
       }
     }
     // 开火方式二选一：
-    //   fireMode='button'：只由独立「开火」按钮触发，右摇杆仅瞄准。
-    //   fireMode='stick' ：右摇杆一有拖动就持续射击（也保留开火按钮可用）。
+    //   fireMode='button'：只由独立「开火」按钮触发，右摇杆仅瞄准（此时开火按钮显示）。
+    //   fireMode='stick' ：右摇杆拖到边缘（约 80% 半径）持续射击（此时开火按钮隐藏）。
     let fireByAim = false;
     if (fireMode === 'stick' && touch.aimActive && touch.aimOrigin) {
       const dx = touch.aimOrigin.x - TOUCH_LAYOUT.aimBase.x;
       const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
-      // 只要拖出一点点（约 18% 半径，8px 左右）就持续射击，几乎贴着手感"拖动即开火"
-      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.18;
+      // 拖到边缘（80% 半径）才持续射击，回中即停
+      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.80;
     }
-    const nextDown = (fireByAim || touch.fireBtnActive || touch.firing);
+    // 摇杆开火模式下，独立开火按钮应被隐藏/忽略（fireMode==='stick' 时不认 fireBtnActive/firing）
+    const nextDown = fireMode === 'stick'
+      ? fireByAim
+      : (touch.fireBtnActive || touch.firing);
     // 上升沿 → 记一次"单击"：半自动武器（手枪/霰弹枪/狙击）需要 fireTap 才开枪，
     // 而按住 mouse.down 只能驱动自动武器连发。触控没有 mousedown 事件，这里手动补上单击语义。
     if (nextDown && !touch.firePrev) G.fireTap = true;
@@ -4250,15 +4254,17 @@
     ctx.fillStyle = touch.aimActive ? '#ffe0c0' : '#c2b2a0';
     ctx.beginPath(); ctx.arc(ahx, ahy, L.aimBase.r * 0.42, 0, Math.PI * 2); ctx.fill();
 
-    // ---- 独立开火键 ----
-    const fb = L.fireBtn;
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = touch.fireBtnActive ? '#ff6a5a' : '#e05040';
-    ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-    ctx.fillText('开火', fb.x, fb.y + 1);
+    // ---- 独立开火键（仅"按键开火"模式显示；"摇杆开火"模式下隐藏，右摇杆拖到边缘即射击）----
+    if (fireMode !== 'stick') {
+      const fb = L.fireBtn;
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = touch.fireBtnActive ? '#ff6a5a' : '#e05040';
+      ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+      ctx.fillText('开火', fb.x, fb.y + 1);
+    }
 
     // ---- 动作按钮 ----
     for (const b of L.buttons) {
@@ -5698,6 +5704,10 @@
       // ?touch=1 切到手机触控模式（截图核对摇杆/按钮 UI 用）
       if (/[?&]touch=1/.test(location.search)) {
         setInputMode('touch');
+      }
+      // ?firemode=stick 切到摇杆开火模式（截图核对开火按钮隐藏/摇杆 UI 用）
+      if (/[?&]firemode=stick/.test(location.search)) {
+        setFireMode('stick');
       }
       // ?peek=1 出生点挪到第一个敌人旁边，用于看战斗区域（调试用）
       if (/[?&]peek=1/.test(location.search) && W && W.enemies.length) {
