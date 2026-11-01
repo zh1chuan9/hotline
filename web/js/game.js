@@ -2983,6 +2983,30 @@
   ];
   const SHOP_COLS = 5;   // 商店每列商品数（左列 5 项，右列不足则收尾）
 
+  /** 商店底部的「购买」「退出」按钮布局，供绘制与点击复用（老虎机子界面时不显示）。 */
+  function shopButtons() {
+    const bw = 140, bh = 38, gap = 32;
+    const y = VIEW_H - 58;
+    const cx = VIEW_W / 2;
+    return {
+      buy:  { x: cx - gap / 2 - bw, y, w: bw, h: bh },
+      exit: { x: cx + gap / 2, y, w: bw, h: bh },
+    };
+  }
+
+  /** 命中检测：返回点击落在哪一行商品上（-1 = 没点中）。整列宽都可点，方便手机点价格区域。 */
+  function shopItemAt(x, y) {
+    const colW = VIEW_W / 2;
+    for (let i = 0; i < SHOP.length; i++) {
+      const col = Math.floor(i / SHOP_COLS);
+      const row = i % SHOP_COLS;
+      const ix = col * colW;
+      const iy = 112 + row * 46 - 16;
+      if (x >= ix && x < ix + colW && y >= iy && y < iy + 40) return i;
+    }
+    return -1;
+  }
+
   function openShop() {
     G.state = 'shop';
     G.shopSel = 0;
@@ -3392,6 +3416,33 @@
       else if (hit(SETTINGS_BTN.fire)) { setFireMode(fireMode === 'stick' ? 'button' : 'stick'); Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.layout)) { if (inputMode === 'touch') openTouchLayout(); }
       else if (hit(SETTINGS_BTN.back)) { closeSettings(); }
+      return;
+    }
+    if (G.state === 'shop') {
+      // 老虎机子界面：底部「再摇一次」「返回」两个按钮
+      if (G.slotState) {
+        const btns = shopButtons();
+        if (hit(btns.exit)) { G.slotState = null; Sfx.play('empty'); return; }
+        if (hit(btns.buy)) {
+          const price = (SHOP.find(it => it.kind === 'slot') || { price: 9999 }).price;
+          if (!G.slotState.spinning && G.cash >= price) {
+            G.cash -= price;
+            G.slotState = startSlot();
+            Sfx.play('pickup');
+          } else {
+            Sfx.play('empty');
+          }
+          return;
+        }
+        return;
+      }
+      // 底部「购买」「退出」按钮
+      const btns = shopButtons();
+      if (hit(btns.exit)) { closeShop(); return; }
+      if (hit(btns.buy)) { buyShopItem(); return; }
+      // 点商品行：选中该行
+      const idx = shopItemAt(mouse.x, mouse.y);
+      if (idx >= 0) { G.shopSel = idx; Sfx.play('hit'); return; }
       return;
     }
     if (G.state === 'layout') {
@@ -4802,10 +4853,29 @@
       ctx.textAlign = 'left';
     }
 
+    // 底部「购买」「退出」按钮（老虎机子界面不显示，避免和摇杆/返回提示冲突）
+    if (!G.slotState) {
+      const btns = shopButtons();
+      const drawBtn = (b, label, kind) => {
+        const hov = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+        ctx.fillStyle = hov ? 'rgba(255,215,110,0.20)' : 'rgba(255,255,255,0.06)';
+        ctx.strokeStyle = hov ? '#ffd76e' : 'rgba(255,255,255,0.28)';
+        ctx.lineWidth = 1;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); }
+        else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = kind === 'buy' ? '#ffd76e' : '#cfc4d4';
+        ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+        ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      };
+      drawBtn(btns.buy, '购买', 'buy');
+      drawBtn(btns.exit, '退出', 'exit');
+    }
+
     ctx.textAlign = 'center';
     ctx.font = '10px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#5f5668';
-    ctx.fillText('W/S 选行 · A/D 换列 · 回车 · ESC', VIEW_W / 2, VIEW_H - 24);
+    ctx.fillText('W/S 选行 · A/D 换列 · 回车购买 · ESC 退出', VIEW_W / 2, VIEW_H - 24);
 
     // 老虎机结果展示（在底部中间偏上）
     if (G.slotState) {
@@ -5849,6 +5919,14 @@
     openShop,
     buyShopItem,
     closeShop,
+    /** 商店底部按钮布局 / 商品行命中检测（测试点击购买、退出用） */
+    shopButtons,
+    shopItemAt,
+    /** 模拟一次鼠标/触屏点击（会走 onPointerDown 的按钮分发） */
+    tap(x, y) {
+      mouse.x = x; mouse.y = y;
+      onPointerDown({ button: 0 });
+    },
     goTitle,
     handlePauseKeys,
     startSlot,

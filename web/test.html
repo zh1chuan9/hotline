@@ -188,6 +188,26 @@
     H.closeShop();
     check('关闭商店回到 play（state=' + g8.state + '）', g8.state === 'play');
 
+    // ============ 9.5 商店点击购买 / 退出按钮 ============
+    H.openShop();
+    const sb = H.shopButtons();
+    check('商店有「购买」「退出」按钮', !!sb.buy && !!sb.exit && sb.buy.w > 0 && sb.exit.w > 0);
+    // 命中检测：左列第 0 行（手枪，col=0,row=0）与右列第 0 行（手雷，col=1,row=0 → idx=5）
+    check('点击左列商品命中（idx=' + H.shopItemAt(20, 112) + '）', H.shopItemAt(20, 112) === 0);
+    check('点击右列商品命中（idx=' + H.shopItemAt(340, 112) + '）', H.shopItemAt(340, 112) === 5);
+    // 点商品行 → 选中
+    H.tap(20, 112 + 3 * 46);   // 第 3 行 = 弹药（idx=3）
+    check('点商品行选中（shopSel=' + g8.shopSel + '）', g8.shopSel === 3);
+    // 点「购买」按钮 → 扣款并回血（血包）
+    p8.hp = 1;
+    g8.shopSel = H.shop.findIndex(s => s.kind === 'heal');
+    const cashBefore = g8.cash;
+    H.tap(sb.buy.x + sb.buy.w / 2, sb.buy.y + sb.buy.h / 2);
+    check('点「购买」扣款并回血（cash ' + cashBefore + '→' + g8.cash + '，hp=' + p8.hp + '）', g8.cash < cashBefore && p8.hp > 1);
+    // 点「退出」按钮 → 关闭商店
+    H.tap(sb.exit.x + sb.exit.w / 2, sb.exit.y + sb.exit.h / 2);
+    check('点「退出」关闭商店（state=' + g8.state + '）', g8.state === 'play');
+
     // ============ 10.5 开界面用的按键不能被状态切换反复读 ============
     // 真机上的坑：高刷屏里按下那一帧可能没跑到 update（advanced=false），
     // pressed 活到下一帧，被新状态的分支读成"再按一次"，于是商店开了就关、暂停闪一下就没了。
