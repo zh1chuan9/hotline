@@ -336,12 +336,14 @@
     aimBase: { x: VIEW_W - 96, y: VIEW_H - 84, r: 46 },
     // 独立开火键：右摇杆左上
     fireBtn: { x: VIEW_W - 176, y: VIEW_H - 150, r: 30 },
-    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 交互
+    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互
     buttons: [
-      { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 200 },
-      { key: 'q', label: '换枪', x: VIEW_W - 30, y: VIEW_H - 156 },
-      { key: 'g', label: '手雷', x: VIEW_W - 30, y: VIEW_H - 112 },
-      { key: 'e', label: '交互', x: VIEW_W - 30, y: VIEW_H - 68 }
+      { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 236 },
+      { key: 'q', label: '换枪', x: VIEW_W - 30, y: VIEW_H - 198 },
+      { key: 'g', label: '手雷', x: VIEW_W - 30, y: VIEW_H - 160 },
+      { key: '3', label: '医疗包', x: VIEW_W - 30, y: VIEW_H - 122 },
+      { key: '4', label: '护甲板', x: VIEW_W - 30, y: VIEW_H - 84 },
+      { key: 'e', label: '交互', x: VIEW_W - 30, y: VIEW_H - 46 }
     ],
     btnR: 22
   };
@@ -359,12 +361,56 @@
     { id: 'r',     label: '换弹',  ref: TOUCH_LAYOUT.buttons[0], kind: 'small' },
     { id: 'q',     label: '换枪',  ref: TOUCH_LAYOUT.buttons[1], kind: 'small' },
     { id: 'g',     label: '手雷',  ref: TOUCH_LAYOUT.buttons[2], kind: 'small' },
-    { id: 'e',     label: '交互',  ref: TOUCH_LAYOUT.buttons[3], kind: 'small' },
+    { id: '3',     label: '医疗包', ref: TOUCH_LAYOUT.buttons[3], kind: 'small' },
+    { id: '4',     label: '护甲板', ref: TOUCH_LAYOUT.buttons[4], kind: 'small' },
+    { id: 'e',     label: '交互',  ref: TOUCH_LAYOUT.buttons[5], kind: 'small' },
     { id: 'pause', label: '暂停',  ref: TOUCH_PAUSE, kind: 'small' },
     { id: 'skip',  label: '跳过',  ref: TOUCH_SKIP,  kind: 'rect' }
   ];
   const LAYOUT_DEFAULTS = LAYOUT_ITEMS.map(it => ({ id: it.id, x: it.ref.x, y: it.ref.y }));
   const LAYOUT_KEY = 'hotline.touchLayout';
+
+  // ---- HUD 元素自定义布局（手机模式下可拖动 HUD 元素位置）----
+  // 每个 HUD 元素一个锚点（默认位置）+ 可持久化的偏移 dx/dy。绘制时坐标 += 偏移。
+  const HUD_ITEMS = [
+    { id: 'wave',    label: '波次',   x: 10,            y: 10 },
+    { id: 'cash',    label: '现金',   x: VIEW_W - 10,   y: 10 },
+    { id: 'combo',   label: '连击',   x: VIEW_W - 10,   y: 28 },
+    { id: 'body',    label: '血/甲',  x: 16,            y: VIEW_H - 40 },
+    { id: 'loadout', label: '装备栏', x: VIEW_W - 12,   y: VIEW_H - 10 },
+    { id: 'reload',  label: '换弹',   x: VIEW_W / 2,    y: VIEW_H - 26 }
+  ];
+  const HUD_KEY = 'hotline.hudLayout';
+  // 每个 HUD 元素的偏移（运行时读写，persist 时落盘）
+  const HUD_OFF = {};
+  for (const it of HUD_ITEMS) HUD_OFF[it.id] = { x: 0, y: 0 };
+
+  /** 读取持久化的 HUD 偏移。 */
+  function loadHudLayout() {
+    try {
+      const s = localStorage.getItem(HUD_KEY);
+      if (!s) return;
+      const saved = JSON.parse(s);
+      for (const it of HUD_ITEMS) {
+        const sv = saved[it.id];
+        if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
+          HUD_OFF[it.id].x = sv.x; HUD_OFF[it.id].y = sv.y;
+        }
+      }
+    } catch (err) { /* 忽略损坏数据 */ }
+  }
+  /** 持久化 HUD 偏移。 */
+  function saveHudLayout() {
+    const out = {};
+    for (const it of HUD_ITEMS) out[it.id] = { x: HUD_OFF[it.id].x, y: HUD_OFF[it.id].y };
+    try { localStorage.setItem(HUD_KEY, JSON.stringify(out)); } catch (err) { /* 忽略 */ }
+  }
+  /** 恢复默认 HUD 偏移（清零）。 */
+  function resetHudLayout() {
+    for (const it of HUD_ITEMS) { HUD_OFF[it.id].x = 0; HUD_OFF[it.id].y = 0; }
+    saveHudLayout();
+  }
+
 
   /** 读取持久化的自定义布局，覆盖 TOUCH_LAYOUT 里的坐标。 */
   function loadTouchLayout() {
@@ -396,10 +442,13 @@
   }
 
   // ---- 触控按键自定义编辑界面 ----
-  // layoutDrag：正在拖拽的控件 id（null=没在拖）
+  // layoutDrag：正在拖拽的控件 id（null=没在拖）。ui 模式下带 'hud:' 前缀。
   let layoutDrag = null;
+  // layoutMode：编辑界面当前调节对象 'buttons'（按键）| 'ui'（HUD 元素）
+  let layoutMode = 'buttons';
   // 编辑界面按钮区域（屏幕空间）
   const LAYOUT_BTN = {
+    toggle: { x: VIEW_W / 2 - 120, y: 74, w: 240, h: 32 },
     reset: { x: VIEW_W / 2 - 160, y: VIEW_H - 44, w: 150, h: 34 },
     done: { x: VIEW_W / 2 + 10, y: VIEW_H - 44, w: 150, h: 34 }
   };
@@ -407,6 +456,7 @@
   /** 进入按键自定义编辑界面。 */
   function openTouchLayout() {
     layoutDrag = null;
+    layoutMode = 'buttons';
     G.state = 'layout';
   }
 
@@ -414,14 +464,42 @@
   function handleLayoutClick() {
     // 底部按钮优先
     const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
-    if (hit(LAYOUT_BTN.reset)) { resetTouchLayout(); return; }
-    if (hit(LAYOUT_BTN.done)) { saveTouchLayout(); closeSettings(); return; }
-    // 命中某个可拖控件 → 开始拖拽（坐标由 pointermove 持续更新）
-    for (const it of LAYOUT_ITEMS) {
-      const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
-      if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) {
-        layoutDrag = it.id;
-        return;
+    if (hit(LAYOUT_BTN.toggle)) {
+      // 切换调节对象：按键 <-> UI
+      layoutMode = layoutMode === 'buttons' ? 'ui' : 'buttons';
+      layoutDrag = null;
+      Sfx.play('hit');
+      return;
+    }
+    if (hit(LAYOUT_BTN.reset)) {
+      if (layoutMode === 'ui') resetHudLayout(); else resetTouchLayout();
+      Sfx.play('hit');
+      return;
+    }
+    if (hit(LAYOUT_BTN.done)) {
+      if (layoutMode === 'ui') saveHudLayout(); else saveTouchLayout();
+      closeSettings();
+      return;
+    }
+    beginLayoutDrag();
+  }
+
+  /** 只做"命中可拖控件并开始拖拽"（不处理底部按钮），供桌面 mousedown 复用。 */
+  function beginLayoutDrag() {
+    if (layoutMode === 'ui') {
+      for (const it of HUD_ITEMS) {
+        if (Math.hypot(mouse.x - (it.x + HUD_OFF[it.id].x), mouse.y - (it.y + HUD_OFF[it.id].y)) <= 16) {
+          layoutDrag = 'hud:' + it.id;
+          return;
+        }
+      }
+    } else {
+      for (const it of LAYOUT_ITEMS) {
+        const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
+        if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) {
+          layoutDrag = it.id;
+          return;
+        }
       }
     }
   }
@@ -429,11 +507,20 @@
   /** 编辑界面：拖拽中持续更新控件坐标（clamp 到屏幕内）。 */
   function handleLayoutMove() {
     if (layoutDrag === null) return;
-    const it = LAYOUT_ITEMS.find(i => i.id === layoutDrag);
-    if (!it) return;
     const m = 8; // 边距
-    it.ref.x = clamp(mouse.x, m, VIEW_W - m);
-    it.ref.y = clamp(mouse.y, m, VIEW_H - m);
+    if (layoutDrag.startsWith('hud:')) {
+      const id = layoutDrag.slice(4);
+      const it = HUD_ITEMS.find(i => i.id === id);
+      if (!it) return;
+      // HUD 偏移 = 当前位置 - 默认锚点
+      HUD_OFF[id].x = clamp(mouse.x - it.x, -VIEW_W, VIEW_W);
+      HUD_OFF[id].y = clamp(mouse.y - it.y, -VIEW_H, VIEW_H);
+    } else {
+      const it = LAYOUT_ITEMS.find(i => i.id === layoutDrag);
+      if (!it) return;
+      it.ref.x = clamp(mouse.x, m, VIEW_W - m);
+      it.ref.y = clamp(mouse.y, m, VIEW_H - m);
+    }
   }
 
   /** 编辑界面：结束拖拽。 */
@@ -447,38 +534,70 @@
     ctx.textAlign = 'center';
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e8e0f0';
-    ctx.fillText('自定义按键位置', VIEW_W / 2, 40);
+    ctx.fillText(layoutMode === 'ui' ? '自定义 HUD 位置' : '自定义按键位置', VIEW_W / 2, 40);
     ctx.font = '12px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
-    ctx.fillText('按住控件拖动到想要的位置 · 完成后点「完成」', VIEW_W / 2, 62);
+    ctx.fillText('按住元素拖动到想要的位置 · 完成后点「完成」', VIEW_W / 2, 106);
 
-    // 绘制每个控件（高亮正在拖拽的那个）
-    for (const it of LAYOUT_ITEMS) {
-      const dragging = layoutDrag === it.id;
-      const col = dragging ? '#ffd76e' : (it.kind === 'stick' ? '#dfe6f0' : '#8ab4e8');
-      ctx.globalAlpha = dragging ? 0.95 : 0.55;
-      ctx.fillStyle = col;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      if (it.kind === 'rect') {
-        const w = it.ref.w, h = it.ref.h;
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(it.ref.x - w / 2, it.ref.y - h / 2, w, h, 8); }
-        else { ctx.beginPath(); ctx.rect(it.ref.x - w / 2, it.ref.y - h / 2, w, h); }
+    // 顶部切换按钮
+    const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    {
+      const b = LAYOUT_BTN.toggle;
+      const hov = hit(b);
+      ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = hov ? '#5aa7e0' : 'rgba(255,255,255,0.25)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
+      else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = hov ? '#fff' : '#cfc4d4';
+      ctx.font = 'bold 14px "Microsoft YaHei", monospace';
+      ctx.fillText('当前：' + (layoutMode === 'ui' ? '调节 UI（点击切换按键）' : '调节按键（点击切换 UI）'), b.x + b.w / 2, b.y + b.h / 2 + 1);
+    }
+
+    if (layoutMode === 'ui') {
+      // ---- UI 模式：绘制 HUD 元素锚点 ----
+      for (const it of HUD_ITEMS) {
+        const cx = it.x + HUD_OFF[it.id].x, cy = it.y + HUD_OFF[it.id].y;
+        const dragging = layoutDrag === 'hud:' + it.id;
+        ctx.globalAlpha = dragging ? 0.95 : 0.55;
+        ctx.fillStyle = dragging ? '#ffd76e' : '#8ab4e8';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2);
         ctx.fill(); ctx.stroke();
-      } else {
-        const r = it.ref.r || TOUCH_LAYOUT.btnR;
-        ctx.beginPath(); ctx.arc(it.ref.x, it.ref.y, r, 0, Math.PI * 2);
-        ctx.fill(); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#1a1620';
+        ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+        ctx.fillText(it.label, cx, cy + 1);
       }
-      // 标签
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = '#1a1620';
-      ctx.font = 'bold 11px "Microsoft YaHei", monospace';
-      ctx.fillText(it.label, it.ref.x, it.ref.y + 1);
+    } else {
+      // ---- 按键模式：绘制每个可拖控件（高亮正在拖拽的那个）----
+      for (const it of LAYOUT_ITEMS) {
+        const dragging = layoutDrag === it.id;
+        const col = dragging ? '#ffd76e' : (it.kind === 'stick' ? '#dfe6f0' : '#8ab4e8');
+        ctx.globalAlpha = dragging ? 0.95 : 0.55;
+        ctx.fillStyle = col;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        if (it.kind === 'rect') {
+          const w = it.ref.w, h = it.ref.h;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(it.ref.x - w / 2, it.ref.y - h / 2, w, h, 8); }
+          else { ctx.beginPath(); ctx.rect(it.ref.x - w / 2, it.ref.y - h / 2, w, h); }
+          ctx.fill(); ctx.stroke();
+        } else {
+          const r = it.ref.r || TOUCH_LAYOUT.btnR;
+          ctx.beginPath(); ctx.arc(it.ref.x, it.ref.y, r, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+        }
+        // 标签
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#1a1620';
+        ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+        ctx.fillText(it.label, it.ref.x, it.ref.y + 1);
+      }
     }
 
     // 底部按钮：恢复默认 / 完成
-    const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
     for (const [key, b] of [['reset', LAYOUT_BTN.reset], ['done', LAYOUT_BTN.done]]) {
       const hov = hit(b);
       ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
@@ -665,12 +784,10 @@
   });
   canvas.addEventListener('mousedown', (e) => {
     updateMouse(e);
-    // 桌面端：按键自定义编辑界面，左键按住控件开始拖拽（按钮走 click）
+    // 桌面端：编辑界面左键开始拖拽控件/元素（底部按钮与切换按钮走 click → handleLayoutClick）
     if (G && G.state === 'layout' && e.button === 0) {
-      for (const it of LAYOUT_ITEMS) {
-        const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
-        if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) { layoutDrag = it.id; return; }
-      }
+      beginLayoutDrag();
+      return;
     }
     if (e.button === 0) mouse.down = true;
     if (e.button === 2) { mouse.right = true; e.preventDefault(); }   // 右键 = 抬枪瞄准
@@ -713,15 +830,7 @@
       e.preventDefault();
       const pt = pointerPos(e);
       mouse.x = pt.x; mouse.y = pt.y;
-      // 底部按钮：恢复默认 / 完成
-      const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
-      if (hit(LAYOUT_BTN.reset)) { resetTouchLayout(); return; }
-      if (hit(LAYOUT_BTN.done)) { saveTouchLayout(); closeSettings(); return; }
-      // 命中控件 → 开始拖拽
-      for (const it of LAYOUT_ITEMS) {
-        const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
-        if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) { layoutDrag = it.id; return; }
-      }
+      handleLayoutClick();
       return;
     }
     // 菜单按钮统一走 click 事件（见上），这里只处理战斗态摇杆/按钮。
@@ -4193,17 +4302,17 @@
     ctx.textAlign = 'left';
     const waveLabel = G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillText(waveLabel, 11, 11);
+    ctx.fillText(waveLabel, 11 + HUD_OFF.wave.x, 11 + HUD_OFF.wave.y);
     ctx.fillStyle = '#cfc4d4';
-    ctx.fillText(waveLabel, 10, 10);
+    ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
     // 右上：现金（击杀所得，商店货币）
     ctx.textAlign = 'right';
     ctx.font = 'bold 13px "Microsoft YaHei", monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillText('$' + G.cash, VIEW_W - 9, 11);
+    ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
     ctx.fillStyle = '#ffd76e';
-    ctx.fillText('$' + G.cash, VIEW_W - 10, 10);
+    ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
 
     // 左下：血量 + 护甲（只给条和格，不标数值）
     drawBodyHUD();
@@ -4219,9 +4328,9 @@
       ctx.textAlign = 'right';
       ctx.font = 'bold 14px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillText('x' + G.combo, VIEW_W - 9, 29);
+      ctx.fillText('x' + G.combo, VIEW_W - 9 + HUD_OFF.combo.x, 29 + HUD_OFF.combo.y);
       ctx.fillStyle = '#ffd76e';
-      ctx.fillText('x' + G.combo, VIEW_W - 10, 28);
+      ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 28 + HUD_OFF.combo.y);
     }
 
     // 中下：提示
@@ -4288,10 +4397,10 @@
   function drawBodyHUD() {
     const p = G.player;
     if (!p) return;
-    const x0 = 16, barW = 150;
-    const hpY = VIEW_H - 40, hpH = 12;
+    const x0 = 16 + HUD_OFF.body.x, barW = 150;
+    const hpY = VIEW_H - 40 + HUD_OFF.body.y, hpH = 12;
     const gap = 5;
-    const apY = VIEW_H - 22, apH = 8;
+    const apY = VIEW_H - 22 + HUD_OFF.body.y, apH = 8;
     const slotW = (barW - gap * (ARMOR_SLOTS - 1)) / ARMOR_SLOTS;
 
     // 读条（治疗 / 装护甲板）压在血条上方
@@ -4493,24 +4602,24 @@
 
     const crit = frac <= RELOAD_HINT_CRIT;
     const txt = '按 R 换弹';
-    const y = VIEW_H - 26;
+    const y = VIEW_H - 26 + HUD_OFF.reload.y;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.font = 'bold 13px "Microsoft YaHei", monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.72)';
-    ctx.fillText(txt, VIEW_W / 2 + 1, y + 1);
+    ctx.fillText(txt, VIEW_W / 2 + 1 + HUD_OFF.reload.x, y + 1);
     ctx.fillStyle = crit
       ? 'rgba(255,92,76,' + (0.80 + 0.20 * Math.sin(performance.now() * 0.009)).toFixed(2) + ')'
       : '#f0c05a';
-    ctx.fillText(txt, VIEW_W / 2, y);
+    ctx.fillText(txt, VIEW_W / 2 + HUD_OFF.reload.x, y);
     ctx.textAlign = 'left';
   }
 
   function drawLoadoutHUD() {
     const p = G.player;
     if (!p) return;
-    const RX = VIEW_W - 12;       // 右对齐基准
-    const BOT = VIEW_H - 10;      // 底边基准
+    const RX = VIEW_W - 12 + HUD_OFF.loadout.x;   // 右对齐基准
+    const BOT = VIEW_H - 10 + HUD_OFF.loadout.y;  // 底边基准
 
     const mainDef = p.weapon ? WEAPONS[p.weapon] : null;
     const mainGun = mainDef && !mainDef.melee;
@@ -5421,9 +5530,12 @@
     if (G.state === 'settings') {
       if (pressed['escape']) { closeSettings(); pressed = Object.create(null); return; }
     }
-    // 按键自定义编辑页：ESC 保存并返回
+    // 按键/HUD 自定义编辑页：ESC 保存并返回
     if (G.state === 'layout') {
-      if (pressed['escape']) { saveTouchLayout(); closeSettings(); pressed = Object.create(null); return; }
+      if (pressed['escape']) {
+        if (layoutMode === 'ui') saveHudLayout(); else saveTouchLayout();
+        closeSettings(); pressed = Object.create(null); return;
+      }
     }
     // R：手动换弹（重置关卡功能已去掉，死了会自动重来）
     if (pressed['r'] && G.state === 'play') startReload();
@@ -5492,6 +5604,8 @@
 
     // 读取自定义触控按键布局（覆盖 TOUCH_LAYOUT 坐标）
     loadTouchLayout();
+    // 读取自定义 HUD 元素偏移
+    loadHudLayout();
 
     fitCanvas();
     window.addEventListener('resize', fitCanvas);
@@ -5552,6 +5666,7 @@
       // ?layout=1 直接进按键自定义编辑页，用于截图核对（调试用）
       if (/[?&]layout=1/.test(location.search)) {
         openTouchLayout();
+        if (/[?&]layoutui=1/.test(location.search)) layoutMode = 'ui';
       }
       // ?touch=1 切到手机触控模式（截图核对摇杆/按钮 UI 用）
       if (/[?&]touch=1/.test(location.search)) {
@@ -5723,6 +5838,14 @@
       const it = LAYOUT_ITEMS.find(i => i.id === id);
       if (it) { it.ref.x = x; it.ref.y = y; }
     },
+    /** HUD 元素自定义：保存 / 恢复 / 读取偏移，以及 layoutMode（测试用） */
+    saveHudLayout,
+    resetHudLayout,
+    loadHudLayout,
+    getHudOff(id) { return HUD_OFF[id] ? { x: HUD_OFF[id].x, y: HUD_OFF[id].y } : null; },
+    setHudOff(id, x, y) { if (HUD_OFF[id]) { HUD_OFF[id].x = x; HUD_OFF[id].y = y; } },
+    get layoutMode() { return layoutMode; },
+    openTouchLayout,
     refillArmor,
     openUpgrade,
     closeUpgrade,

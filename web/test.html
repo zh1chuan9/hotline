@@ -908,10 +908,12 @@
     check('左下角命中左摇杆', H.classifyTouch(96, 360 - 84) === 'move');
     check('右下角命中右摇杆', H.classifyTouch(640 - 96, 360 - 84) === 'aim');
     check('开火键命中', H.classifyTouch(640 - 176, 360 - 150) === 'fire');
-    check('换弹按钮命中', H.classifyTouch(640 - 30, 360 - 200) === 'btn:r');
-    check('换枪按钮命中', H.classifyTouch(640 - 30, 360 - 156) === 'btn:q');
-    check('手雷按钮命中', H.classifyTouch(640 - 30, 360 - 112) === 'btn:g');
-    check('交互按钮命中', H.classifyTouch(640 - 30, 360 - 68) === 'btn:e');
+    check('换弹按钮命中', H.classifyTouch(640 - 30, 360 - 236) === 'btn:r');
+    check('换枪按钮命中', H.classifyTouch(640 - 30, 360 - 198) === 'btn:q');
+    check('手雷按钮命中', H.classifyTouch(640 - 30, 360 - 160) === 'btn:g');
+    check('医疗包按钮命中', H.classifyTouch(640 - 30, 360 - 122) === 'btn:3');
+    check('护甲板按钮命中', H.classifyTouch(640 - 30, 360 - 84) === 'btn:4');
+    check('交互按钮命中', H.classifyTouch(640 - 30, 360 - 46) === 'btn:e');
     check('左上角暂停键命中', H.classifyTouch(30, 30) === 'pause');
     check('空白处不命中任何控件', H.classifyTouch(320, 180) === null);
 
@@ -971,6 +973,23 @@
     H.resetTouchLayout();
     check('恢复默认布局（fire 回到 ' + JSON.stringify(H.getLayoutPos('fire')) + '）',
       H.getLayoutPos('fire').x === defaultFire.x && H.getLayoutPos('fire').y === defaultFire.y);
+
+    // HUD 元素自定义：设置偏移 → 持久化 → 恢复默认
+    check('HUD 偏移默认全零', H.getHudOff('body').x === 0 && H.getHudOff('body').y === 0);
+    H.setHudOff('body', 30, -20);
+    check('移动血/甲 HUD 偏移（' + JSON.stringify(H.getHudOff('body')) + '）',
+      H.getHudOff('body').x === 30 && H.getHudOff('body').y === -20);
+    H.saveHudLayout();
+    H.setHudOff('body', 0, 0);
+    H.loadHudLayout();
+    check('重载后恢复到保存的 HUD 偏移（' + JSON.stringify(H.getHudOff('body')) + '）',
+      H.getHudOff('body').x === 30 && H.getHudOff('body').y === -20);
+    H.resetHudLayout();
+    check('恢复默认 HUD 偏移（body 清零）', H.getHudOff('body').x === 0 && H.getHudOff('body').y === 0);
+
+    // 医疗包/护甲板按钮：classifyTouch 归为 btn:3 / btn:4（数字键直达手持物）
+    check('医疗包按钮归为 btn:3', H.classifyTouch(640 - 30, 360 - 122) === 'btn:3');
+    check('护甲板按钮归为 btn:4', H.classifyTouch(640 - 30, 360 - 84) === 'btn:4');
 
     // 切回电脑，触控残留应被清掉
     H.setInputMode('pc');
