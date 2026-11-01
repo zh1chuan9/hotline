@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HOTLINE 2.5D · H5</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0b0a0d;
+    overflow: hidden;
+    font-family: "Microsoft YaHei", "PingFang SC", monospace;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #0f0c12;
+    box-shadow: 0 0 60px rgba(0,0,0,.9);
+    cursor: none;
+  }
+  #boot {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    color: #8b7f95; font-size: 14px; letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="game" width="640" height="360"></canvas></div>
+<div id="boot">载入中…</div>
+<script src="js/game.js"></script>
+</body>
+</html>

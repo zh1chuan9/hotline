@@ -1,0 +1,19 @@
+# Godot 4 编辑器缓存与导入产物
+.godot/
+
+# 导出产物
+build/
+*.exe
+!launch.bat
+
+# 系统
+Thumbs.db
+.DS_Store
+
+# 调试截图 / 中间产物
+shots/
+tools/_*.png
+tools/_*.html
+
+# WorkBuddy 项目记忆（本地工作日志，不进远程仓库）
+.workbuddy/

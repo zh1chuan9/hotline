@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>HOTLINE H5 · 波次生存冒烟测试</title>
+<style>
+  body { background:#111; color:#ddd; font-family: Consolas, monospace; margin:0; padding:16px; }
+  canvas { position: fixed; left: -9999px; top: 0; }
+  pre { font-size: 14px; line-height: 1.6; }
+  .ok { color:#7fdc9a; } .fail { color:#ff6b6b; }
+</style>
+</head>
+<body>
+<canvas id="game" width="640" height="360"></canvas>
+<pre id="result">running…</pre>
+<script src="js/game.js"></script>
+<script>
+(function () {
+  const lines = [];
+  function check(label, ok) {
+    lines.push((ok ? '[OK]   ' : '[FAIL] ') + label);
+    return ok;
+  }
+  function report() {
+    const fails = lines.filter(l => l.startsWith('[FAIL]')).length;
+    const summary = fails === 0 ? '全部通过' : fails + ' 项失败';
+    const text = lines.join('\n') + '\n\n==== 冒烟测试结果：' + summary + ' ====';
+    const el = document.getElementById('result');
+    el.textContent = text;
+    el.className = fails === 0 ? 'ok' : 'fail';
+    document.title = 'RESULT:' + summary;
+    window.__testDone = true;
+    window.__testReport = text;
+  }
+
+  function waitReady(cb) {
+    if (window.__ready) return cb();
+    setTimeout(() => waitReady(cb), 50);
+  }
+
+  waitReady(() => {
+    try {
+      runTests();
+    } catch (e) {
+      document.getElementById('result').textContent = '测试异常: ' + e.message + '\n' + e.stack;
+      document.title = 'RESULT:异常';
+    }
+  });
+
+  function runTests() {
+    const H = window.HOTLINE;
+    H.freeze(true);
+
+    // ============ 1. 游戏启动 ============
+    H.startGame();
+    const w = H.world, g = H.g, p = g.player;
+    check('单张防守地图加载（' + w.title + '）', !!w && w.w > 0 && w.h > 0);
+    check('刷怪点存在（' + w.spawnPoints.length + ' 个）', w.spawnPoints.length >= 4);
+    check('补给点存在（' + (w.supplies ? w.supplies.length : 0) + ' 个）', w.supplies && w.supplies.length >= 1);
+    check('玩家出生点可站（非墙内）', !isInWall(w, p.x, p.y));
+    check('开局发手枪 + 满备弹', p.weapon === 'pistol' && p.ammo === 8 && p.reserve === 64);
+    check('第 1 波已生成（' + g.wave + ' 波）', g.wave === 1);
+
+    // ============ 2. 单血量 + 护甲结构 ============
+    check('玩家血量上限 100（当前 ' + p.hp + '）', p.hp === 100);
+    check('初始无护甲（armor=' + p.armor + '）', p.armor === 0);
+
+    // ============ 3. 护甲先扣，扣完掉血 ============
+    H.refillArmor(p);
+    check('补满三格护甲（armor=' + p.armor + '）', p.armor === 150);
+    const hpBefore = p.hp;
+    H.hurt(30, 0);   // 30 伤害，护甲吸收，不掉血
+    check('护甲吸收伤害（护甲 ' + p.armor + '，血量不变 ' + hpBefore + '）', p.armor === 120 && p.hp === hpBefore);
+    // 打穿护甲
+    p.armor = 10;
+    const hp2 = p.hp;
+    H.hurt(40, 0);   // 10 护甲吸收 + 30 掉血
+    check('护甲耗尽后掉血（hp ' + hp2 + '→' + p.hp + '）', p.armor === 0 && p.hp === hp2 - 30);
+
+    // ============ 4. 敌人血量大幅降低 ============
+    const enemy = w.enemies[0];
+    enemy.alive = true;
+    const eHp0 = enemy.hp;
+    check('敌人血量低（' + eHp0 + '，应 < 30）', eHp0 > 0 && eHp0 < 30);
+    // 把敌人直接放到玩家正右方（避开掩体），手枪两枪（20×2）能打死近战敌人（hp 24）
+    p.weapon = 'pistol'; p.ammo = 8; p.cooldown = 0;
+    enemy.x = p.x + 40; enemy.y = p.y;
+    p.facing = { x: 1, y: 0 };
+    H.attack();
+    for (let i = 0; i < 12; i++) H.step(1);   // 等冷却（0.15s）
+    H.attack();
+    check('手枪两枪打死近战敌人（hp ' + eHp0 + '→死）', !enemy.alive);
+    check('击杀获得积分（cash=' + g.cash + '）', g.cash > 0);
+
+    // ============ 5. 备弹系统：换弹从备弹取 ============
+    w.pickups.length = 0;   // 清掉第 4 节可能掉落的弹药，否则换弹完成后会被自动吸掉、reserve 又补满
+    p.weapon = 'pistol';
+    p.ammo = 0; p.reserve = 64;
+    p.reload = 0;
+    const clips5 = H.fxClips.length;
+    H.attack();  // 触发换弹
+    check('空仓触发换弹（reload=' + p.reload + '）', p.reload > 0);
+    check('空仓自动换弹也走同一套动画（clips +' + (H.fxClips.length - clips5) + '）',
+      H.fxClips.length === clips5 + 1);
+    check('换弹记下总时长，准心进度环要用（reloadTotal=' + p.reloadTotal + '）',
+      p.reloadTotal > 0 && Math.abs(p.reloadTotal - p.reload) < 1e-6);
+    // 手动推进换弹完成（清场，免得换弹这 0.9 秒里被小怪打死触发重开）
+    for (let i = 0; i < 60; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('换弹后弹匣回满、备弹减少（ammo=' + p.ammo + '，reserve=' + p.reserve + '）', p.ammo === 8 && p.reserve === 56);
+    check('换弹结束后 reloadTotal 归零（' + p.reloadTotal + '）', p.reloadTotal === 0);
+
+    // ============ 6. 冲锋枪 ============
+    p.weapon = 'smg';
+    p.ammo = 20; p.reserve = 120;
+    const smgDef = { fireRate: 0.07, auto: true, mag: 20, reserveMax: 120 };
+    check('冲锋枪主弹匣 20 发（mag=' + smgDef.mag + '）', smgDef.mag === 20);
+    check('冲锋枪备弹上限 120（reserveMax=' + smgDef.reserveMax + '）', smgDef.reserveMax === 120);
+    check('冲锋枪全自动（auto=' + smgDef.auto + '）', smgDef.auto === true);
+    check('冲锋枪射速快（fireRate=' + smgDef.fireRate + '）', smgDef.fireRate < 0.1);
+
+    // ============ 7. 掉落系统 ============
+    // 关键回归：手持武器时，走近血包也应自动拾取进背包（修复"按4拿不出血包"）
+    const w7 = H.world;
+    p.weapon = 'pistol'; p.medkits = 0; p.hp = 30;
+    const med = { def: 'medkit', x: p.x + 10, y: p.y, bob: 0, vx: 0, vy: 0, flying: false, rot: 0 };
+    w7.pickups.push(med);
+    H.step(1);   // 走 updatePlayer → tryPickup(false) 自动拾取
+    check('持枪时血包自动拾取进背包（medkits=' + p.medkits + '，hp=' + p.hp + '）', p.medkits === 1 && p.hp === 30);
+    // 弹药掉落（持枪时也自动补备弹）
+    const ammo = { def: 'ammo', x: p.x + 10, y: p.y, bob: 0, vx: 0, vy: 0, flying: false, rot: 0 };
+    w7.pickups.push(ammo);
+    p.weapon = 'pistol'; p.reserve = 0;
+    H.step(1);
+    check('持枪时弹药自动补备弹（reserve=' + p.reserve + '）', p.reserve > 0);
+
+    // ============ 8. 补给点 ============
+    H.startGame();
+    const g8 = H.g, p8 = g8.player;
+    // 把玩家挪到补给点旁边
+    const supply = H.world.supplies[0];
+    p8.x = supply.x + 20; p8.y = supply.y;
+    check('走近补给点可识别（nearSupply）', H.nearSupply() !== null);
+    // 远离补给点
+    p8.x = H.world.spawn.x; p8.y = H.world.spawn.y;
+    const nearAway = H.nearSupply();
+    check('远离补给点不可开商店', nearAway === null || Math.hypot(p8.x - supply.x, p8.y - supply.y) > 40);
+
+    // ============ 9. 商店无技能，有护甲/老虎机 ============
+    p8.x = supply.x + 20; p8.y = supply.y;
+    g8.cash = 1000;
+    H.openShop();
+    check('打开商店（state=' + g8.state + '）', g8.state === 'shop');
+    const hasPerk = H.shop.some(s => s.kind === 'perk');
+    check('商店不再出售技能（perk 项数=0）', !hasPerk);
+    const hasArmor = H.shop.some(s => s.kind === 'armor');
+    check('商店出售护甲板', hasArmor);
+    const hasSlot = H.shop.some(s => s.kind === 'slot');
+    check('商店有老虎机', hasSlot);
+    // 买护甲板：进背包（不再立即补满）
+    g8.shopSel = H.shop.findIndex(s => s.kind === 'armor');
+    p8.armor = 0; p8.armorSlots = 0; p8.armorPlates = 0;
+    H.buyShopItem();
+    check('买护甲板进背包（armorPlates=' + p8.armorPlates + '，armor=' + p8.armor + '）', p8.armorPlates === 1 && p8.armor === 0);
+
+    // ============ 10. 老虎机 ============
+    // 直接验证结算逻辑：三个相同 → 发技能
+    g8.slotState = { spinning: false, t: 2.0, stops: [0, 0, 0], result: null };
+    // 模拟 updateSlot 结算分支：手动触发 grantSkill
+    const pPerkBefore = p8.perks.speed;
+    H.grantSkill(p8, 'speed');
+    check('老虎机发技能（perks.speed=' + p8.perks.speed + '）', p8.perks.speed === pPerkBefore + 1);
+    // 铁甲技能补满护甲
+    p8.armor = 0;
+    H.grantSkill(p8, 'armor');
+    check('铁甲技能补满护甲（armor=' + p8.armor + '）', p8.armor === 150);
+    // 三同判定逻辑：构造三个相同符号的 slot 并跑完动画
+    const slot2 = H.startSlot();
+    slot2.spinning = false;
+    slot2.t = 2.0;
+    slot2.stops = [1, 1, 1];   // firerate
+    slot2.result = null;
+    g8.slotState = slot2;
+    // 直接验证结算分支（三个相同才发奖）
+    const sym = slot2.spinning ? null :
+      (slot2.stops[0] === slot2.stops[1] && slot2.stops[1] === slot2.stops[2] ? H.slotSymbols[slot2.stops[0]] : null);
+    check('三同图案判定正确（' + sym + '）', sym === 'firerate');
+    // 关闭商店不再进下一波（现在波次清空才自动进下一波）
+    H.closeShop();
+    check('关闭商店回到 play（state=' + g8.state + '）', g8.state === 'play');
+
+    // ============ 10.5 开界面用的按键不能被状态切换反复读 ============
+    // 真机上的坑：高刷屏里按下那一帧可能没跑到 update（advanced=false），
+    // pressed 活到下一帧，被新状态的分支读成"再按一次"，于是商店开了就关、暂停闪一下就没了。
+    H.startGame();
+    const gOpen = H.g, pOpen = gOpen.player;
+    const supOpen = H.world.supplies[0];
+    pOpen.x = supOpen.x + 20; pOpen.y = supOpen.y;
+    H.key('b', true);
+    H.frameEnd(false);                     // 按下那帧没跑 update
+    check('没跑 update 的帧里按 B 也能开商店（state=' + gOpen.state + '）', gOpen.state === 'shop');
+    check('开店的 B 已被消费（残留=' + H.pendingKeys.join(',') + '）', H.pendingKeys.length === 0);
+    H.frameEnd(true);                      // 下一帧
+    check('下一帧商店仍然开着，不会被同一个 B 关掉', gOpen.state === 'shop');
+    H.key('b', false); H.clearPressed();
+    H.key('b', true); H.frameEnd(true);
+    check('松手再按 B 才关商店（state=' + gOpen.state + '）', gOpen.state === 'play');
+    H.key('b', false); H.clearPressed();
+
+    H.key('escape', true);
+    H.frameEnd(false);
+    check('没跑 update 的帧里按 ESC 也能暂停', gOpen.paused === true);
+    check('暂停用的 ESC 不残留（残留=' + H.pendingKeys.join(',') + '）', H.pendingKeys.length === 0);
+    gOpen.paused = false;
+    H.key('escape', false); H.clearPressed();
+
+    pOpen.x = H.world.spawn.x; pOpen.y = H.world.spawn.y;
+    H.key('b', true);
+    H.frameEnd(false);
+    check('远离补给点按 B 只提示、不残留（state=' + gOpen.state + '，残留=' + H.pendingKeys.join(',') + '）',
+      gOpen.state === 'play' && H.pendingKeys.length === 0);
+    H.key('b', false); H.clearPressed();
+
+    // ============ 11. 护甲板按 4 一次切出装配 ============
+    H.startGame();
+    const gA = H.g, pA = gA.player;
+    pA.armorPlates = 1; pA.armorSlots = 0; pA.armor = 0;
+    // 按 4 一次就取出护甲板 → 进入装配模式
+    H.key('4', true);
+    H.step(1);
+    check('按4一次切出护甲板（plating=' + pA.plating + '）', pA.plating === true);
+    H.clearPressed();
+    // 长按左键 1 秒 → 装一块护甲（PLATE_TIME = 1.0）
+    H.holdFire(true);
+    for (let i = 0; i < 70; i++) { H.step(1); }
+    check('长按1秒装一块护甲（armorPlates=0，armorSlots=1，armor=50）',
+      pA.armorPlates === 0 && pA.armorSlots === 1 && pA.armor === 50);
+    H.holdFire(false);
+    // 护甲满时按 4 仍能切出来（不再拦住切换），只是读完不扣板
+    pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 150;
+    H.key('4', true);
+    H.step(1);
+    check('护甲已满也能切出护甲板（plating=' + pA.plating + '）', pA.plating === true);
+    H.clearPressed();
+    H.holdFire(true);
+    for (let i = 0; i < 70; i++) { H.step(1); }
+    H.holdFire(false);
+    check('护甲满时读完不浪费护甲板（armorPlates=' + pA.armorPlates + '）', pA.armorPlates === 1);
+    H.clearPressed();
+
+    // 被削掉一半的甲（3 格板还在，但只剩 60 点）必须还能补 —— 判满只看护甲值
+    pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 60;
+    H.clearPressed();
+    H.key('4', true); H.step(1); H.clearPressed();
+    check('半甲按4仍能取出护甲板（plating=' + pA.plating + '）', pA.plating === true);
+    H.holdFire(true);
+    // 每帧清场：装甲这 1 秒里被小怪打掉几滴甲，断言就会飘（曾经偶发 100 而不是 110）
+    for (let i = 0; i < 70; i++) { H.world.enemies.length = 0; H.step(1); }
+    H.holdFire(false);
+    check('半甲（60）补一块变 110、扣一块板（armor=' + pA.armor + '，armorPlates=' + pA.armorPlates + '）',
+      pA.armor === 110 && pA.armorPlates === 0 && pA.armorSlots === 3);
+    // 护甲值掉到 40 时格数应跟着变成 1（否则 HUD/判满又会错位）
+    pA.armor = 100; H.hurt(60);
+    check('受击后格数与护甲值同步（armor=' + pA.armor + '，armorSlots=' + pA.armorSlots + '）',
+      pA.armor === 40 && pA.armorSlots === 1);
+    H.clearPressed();
+
+    // ============ 11b. 数字键直达：1 主武器 / 2 副武器 / 3 血包 ============
+    H.startGame();
+    const gK = H.g, pK = gK.player, wK = H.world;
+    wK.pickups.length = 0;
+    pK.medkits = 2; pK.hp = 40;
+    // 3 一次切出血包
+    H.key('3', true); H.step(1); H.clearPressed();
+    check('按3一次切出血包（healing=' + pK.healing + '）', pK.healing === true);
+    // 1 一次回主武器
+    H.key('1', true); H.step(1); H.clearPressed();
+    check('按1一次收回血包回主武器（healing=' + pK.healing + '，weapon=' + pK.weapon + '）',
+      pK.healing === false && pK.weapon === 'pistol');
+    // 手动捡一把霰弹枪进副槽
+    H.dropGun('shotgun', pK.x + 8, pK.y);
+    H.pickup();
+    check('第二把枪进副槽（' + (pK.side && pK.side.weapon) + '）', !!pK.side && pK.side.weapon === 'shotgun');
+    // 2 一次切副武器
+    H.key('2', true); H.step(1); H.clearPressed();
+    check('按2一次切副武器（weapon=' + pK.weapon + '）', pK.weapon === 'shotgun');
+    // 等换枪动画走完（shotgun drawTime 0.46s），再按 1 切回
+    for (let i = 0; i < 30; i++) H.step(1);
+    // 1 一次回主武器
+    H.key('1', true); H.step(1); H.clearPressed();
+    check('按1一次回主武器（weapon=' + pK.weapon + '）', pK.weapon === 'pistol');
+    // 重复按同一个键不会来回抖（不再是 toggle）
+    for (let i = 0; i < 20; i++) H.step(1);   // 等换枪动画走完
+    H.key('1', true); H.step(1); H.clearPressed();
+    check('重复按1不会切走（weapon=' + pK.weapon + '）', pK.weapon === 'pistol');
+    // 没血包时按 3 只提示，不进入治疗
+    pK.medkits = 0; pK.healing = false;
+    H.key('3', true); H.step(1); H.clearPressed();
+    check('没有血包时按3不进入治疗（healing=' + pK.healing + '）', pK.healing === false);
+    // 治疗读条松开不清零：点两下也能攒进度
+    pK.medkits = 1; pK.hp = 30; pK.healing = true; pK.healCharge = 0;
+    H.holdFire(true); H.step(60); H.holdFire(false);   // 按住 1 秒 → 1.0
+    const chargeAfter = pK.healCharge;
+    H.step(10); H.holdFire(false);                     // 松开一小会儿 → 只缓慢回退
+    check('治疗读条松开不清零（' + chargeAfter.toFixed(2) + '→' + pK.healCharge.toFixed(2) + '）',
+      chargeAfter > 0.9 && pK.healCharge > 0.6);
+    // 血包读条改成 2 秒（HEAL_TIME = 2.0）：按住 2.1 秒回满一格
+    H.world.enemies.length = 0;                        // 清场，免得读条时被打断
+    H.step(1);
+    pK.medkits = 1; pK.hp = 30; pK.healing = true; pK.healCharge = 0;
+    H.holdFire(true);
+    for (let i = 0; i < 130; i++) { H.step(1); }
+    H.holdFire(false);
+    check('血包2秒读完回50血（hp=' + pK.hp + '，medkits=' + pK.medkits + '）',
+      pK.hp === 80 && pK.medkits === 0 && pK.healing === false);
+
+    // ============ 11c. 高刷新率下按键不会被吞（"按4要按好多下"的根因） ============
+    H.startGame();
+    const pD = H.g.player;
+    pD.armorPlates = 2; pD.plating = false;
+    H.clearPressed();
+    H.key('4', true);
+    H.frameEnd(false);            // 模拟一帧 acc 没攒够 STEP、update 没跑的收尾
+    check('没跑到 update 的帧不吞按键（pending=' + H.pendingKeys.join(',') + '）',
+      H.pendingKeys.indexOf('4') >= 0 && pD.plating === false);
+    H.step(1);                    // 下一帧跑 update，按键照样生效
+    check('留到下一帧的按键照样切出护甲板（plating=' + pD.plating + '）', pD.plating === true);
+    H.clearPressed(); H.frameEnd(true);
+    check('跑到 update 的帧会正常清空按键（pending=' + H.pendingKeys.length + '）', H.pendingKeys.length === 0);
+
+    // ============ 12. 波次整备与第 2 波推进 ============
+    // 关键回归：第 1 波清空后应能进入第 2 波（修复"第 2 波停止"）
+    H.startGame();
+    const g11 = H.g, w11 = H.world;
+    // 手动清掉第 1 波所有敌人
+    for (const e of w11.enemies) { e.alive = false; }
+    H.step(1);   // 触发清场判定 → 进入整备
+    check('清场后进入整备（intermission>0，' + g11.intermission + '）', g11.intermission > 0);
+    check('整备时间约 30 秒（' + g11.intermission + '）', g11.intermission > 29 && g11.intermission <= 30);
+    // 跳过整备 → 直接进第 2 波
+    g11.intermission = 0;
+    H.startWave();
+    check('跳过整备进第 2 波（wave=' + g11.wave + '）', g11.wave === 2);
+    check('第 2 波敌人已生成（' + w11.enemies.length + ' 个）', w11.enemies.length > 0);
+    // 再清掉第 2 波，验证不会停止（cleared 被正确重置）
+    for (const e of w11.enemies) { e.alive = false; }
+    H.step(1);
+    check('第 2 波清空后再次进入整备（intermission>0）', g11.intermission > 0);
+
+    // ============ 13. 血包自动拾取（枪挡在前面也要捡） ============
+    // 关键回归：敌人死时枪和血包掉在一起，枪更近。旧版只处理"最近那个"，
+    // 手里有枪就直接 return，血包永远捡不起来。
+    H.startGame();
+    const g13 = H.g, p13 = g13.player, w13 = H.world;
+    p13.medkits = 0; p13.weapon = 'pistol';
+    w13.pickups.push({ def: 'shotgun', x: p13.x + 6, y: p13.y, bob: 0, vx: 0, vy: 0, flying: false, rot: 0 });
+    w13.pickups.push({ def: 'medkit', x: p13.x + 20, y: p13.y, bob: 0, vx: 0, vy: 0, flying: false, rot: 0 });
+    H.step(1);
+    check('枪挡在更近处也能自动拾取血包（medkits=' + p13.medkits + '）', p13.medkits === 1);
+    check('拾取血包不会误换掉手里的枪（weapon=' + p13.weapon + '）', p13.weapon === 'pistol');
+
+    // ============ 14. 爆头 ============
+    H.startGame();
+    const g14 = H.g, p14 = g14.player, w14 = H.world;
+    p14.weapon = 'pistol'; p14.ammo = 12; p14.cooldown = 0;
+    p14.facing = { x: 1, y: 0 };
+    // 只留一个敌人，摆到准心所指的世界点上
+    for (const e of w14.enemies) { e.alive = false; }
+    H.aim(40, 0);
+    const ap14 = H.aimPoint;
+    const e14 = w14.enemies[0];
+    e14.alive = true; e14.hp = 500; e14.maxHp = 500;
+    e14.x = ap14.x; e14.y = ap14.y;
+    const hp14 = e14.hp;
+    H.attack();
+    const dmgHead = hp14 - e14.hp;
+    check('准心在敌人头上 → 爆头伤害更高（' + dmgHead + ' > 30）', dmgHead > 30);
+    // 准心挪开 30px（还在射线上但不在头上）→ 普通伤害
+    e14.hp = 500;
+    H.aim(40, 60);
+    const ap14b = H.aimPoint;
+    e14.x = ap14b.x; e14.y = ap14b.y - 30;   // 偏离准心 30px
+    const hp14b = e14.hp;
+    p14.cooldown = 0; p14.ammo = 12;
+    p14.facing = { x: (e14.x - p14.x), y: (e14.y - p14.y) };
+    const fl = Math.hypot(p14.facing.x, p14.facing.y) || 1;
+    p14.facing.x /= fl; p14.facing.y /= fl;
+    H.attack();
+    const dmgBody = hp14b - e14.hp;
+    check('准心偏开头部 → 普通伤害（' + dmgBody + '，应 ≤ 30）', dmgBody > 0 && dmgBody <= 30);
+
+    // ============ 15. AI 移速下调 ============
+    H.startGame();
+    const w15 = H.world;
+    const maxSpd = Math.max.apply(null, w15.enemies.map(e => e.speed));
+    check('第 1 波敌人移速已放缓（最快 ' + Math.round(maxSpd) + ' < 100）', maxSpd < 100);
+
+    // ============ 16. AI 会追近、且不互相重叠 ============
+    const p16 = H.g.player;
+    const near0 = Math.min.apply(null, w15.enemies.map(e => Math.hypot(e.x - p16.x, e.y - p16.y)));
+    H.step(90);   // 1.5 秒
+    const near1 = Math.min.apply(null, w15.enemies.map(e => Math.hypot(e.x - p16.x, e.y - p16.y)));
+    check('敌人会主动接近玩家（' + Math.round(near0) + ' → ' + Math.round(near1) + '）', near1 < near0);
+    // 同伴分离：任意两只不应挤在同一个点
+    let minPair = Infinity;
+    const alive16 = w15.enemies.filter(e => e.alive);
+    for (let i = 0; i < alive16.length; i++) {
+      for (let j = i + 1; j < alive16.length; j++) {
+        const d = Math.hypot(alive16[i].x - alive16[j].x, alive16[i].y - alive16[j].y);
+        if (d < minPair) minPair = d;
+      }
+    }
+    check('敌人之间保持间距（最近一对 ' + Math.round(minPair) + 'px > 10）', minPair > 10);
+
+    // ============ 17. R 手动换弹 ============
+    H.startGame();
+    const g17 = H.g, p17 = g17.player;
+    p17.weapon = 'pistol'; p17.ammo = 3; p17.reserve = 64; p17.reload = 0; p17.cooldown = 0;
+    const ok17 = H.reload();
+    check('R 手动换弹开始（reload=' + p17.reload.toFixed(2) + '）', ok17 === true && p17.reload > 0);
+    for (let i = 0; i < 70; i++) H.step(1);
+    check('换弹后弹匣补满（ammo=' + p17.ammo + '，reserve=' + p17.reserve + '）', p17.ammo === 8 && p17.reserve === 59);
+    p17.ammo = 8; p17.reserve = 64; p17.reload = 0;
+    check('弹匣满时按 R 不换弹', H.reload() === false && p17.reload === 0);
+
+    // 快手：技能层数曾经被直接当成比例用（1 - 1 = 0 → 换弹时长 0 → 弹匣永远填不上）
+    p17.ammo = 3; p17.reserve = 64; p17.reload = 0; p17.cooldown = 0;
+    p17.perks.reload = 1;
+    const ok17b = H.reload();
+    check('1 层快手按 R 仍能换弹（reload=' + p17.reload.toFixed(2) + '）',
+      ok17b === true && p17.reload > 0 && p17.reload < 0.9);
+    for (let i = 0; i < 70; i++) H.step(1);
+    check('1 层快手换弹后弹匣照样补满（ammo=' + p17.ammo + '）', p17.ammo === 8);
+
+    // 叠满也不能变成 0
+    p17.ammo = 0; p17.reserve = 64; p17.reload = 0; p17.cooldown = 0;
+    p17.perks.reload = 20;
+    H.reload();
+    check('快手叠满后换弹时长仍有下限（reload=' + p17.reload.toFixed(2) + '）',
+      p17.reload >= 0.15);
+    for (let i = 0; i < 70; i++) H.step(1);
+    check('快手叠满后弹匣也能补满（ammo=' + p17.ammo + '）', p17.ammo === 8);
+
+    // 疾跑 / 快枪手同样不能溢出：层数拉满时倍率仍封顶
+    p17.perks.reload = 0;
+    p17.perks.speed = 20; p17.perks.firerate = 20;
+    const sx17 = p17.x, sy17 = p17.y;
+    H.key('d', true);
+    for (let i = 0; i < 60; i++) H.step(1);
+    H.key('d', false);
+    const moved17 = Math.hypot(p17.x - sx17, p17.y - sy17);
+    check('疾跑叠满后移速有上限（1 秒走了 ' + Math.round(moved17) + 'px）',
+      moved17 > 0 && moved17 <= 134 * 1.6 * 1.1);
+    p17.perks.speed = 0; p17.perks.firerate = 0;
+
+    // 换弹动画：甩一个旧弹匣出去，动画期间扣不动扳机
+    p17.weapon = 'pistol'; p17.ammo = 5; p17.reserve = 64; p17.reload = 0; p17.cooldown = 0;
+    p17.perks.reload = 0;
+    const clips0 = H.fxClips.length;
+    H.reload();
+    check('换弹甩出一个旧弹匣（clips +' + (H.fxClips.length - clips0) + '）',
+      H.fxClips.length === clips0 + 1);
+    H.holdFire(true);
+    for (let i = 0; i < 20; i++) { H.world.enemies.length = 0; H.step(1); }
+    H.holdFire(false);
+    check('换弹动画期间开不了枪（ammo=' + p17.ammo + '，reload=' + p17.reload.toFixed(2) + '）',
+      p17.ammo === 5 && p17.reload > 0);
+    for (let i = 0; i < 70; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('动画走完弹匣照常补满（ammo=' + p17.ammo + '）', p17.ammo === 8);
+    H.clearPressed();
+
+    // 散弹枪逐发装填：上单不退壳（壳在开火时已退），只逐发塞、每塞一发 +1
+    p17.weapon = 'shotgun'; p17.ammo = 1; p17.reserve = 24; p17.reload = 0; p17.cooldown = 0;
+    const shells0 = H.fxClips.length;
+    H.reload();
+    check('散弹枪换弹不退壳（clips +' + (H.fxClips.length - shells0) + '）',
+      H.fxClips.length === shells0);
+    check('散弹枪换弹总时长按缺发数算（缺 ' + (4 - p17.ammo) + ' 发，reloadTotal=' + p17.reloadTotal.toFixed(2) + '）',
+      Math.abs(p17.reloadTotal - 0.42 * 3) < 0.05);
+    // 推进一发的时间：+1 发
+    for (let i = 0; i < 26; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('散弹枪塞进第一发（ammo=' + p17.ammo + '）', p17.ammo === 2);
+    for (let i = 0; i < 60; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('散弹枪逐发装填到底（ammo=' + p17.ammo + '，reserve=' + p17.reserve + '）', p17.ammo === 4 && p17.reserve === 21);
+    H.clearPressed();
+
+    // 散弹枪开火：打一发退一颗空弹壳
+    p17.weapon = 'shotgun'; p17.ammo = 4; p17.reserve = 20; p17.reload = 0; p17.cooldown = 0;
+    p17.facing = { x: 1, y: 0 };
+    H.world.enemies.length = 0;
+    const shotShells0 = H.fxClips.length;
+    H.attack();
+    check('散弹枪开火退出一颗空壳（clips +' + (H.fxClips.length - shotShells0) + '）',
+      H.fxClips.length === shotShells0 + 1 && H.fxClips[H.fxClips.length - 1].type === 'shell');
+    H.clearPressed();
+
+    // ============ 18. 副武器槽（能多背一把，Q 切换） ============
+    H.startGame();
+    const g18 = H.g, p18 = g18.player, w18 = H.world;
+    w18.pickups.length = 0;
+    check('开局副武器槽为空', p18.side === null);
+    H.dropGun('shotgun', p18.x + 8, p18.y);
+    H.pickup();
+    check('捡第二把枪进副武器槽（' + (p18.side && p18.side.weapon) + '）', !!p18.side && p18.side.weapon === 'shotgun');
+    check('手上仍是原武器（' + p18.weapon + '）', p18.weapon === 'pistol');
+    H.swap();
+    check('Q 切到副武器（weapon=' + p18.weapon + '）', p18.weapon === 'shotgun' && !!p18.side && p18.side.weapon === 'pistol');
+    for (let i = 0; i < 30; i++) H.step(1);   // 等换枪动画走完（shotgun drawTime 0.46s）
+    H.swap();
+    check('再按 Q 切回主武器（weapon=' + p18.weapon + '）', p18.weapon === 'pistol');
+
+    // ============ 19. 捡同型号的枪 → 直接变备弹 ============
+    H.startGame();
+    const g19 = H.g, p19 = g19.player, w19 = H.world;
+    w19.pickups.length = 0;
+    p19.weapon = 'pistol'; p19.ammo = 4; p19.reserve = 20;
+    const pk19 = H.dropGun('pistol', p19.x + 8, p19.y);
+    pk19.ammo = 8;
+    H.step(1);   // 走近自动吸
+    check('同型号枪自动并成备弹（reserve 20→' + p19.reserve + '）', p19.reserve === 28);
+    check('同型号枪不占副武器槽', p19.side === null);
+
+    // ============ 20. 敌人近战武器不掉落 ============
+    H.startGame();
+    const g20 = H.g, p20 = g20.player, w20 = H.world;
+    w20.pickups.length = 0;
+    const em20 = w20.enemies.find(e => e.kind === 'melee');
+    em20.weapon = 'knife';
+    em20.alive = true; em20.hp = 1;
+    em20.x = p20.x + 40; em20.y = p20.y;
+    p20.weapon = 'pistol'; p20.ammo = 12; p20.cooldown = 0;
+    p20.facing = { x: 1, y: 0 };
+    H.attack();
+    check('近战敌人被打死（alive=' + em20.alive + '）', !em20.alive);
+    check('敌人近战武器不掉落', !w20.pickups.some(pk => pk.def === 'knife'));
+
+    // ============ 21. 死亡后自动重开（重置关卡已去掉） ============
+    H.startGame();
+    const g21 = H.g;
+    H.hurt(999, 0);
+    H.step(1);
+    check('玩家死亡进入 dead（state=' + g21.state + '）', g21.state === 'dead');
+    for (let i = 0; i < 240; i++) H.step(1);
+    check('躺 3 秒后自动开新局（state=' + g21.state + '，wave=' + g21.wave + '）',
+      g21.state === 'play' && g21.wave === 1);
+
+    // ============ 22. 开局 30 秒准备期 ============
+    H.startGame({ prep: true });
+    const g22 = H.g, w22 = H.world;
+    check('开局先进准备期而不是直接开波（wave=' + g22.wave + '，敌人=' + w22.enemies.length + '）',
+      g22.wave === 0 && w22.enemies.length === 0);
+    check('准备期倒计时 30 秒（intermission=' + g22.intermission + '）',
+      Math.abs(g22.intermission - 30) < 0.001);
+    check('准备期标记为已清场（cleared=' + w22.cleared + '）', w22.cleared === true);
+    // 推进 10 秒：还在准备期，敌人没刷出来
+    for (let i = 0; i < 600; i++) H.step(1);
+    check('10 秒后仍是准备期（敌人=' + w22.enemies.length + '）', w22.enemies.length === 0);
+    // 走完 30 秒 → 第一波自动开打
+    for (let i = 0; i < 1300; i++) H.step(1);
+    check('准备期结束自动开第一波（wave=' + g22.wave + '，敌人=' + w22.enemies.length + '）',
+      g22.wave === 1 && w22.enemies.length > 0);
+    // 准备期也能用空格提前开打
+    H.startGame({ prep: true });
+    const g22b = H.g;
+    H.key(' ', true);
+    H.frameEnd(true);
+    for (let i = 0; i < 3; i++) H.step(1);
+    check('准备期按空格提前开打（wave=' + g22b.wave + '）', g22b.wave === 1);
+    H.clearPressed();
+
+    // ============ 23. 瞄准（ADS）：按住右键抬枪 ============
+    H.startGame();
+    const g23 = H.g, p23 = g23.player;
+    H.world.enemies.length = 0;               // 清场，免得瞄准测试里被打死
+    H.holdAim(false);
+    for (let i = 0; i < 12; i++) { H.world.enemies.length = 0; H.step(1); }
+    const hipDeg = H.spreadDeg();
+    const hipZoom = H.zoom;
+    check('腰射散射比基础值大一倍多（' + hipDeg.toFixed(2) + '°，基础 1.6°）', hipDeg > 1.6 * 2);
+    // 移速基线：腰射状态按 D 跑满 1 秒，量走了多远
+    const mx23 = p23.x, my23 = p23.y;
+    H.key('d', true);
+    for (let i = 0; i < 60; i++) { H.world.enemies.length = 0; H.step(1); }
+    H.key('d', false);
+    const hipMoved = Math.hypot(p23.x - mx23, p23.y - my23);
+    p23.x = mx23; p23.y = my23;      // 量完挪回原位，后面的相机前探要用原坐标
+    H.clearPressed();
+    // 准心推到屏幕右边缘 → 相机往那边让位，玩家被顶到画面中心左边；
+    // 这个距离就是"玩家能看多远"的直接度量
+    H.aim(300, 0);
+    const hipViewW = 640 / H.zoom;
+    const hipLead = (H.g.cam.x + hipViewW / 2) - p23.x;
+
+    H.holdAim(true);
+    for (let i = 0; i < 12; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('按住右键进入瞄准（aiming=' + p23.aiming + '，aimT=' + p23.aimT.toFixed(2) + '）',
+      p23.aiming === true);
+    check('瞄准后散射收紧（腰射 ' + hipDeg.toFixed(2) + '° → 瞄准 ' + H.spreadDeg().toFixed(2) + '°）',
+      H.spreadDeg() < hipDeg * 0.3);
+    H.aim(300, 0);
+    const aimViewW = 640 / H.zoom;
+    const aimLead = (H.g.cam.x + aimViewW / 2) - p23.x;
+    check('瞄准时画面拉远、视野不缩反宽（' + hipViewW.toFixed(0) + ' → ' + aimViewW.toFixed(0) + ' 世界像素）',
+      H.zoom < hipZoom - 0.2 && aimViewW > hipViewW * 1.25);
+    check('瞄准时相机前探大幅加长（' + hipLead.toFixed(0) + ' → ' + aimLead.toFixed(0) + ' 世界像素）',
+      aimLead > hipLead * 2.4);
+    // 端枪移速：同样跑 1 秒，瞄准时应该只剩一小截
+    const ax23 = p23.x, ay23 = p23.y;
+    H.key('d', true);
+    for (let i = 0; i < 60; i++) { H.world.enemies.length = 0; H.step(1); }
+    H.key('d', false);
+    const aimMoved = Math.hypot(p23.x - ax23, p23.y - ay23);
+    check('瞄准时移速特别慢（1 秒 ' + Math.round(hipMoved) + ' → ' + Math.round(aimMoved) + ' px）',
+      hipMoved > 100 && aimMoved > 0 && aimMoved < hipMoved * 0.45);
+    H.clearPressed();
+
+    H.holdAim(false);
+    for (let i = 0; i < 14; i++) { H.world.enemies.length = 0; H.step(1); }
+    check('松开右键收枪（aiming=' + p23.aiming + '，zoom=' + H.zoom.toFixed(2) + '）',
+      p23.aiming === false && Math.abs(H.zoom - hipZoom) < 0.01);
+
+    // 近战 / 手持消耗品时不该进入瞄准
+    p23.weapon = 'knife';
+    H.holdAim(true);
+    for (let i = 0; i < 12; i++) { H.step(1); }
+    check('拿近战武器不能瞄准（aiming=' + p23.aiming + '）', p23.aiming === false);
+    H.holdAim(false);
+    p23.weapon = 'pistol'; p23.ammo = 12;
+
+    // 丢武器系统已经删掉：没有接口，按 X 也不掉枪
+    const pk23 = H.world.pickups.length;
+    H.key('x', true);
+    for (let i = 0; i < 3; i++) { H.step(1); H.frameEnd(true); }
+    H.key('x', false);
+    check('丢武器系统已移除（throwWeapon=' + typeof H.throwWeapon + '，按 X 不掉枪）',
+      typeof H.throwWeapon === 'undefined' && p23.weapon === 'pistol' && H.world.pickups.length === pk23);
+    H.clearPressed();
+
+    // ============ 24. 老虎机保底 ============
+    H.startGame();
+    const g24 = H.g;
+    // 连亏 5 次后下一把必中：直接造一个"保底已攒满"的状态，再摇
+    g24.slotPity = 5;
+    g24.state = 'shop';
+    g24.slotState = H.startSlot();
+    const cash24 = g24.cash;
+    for (let i = 0; i < 130; i++) H.updateSlot(1 / 60);
+    const s24 = g24.slotState;
+    check('保底攒满时必出三同（stops=' + s24.stops.join(',') + '，result=' + s24.result + '）',
+      s24.result !== null && s24.stops[0] === s24.stops[1] && s24.stops[1] === s24.stops[2]);
+    check('中奖后保底计数清零（slotPity=' + g24.slotPity + '）', g24.slotPity === 0);
+    check('保底中奖不额外退钱（cash ' + cash24 + '→' + g24.cash + '）', g24.cash === cash24);
+    g24.state = 'play';
+
+    // ============ 25. 手雷 ============
+    H.startGame();
+    const g25 = H.g, p25 = g25.player, w25 = H.world;
+    w25.enemies.length = 0;
+    p25.grenades = 2; p25.throwCd = 0;
+    H.aim(200, 0);                       // 准心朝右
+    H.key('g', true);
+    H.step(1); H.frameEnd(true);
+    H.key('g', false); H.clearPressed();
+    check('按 G 扔出手雷（飞行中=' + H.grenades.length + '，背包剩=' + p25.grenades + '）',
+      H.grenades.length === 1 && p25.grenades === 1);
+
+    // 冷却中连按不会再扔
+    H.key('g', true);
+    H.step(1); H.frameEnd(true);
+    H.key('g', false); H.clearPressed();
+    check('投掷冷却中按 G 不重复扔（飞行中=' + H.grenades.length + '）', H.grenades.length === 1);
+
+    // 引信烧完就地炸开：手雷应该从飞行列表里消失
+    for (let i = 0; i < 60; i++) H.step(1);
+    check('引信烧完后手雷消失（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
+
+    // 没有手雷时不进冷却、不生成飞行物
+    H.startGame();
+    const g25b = H.g, p25b = g25b.player;
+    p25b.grenades = 0; p25b.throwCd = 0;
+    H.aim(200, 0);
+    H.key('g', true);
+    H.step(1); H.frameEnd(true);
+    H.key('g', false); H.clearPressed();
+    check('没有手雷时按 G 不投（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
+
+    // 爆炸伤害：把现成的敌人挪到爆炸点旁边，另一个挪远，验证"近的掉血、远的没事"
+    H.startGame();
+    const g25c = H.g, p25c = g25c.player, w25c = H.world;
+    H.startWave();
+    const near25 = w25c.enemies[0];
+    near25.x = p25c.x + 40; near25.y = p25c.y;
+    near25.hp = near25.maxHp = 300;
+    const far25 = w25c.enemies[1];
+    if (far25) { far25.x = p25c.x + 300; far25.y = p25c.y; far25.hp = far25.maxHp = 300; }
+    const nearHp = near25.hp, farHp = far25 ? far25.hp : 0;
+    H.explode(p25c.x + 40, p25c.y, 76, 135);
+    check('爆炸伤到范围内的敌人（' + nearHp + '→' + near25.hp + '）', near25.hp < nearHp);
+    if (far25) {
+      check('爆炸不伤范围外的敌人（' + farHp + '→' + far25.hp + '）', far25.hp === farHp);
+    }
+    check('玩家自己的手雷也会自伤（hp=' + Math.round(p25c.hp) + '）', p25c.hp < 100);
+
+    // ============ 26. 油桶 ============
+    H.startGame();
+    const g26 = H.g, p26 = g26.player, w26 = H.world;
+    w26.enemies.length = 0;
+    check('地图上有油桶（' + H.barrels.length + ' 个）', H.barrels.length === 5);
+
+    // 子弹打桶：挑一只周围是空地的桶（row 13 col 6），玩家站它左边 40px 朝右开枪
+    // 注意别把玩家摆进掩体里 —— 射线起点落在掩体内部时 t=0，会先撞掩体而不是桶
+    const b26 = H.barrels.find(b => b.y === 13 * 24 + 12);
+    check('找得到用于测试的油桶', !!b26);
+    p26.x = b26.x - 40; p26.y = b26.y;
+    p26.weapon = 'pistol'; p26.ammo = 12; p26.cooldown = 0;
+    p26.facing = { x: 1, y: 0 };
+    H.attack();
+    for (let i = 0; i < 24; i++) H.step(1);
+    check('子弹打中油桶会引爆（alive=' + b26.alive + '）', b26.alive === false);
+    check('炸掉的油桶从碰撞里移除',
+      !w26.walls.some(rc => rc.x === b26.rect.x && rc.y === b26.rect.y));
+
+    // 连锁：相邻的两个桶（row 3 / row 4，同一列），炸一个另一个也会跟着炸
+    H.startGame();
+    const w26b = H.world;
+    w26b.enemies.length = 0;
+    const up = H.barrels.find(b => b.y === 84);          // row 3
+    const low = H.barrels.find(b => b.y === 108);        // row 4
+    check('相邻两只油桶都在（' + !!low + '/' + !!up + '）', !!low && !!up);
+    H.ignite(low);
+    for (let i = 0; i < 90; i++) H.step(1);
+    check('油桶连锁引爆（第二个 alive=' + up.alive + '）', low.alive === false && up.alive === false);
+
+    // 重复点燃不会重置引信
+    H.startGame();
+    const w26c = H.world;
+    w26c.enemies.length = 0;
+    const b26c = H.barrels[0];
+    H.ignite(b26c);
+    const fuse1 = b26c.fuse;
+    const again = H.ignite(b26c);
+    check('同一只桶不会被重复点燃（fuse ' + fuse1.toFixed(2) + '→' + b26c.fuse.toFixed(2) + '）',
+      again === false && b26c.fuse === fuse1);
+
+    // ============ 27. 三选一已移除，技能只能从老虎机来 ============
+    H.startGame();                       // 默认 prep:false，进来就已经是第 1 波
+    const g27 = H.g, w27 = H.world;
+    check('开局就在第 1 波（wave=' + g27.wave + '）', g27.wave === 1);
+    for (const e of w27.enemies) e.alive = false;
+    H.step(2);
+    check('第 1 波清空照常进整备（state=' + g27.state + '）', g27.state === 'play');
+
+    // 推到第 3 波再清空：以前这里会弹三选一，现在必须直接走整备倒计时
+    H.startWave(); H.startWave();        // 1 → 3
+    check('已经推到第 3 波（wave=' + g27.wave + '）', g27.wave === 3);
+    for (const e of w27.enemies) e.alive = false;
+    H.step(2);
+    check('第 3 波清空不再弹三选一（state=' + g27.state + '）', g27.state === 'play');
+    check('整备倒计时照常开始（intermission=' + g27.intermission.toFixed(1) + ' 秒）',
+      g27.intermission > 0);
+    check('三选一的接口和状态都没了', !H.openPerk && !H.choosePerk && !H.perkPool && !g27.perkChoice);
+
+    // 技能入口只剩老虎机
+    const p27 = g27.player;
+    const spd27 = p27.perks.speed;
+    H.grantSkill(p27, 'speed');
+    check('老虎机发技能·疾跑叠加（' + spd27 + '→' + p27.perks.speed + '）', p27.perks.speed === spd27 + 1);
+    p27.armor = 0; p27.armorSlots = 0;
+    H.grantSkill(p27, 'armor');
+    check('老虎机发技能·铁甲补满护甲（armor=' + p27.armor + '）', p27.armor === 150);
+    H.grantSkill(p27, 'double');
+    check('老虎机发技能·双倍分（' + g27.doubleScore + ' 波）', g27.doubleScore === 3);
+
+    // 老虎机真跑一遍动画到结算（把保底攒满强制三同），确认奖励链路接到 grantSkill
+    H.startGame();
+    const gS = H.g;
+    gS.state = 'shop';
+    gS.slotPity = 5;                     // 下次空转必被拉成三同
+    const sl = H.startSlot();
+    gS.slotState = sl;
+    let guard27 = 0;
+    while (sl.spinning && guard27++ < 400) H.updateSlot(1 / 60);
+    check('老虎机跑完整动画（轮子停了）', sl.spinning === false);
+    check('保底局必出奖励（result=' + sl.result + '）', !!sl.result);
+    check('中奖后保底计数清零（pity=' + gS.slotPity + '）', gS.slotPity === 0);
+
+    // ============ 28. 精英波 ============
+    H.startGame();
+    const g28 = H.g, w28 = H.world, p28 = g28.player;
+    g28.wave = 4;
+    H.startWave();                        // → 第 5 波
+    const elites = w28.enemies.filter(e => e.elite);
+    check('第 5 波刷出 1 只精英（' + elites.length + '）', elites.length === 1);
+    const el = elites[0];
+    check('精英体型放大（scale=' + (el.scale || 1) + '）', (el.scale || 1) > 1.2);
+    check('精英血量远高于同期小怪（' + el.hp + '）', el.hp > 100);
+
+    // 击杀：必给 1 手雷 + 1 护甲板
+    p28.grenades = 0; p28.armorPlates = 0;
+    H.hitEnemy(el, 9999);
+    check('击杀精英给稀有资源（手雷=' + p28.grenades + '，护甲板=' + p28.armorPlates + '）',
+      p28.grenades === 1 && p28.armorPlates === 1);
+    check('精英死亡后不再是活着的敌人', el.alive === false);
+
+    // 非 5 的倍数不刷精英
+    g28.wave = 5;
+    H.startWave();                        // → 第 6 波
+    check('第 6 波没有精英',
+      w28.enemies.filter(e => e.elite).length === 0);
+
+    report();
+  }
+
+  function isInWall(w, x, y) {
+    for (const rc of w.walls) {
+      if (x > rc.x && x < rc.x + rc.w && y > rc.y && y < rc.y + rc.h) return true;
+    }
+    return false;
+  }
+})();
+</script>
+</body>
+</html>
