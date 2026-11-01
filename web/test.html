@@ -229,12 +229,15 @@
     H.handlePauseKeys();
     H.key('escape', false); H.clearPressed();
     check('暂停菜单按 ESC 继续（paused=' + gPause.paused + '）', gPause.paused === false);
-    // 再暂停，选到「返回主菜单」并确认
+    // 再暂停，选到「返回主菜单」（现在是第 3 项，需按两次 S）并确认
     gPause.paused = true; gPause.pauseSel = 0;
     H.key('s', true);
     H.handlePauseKeys();
     H.key('s', false); H.clearPressed();
-    check('按 S 选中「返回主菜单」（pauseSel=' + gPause.pauseSel + '）', gPause.pauseSel === 1);
+    H.key('s', true);
+    H.handlePauseKeys();
+    H.key('s', false); H.clearPressed();
+    check('按两次 S 选中「返回主菜单」（pauseSel=' + gPause.pauseSel + '）', gPause.pauseSel === 2);
     H.key('enter', true);
     H.handlePauseKeys();
     H.key('enter', false); H.clearPressed();
@@ -243,6 +246,29 @@
     // 标题页能正常重新开局
     H.startGame();
     check('从标题页重新开局（state=' + H.g.state + '）', H.g.state === 'play');
+
+    // ============ 10.7 暂停菜单：设置入口（进入设置后返回应回暂停，而非回标题） ============
+    H.startGame();
+    const gPauseSet = H.g;
+    gPauseSet.paused = true;
+    gPauseSet.pauseSel = 0;
+    H.key('s', true);          // 选中「设置」（第 2 项）
+    H.handlePauseKeys();
+    H.key('s', false); H.clearPressed();
+    check('按一次 S 选中「设置」（pauseSel=' + gPauseSet.pauseSel + '）', gPauseSet.pauseSel === 1);
+    H.key('enter', true);
+    H.handlePauseKeys();
+    H.key('enter', false); H.clearPressed();
+    check('确认进入设置页（state=' + gPauseSet.state + '）', gPauseSet.state === 'settings');
+    check('设置页来源为暂停（settingsFrom=' + gPauseSet.settingsFrom + '）', gPauseSet.settingsFrom === 'pause');
+    // 从设置返回 → 回到暂停（而非标题），世界仍在
+    H.key('escape', true);
+    H.frameEnd(true);
+    H.key('escape', false); H.clearPressed();
+    check('从设置返回回到暂停（state=' + gPauseSet.state + '，paused=' + gPauseSet.paused + '）',
+      gPauseSet.state === 'play' && gPauseSet.paused === true);
+    check('世界仍保留（world 存在）', H.world !== null);
+    gPauseSet.paused = false;
 
     // ============ 11. 护甲板按 4 一次切出装配 ============
     H.startGame();
@@ -907,8 +933,31 @@
     check('右摇杆拖 20px 不开火', H.touchFiring === false);
     H.setAimDrag(42, 0);   // 拖 42px，超过边缘阈值
     check('右摇杆拖到边缘开火（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
+    // 推到边缘的上升沿应产生一次"单击"，供半自动武器（手枪/霰弹枪）开火
+    check('推到边缘产生单击（fireTap）', H.fireTap === true);
+    H.consumeFireTap();
     H.setAimDrag(0, 0);    // 回中
     check('右摇杆回中停止开火', H.touchFiring === false);
+    H.setAimDrag(42, 0);   // 再次推到边缘
+    check('再次推到边缘再次产生单击', H.fireTap === true);
+    H.consumeFireTap();
+    H.setAimDrag(0, 0);
+
+    // 按键自定义：移动控件位置 → 持久化 → 恢复默认
+    const defaultFire = H.getLayoutPos('fire');
+    H.setLayoutPos('fire', 100, 100);
+    check('拖动开火键到新位置（' + JSON.stringify(H.getLayoutPos('fire')) + '）',
+      H.getLayoutPos('fire').x === 100 && H.getLayoutPos('fire').y === 100);
+    H.saveTouchLayout();
+    // 模拟重载：先挪走，再 load 应回到刚才保存的位置
+    H.setLayoutPos('fire', 200, 200);
+    H.loadTouchLayout();
+    check('重载后恢复到保存的位置（' + JSON.stringify(H.getLayoutPos('fire')) + '）',
+      H.getLayoutPos('fire').x === 100 && H.getLayoutPos('fire').y === 100);
+    // 恢复默认
+    H.resetTouchLayout();
+    check('恢复默认布局（fire 回到 ' + JSON.stringify(H.getLayoutPos('fire')) + '）',
+      H.getLayoutPos('fire').x === defaultFire.x && H.getLayoutPos('fire').y === defaultFire.y);
 
     // 切回电脑，触控残留应被清掉
     H.setInputMode('pc');

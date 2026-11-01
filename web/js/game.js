@@ -320,6 +320,8 @@
     // 右摇杆：瞄准方向（单位向量）。推到边缘（超过 fireDead）才触发开火
     aimActive: false, aimId: -1, aimOrigin: null, aimX: 0, aimY: 0,
     firing: false,
+    // 开火上升沿记录（用于给半自动武器补"单击"语义）
+    firePrev: false,
     // 独立开火按钮（右摇杆区域左上角）：按住连发
     fireBtnActive: false, fireId: -1
   };
@@ -347,6 +349,149 @@
   const TOUCH_PAUSE = { x: 30, y: 30, r: 20 };
   // 跳过按钮（整备倒计时期间显示，屏幕中下方）
   const TOUCH_SKIP = { x: VIEW_W / 2, y: VIEW_H / 2 + 96, w: 96, h: 34 };
+
+  // ---- 触控按键自定义布局 ----
+  // 每个可拖控件的描述：id 用于持久化，ref 指向 TOUCH_LAYOUT/TOUCH_PAUSE/TOUCH_SKIP 里的对象，kind 决定绘制与命中形态。
+  const LAYOUT_ITEMS = [
+    { id: 'move',  label: '移动',  ref: TOUCH_LAYOUT.moveBase, kind: 'stick' },
+    { id: 'aim',   label: '瞄准',  ref: TOUCH_LAYOUT.aimBase,  kind: 'stick' },
+    { id: 'fire',  label: '开火',  ref: TOUCH_LAYOUT.fireBtn,  kind: 'circle' },
+    { id: 'r',     label: '换弹',  ref: TOUCH_LAYOUT.buttons[0], kind: 'small' },
+    { id: 'q',     label: '换枪',  ref: TOUCH_LAYOUT.buttons[1], kind: 'small' },
+    { id: 'g',     label: '手雷',  ref: TOUCH_LAYOUT.buttons[2], kind: 'small' },
+    { id: 'e',     label: '交互',  ref: TOUCH_LAYOUT.buttons[3], kind: 'small' },
+    { id: 'pause', label: '暂停',  ref: TOUCH_PAUSE, kind: 'small' },
+    { id: 'skip',  label: '跳过',  ref: TOUCH_SKIP,  kind: 'rect' }
+  ];
+  const LAYOUT_DEFAULTS = LAYOUT_ITEMS.map(it => ({ id: it.id, x: it.ref.x, y: it.ref.y }));
+  const LAYOUT_KEY = 'hotline.touchLayout';
+
+  /** 读取持久化的自定义布局，覆盖 TOUCH_LAYOUT 里的坐标。 */
+  function loadTouchLayout() {
+    try {
+      const s = localStorage.getItem(LAYOUT_KEY);
+      if (!s) return;
+      const saved = JSON.parse(s);
+      for (const it of LAYOUT_ITEMS) {
+        const sv = saved[it.id];
+        if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
+          it.ref.x = sv.x; it.ref.y = sv.y;
+        }
+      }
+    } catch (err) { /* 忽略损坏数据 */ }
+  }
+  /** 把当前 TOUCH_LAYOUT 坐标持久化。 */
+  function saveTouchLayout() {
+    const out = {};
+    for (const it of LAYOUT_ITEMS) out[it.id] = { x: it.ref.x, y: it.ref.y };
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(out)); } catch (err) { /* 忽略 */ }
+  }
+  /** 恢复默认布局。 */
+  function resetTouchLayout() {
+    for (const d of LAYOUT_DEFAULTS) {
+      const it = LAYOUT_ITEMS.find(i => i.id === d.id);
+      if (it) { it.ref.x = d.x; it.ref.y = d.y; }
+    }
+    saveTouchLayout();
+  }
+
+  // ---- 触控按键自定义编辑界面 ----
+  // layoutDrag：正在拖拽的控件 id（null=没在拖）
+  let layoutDrag = null;
+  // 编辑界面按钮区域（屏幕空间）
+  const LAYOUT_BTN = {
+    reset: { x: VIEW_W / 2 - 160, y: VIEW_H - 44, w: 150, h: 34 },
+    done: { x: VIEW_W / 2 + 10, y: VIEW_H - 44, w: 150, h: 34 }
+  };
+
+  /** 进入按键自定义编辑界面。 */
+  function openTouchLayout() {
+    layoutDrag = null;
+    G.state = 'layout';
+  }
+
+  /** 编辑界面：判定点击落在哪个控件/按钮上，处理拖拽开始与按钮点击。 */
+  function handleLayoutClick() {
+    // 底部按钮优先
+    const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    if (hit(LAYOUT_BTN.reset)) { resetTouchLayout(); return; }
+    if (hit(LAYOUT_BTN.done)) { saveTouchLayout(); closeSettings(); return; }
+    // 命中某个可拖控件 → 开始拖拽（坐标由 pointermove 持续更新）
+    for (const it of LAYOUT_ITEMS) {
+      const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
+      if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) {
+        layoutDrag = it.id;
+        return;
+      }
+    }
+  }
+
+  /** 编辑界面：拖拽中持续更新控件坐标（clamp 到屏幕内）。 */
+  function handleLayoutMove() {
+    if (layoutDrag === null) return;
+    const it = LAYOUT_ITEMS.find(i => i.id === layoutDrag);
+    if (!it) return;
+    const m = 8; // 边距
+    it.ref.x = clamp(mouse.x, m, VIEW_W - m);
+    it.ref.y = clamp(mouse.y, m, VIEW_H - m);
+  }
+
+  /** 编辑界面：结束拖拽。 */
+  function handleLayoutUp() { layoutDrag = null; }
+
+  /** 编辑界面绘制。 */
+  function drawLayout() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,6,10,0.92)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#e8e0f0';
+    ctx.fillText('自定义按键位置', VIEW_W / 2, 40);
+    ctx.font = '12px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#9c90a8';
+    ctx.fillText('按住控件拖动到想要的位置 · 完成后点「完成」', VIEW_W / 2, 62);
+
+    // 绘制每个控件（高亮正在拖拽的那个）
+    for (const it of LAYOUT_ITEMS) {
+      const dragging = layoutDrag === it.id;
+      const col = dragging ? '#ffd76e' : (it.kind === 'stick' ? '#dfe6f0' : '#8ab4e8');
+      ctx.globalAlpha = dragging ? 0.95 : 0.55;
+      ctx.fillStyle = col;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      if (it.kind === 'rect') {
+        const w = it.ref.w, h = it.ref.h;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(it.ref.x - w / 2, it.ref.y - h / 2, w, h, 8); }
+        else { ctx.beginPath(); ctx.rect(it.ref.x - w / 2, it.ref.y - h / 2, w, h); }
+        ctx.fill(); ctx.stroke();
+      } else {
+        const r = it.ref.r || TOUCH_LAYOUT.btnR;
+        ctx.beginPath(); ctx.arc(it.ref.x, it.ref.y, r, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      // 标签
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#1a1620';
+      ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+      ctx.fillText(it.label, it.ref.x, it.ref.y + 1);
+    }
+
+    // 底部按钮：恢复默认 / 完成
+    const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    for (const [key, b] of [['reset', LAYOUT_BTN.reset], ['done', LAYOUT_BTN.done]]) {
+      const hov = hit(b);
+      ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = hov ? (key === 'done' ? '#5aa7e0' : '#e5a13a') : 'rgba(255,255,255,0.25)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
+      else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = hov ? '#fff' : '#cfc4d4';
+      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+      ctx.fillText(key === 'reset' ? '恢复默认' : '完成', b.x + b.w / 2, b.y + b.h / 2 + 1);
+    }
+    ctx.restore();
+  }
 
   /** 判断一个触控点落在哪个控件：'move' | 'aim' | 'fire' | 'btn:r' | 'btn:q' ... | 'pause' | null */
   function classifyTouch(x, y) {
@@ -418,7 +563,12 @@
       const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
       fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.80;
     }
-    mouse.down = (fireByAim || touch.fireBtnActive || touch.firing);
+    const nextDown = (fireByAim || touch.fireBtnActive || touch.firing);
+    // 上升沿 → 记一次"单击"：半自动武器（手枪/霰弹枪/狙击）需要 fireTap 才开枪，
+    // 而按住 mouse.down 只能驱动自动武器连发。触控没有 mousedown 事件，这里手动补上单击语义。
+    if (nextDown && !touch.firePrev) G.fireTap = true;
+    touch.firePrev = nextDown;
+    mouse.down = nextDown;
     mouse.right = false;   // 触屏不区分右键；瞄准通过"靠近目标"自动完成（见 applyTouchAim）
   }
 
@@ -498,14 +648,26 @@
     mouse.x = (e.clientX - r.left) / r.width * VIEW_W;
     mouse.y = (e.clientY - r.top) / r.height * VIEW_H;
   }
-  canvas.addEventListener('mousemove', updateMouse);
+  canvas.addEventListener('mousemove', (e) => {
+    updateMouse(e);
+    // 桌面端：按键自定义编辑界面拖拽中
+    if (G && G.state === 'layout' && layoutDrag !== null) handleLayoutMove();
+  });
   canvas.addEventListener('mousedown', (e) => {
     updateMouse(e);
+    // 桌面端：按键自定义编辑界面，左键按住控件开始拖拽（按钮走 click）
+    if (G && G.state === 'layout' && e.button === 0) {
+      for (const it of LAYOUT_ITEMS) {
+        const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
+        if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) { layoutDrag = it.id; return; }
+      }
+    }
     if (e.button === 0) mouse.down = true;
     if (e.button === 2) { mouse.right = true; e.preventDefault(); }   // 右键 = 抬枪瞄准
     // 菜单按钮统一走 click 事件（桌面鼠标与移动 tap 都可靠触发），这里不再调 onPointerDown。
   });
   window.addEventListener('mouseup', (e) => {
+    if (G && G.state === 'layout') handleLayoutUp();
     if (e.button === 0) mouse.down = false;
     if (e.button === 2) mouse.right = false;
   });
@@ -536,6 +698,22 @@
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') return;   // 桌面鼠标走 mousedown，这里只处理触摸/笔
+    // 按键自定义编辑界面：触摸下直接用 pointer 处理（拖拽 + 底部按钮），不依赖 click。
+    if (G && G.state === 'layout') {
+      e.preventDefault();
+      const pt = pointerPos(e);
+      mouse.x = pt.x; mouse.y = pt.y;
+      // 底部按钮：恢复默认 / 完成
+      const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+      if (hit(LAYOUT_BTN.reset)) { resetTouchLayout(); return; }
+      if (hit(LAYOUT_BTN.done)) { saveTouchLayout(); closeSettings(); return; }
+      // 命中控件 → 开始拖拽
+      for (const it of LAYOUT_ITEMS) {
+        const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
+        if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) { layoutDrag = it.id; return; }
+      }
+      return;
+    }
     // 菜单按钮统一走 click 事件（见上），这里只处理战斗态摇杆/按钮。
     // 注意：菜单态下不能 preventDefault，否则会阻止后续的 click 事件，导致按钮点不了。
     if (!G || G.state !== 'play') return;
@@ -570,6 +748,14 @@
 
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'mouse') return;
+    // 按键自定义编辑界面：拖拽中持续更新坐标
+    if (G && G.state === 'layout' && layoutDrag !== null) {
+      e.preventDefault();
+      const pt = pointerPos(e);
+      mouse.x = pt.x; mouse.y = pt.y;
+      handleLayoutMove();
+      return;
+    }
     e.preventDefault();
     if (inputMode !== 'touch') return;
     const pt = pointerPos(e);
@@ -582,6 +768,11 @@
 
   canvas.addEventListener('pointerup', (e) => {
     if (e.pointerType === 'mouse') return;
+    // 按键自定义编辑界面：结束拖拽
+    if (G && G.state === 'layout') {
+      handleLayoutUp();
+      return;
+    }
     e.preventDefault();
     if (inputMode !== 'touch') return;
     if (e.pointerId === touch.moveId) {
@@ -3040,22 +3231,29 @@
     const hit = (b) => b && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
     if (G.state === 'title') {
       if (hit(TITLE_BTN.start)) startGame();
-      else if (hit(TITLE_BTN.settings)) G.state = 'settings';
+      else if (hit(TITLE_BTN.settings)) openSettings('title');
       return;
     }
     if (G.state === 'settings') {
       if (hit(SETTINGS_BTN.sound)) { Sfx.muted = !Sfx.muted; Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.control)) { setInputMode(inputMode === 'touch' ? 'pc' : 'touch'); Sfx.play('hit'); }
-      else if (hit(SETTINGS_BTN.back)) G.state = 'title';
+      else if (hit(SETTINGS_BTN.layout)) { if (inputMode === 'touch') openTouchLayout(); }
+      else if (hit(SETTINGS_BTN.back)) { closeSettings(); }
       return;
     }
-    // 暂停菜单：点击「继续游戏」或「返回主菜单」
+    if (G.state === 'layout') {
+      handleLayoutClick();
+      return;
+    }
+    // 暂停菜单：点击「继续游戏」/「设置」/「返回主菜单」
     if (G.paused) {
-      const cy = VIEW_H / 2 - 4;   // 继续游戏按钮中心
-      const ry = VIEW_H / 2 + 30;  // 返回主菜单按钮中心
+      const cy = VIEW_H / 2 - 34;  // 继续游戏按钮中心
+      const sy = VIEW_H / 2;      // 设置按钮中心
+      const ry = VIEW_H / 2 + 34; // 返回主菜单按钮中心
       const bx = VIEW_W / 2 - 80, bw = 160, bh = 28;
       const inBox = (y) => mouse.x >= bx && mouse.x <= bx + bw && mouse.y >= y - 14 && mouse.y <= y - 14 + bh;
       if (inBox(cy)) G.paused = false;
+      else if (inBox(sy)) openSettings('pause');
       else if (inBox(ry)) goTitle();
       return;
     }
@@ -4701,9 +4899,10 @@
 
   // 设置页按钮区域
   const SETTINGS_BTN = {
-    sound: { x: VIEW_W / 2 - 120, y: 138, w: 240, h: 40 },
-    control: { x: VIEW_W / 2 - 120, y: 190, w: 240, h: 40 },
-    back: { x: VIEW_W / 2 - 80, y: 248, w: 160, h: 40 }
+    sound: { x: VIEW_W / 2 - 120, y: 130, w: 240, h: 36 },
+    control: { x: VIEW_W / 2 - 120, y: 174, w: 240, h: 36 },
+    layout: { x: VIEW_W / 2 - 120, y: 218, w: 240, h: 36 },
+    back: { x: VIEW_W / 2 - 80, y: 268, w: 160, h: 40 }
   };
 
   function drawSettings() {
@@ -4744,6 +4943,23 @@
     ctx.fillStyle = '#e8d8b8';
     ctx.fillText('操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), cb.x + cb.w / 2, cb.y + cb.h / 2 + 1);
     ctx.textBaseline = 'alphabetic';
+    // 自定义按键（仅手机触控模式显示）
+    if (inputMode === 'touch') {
+      const lb = SETTINGS_BTN.layout;
+      const lHover = mouse.x >= lb.x && mouse.x <= lb.x + lb.w && mouse.y >= lb.y && mouse.y <= lb.y + lb.h;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = lHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = lHover ? '#7fdca0' : 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1.5;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(lb.x, lb.y, lb.w, lb.h, 6); }
+      else { ctx.beginPath(); ctx.rect(lb.x, lb.y, lb.w, lb.h); }
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+      ctx.fillStyle = '#a8e8c0';
+      ctx.fillText('自定义按键位置', lb.x + lb.w / 2, lb.y + lb.h / 2 + 1);
+      ctx.textBaseline = 'alphabetic';
+    }
     // 返回按钮
     drawMenuButton(SETTINGS_BTN.back, '返回', '#5aa7e0');
     ctx.restore();
@@ -4865,6 +5081,7 @@
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     if (G.state === 'settings') { drawSettings(); return; }
+    if (G.state === 'layout') { drawLayout(); return; }
     if (G.state === 'title' || !W) { drawTitle(); return; }
 
     // 相机 + 抖动
@@ -4968,9 +5185,9 @@
     // 这一下按键就被吞了，表现就是"按 4 要按好多下才切出护甲板"。
     // 所以只在跑到过 update 的帧末尾清空，没跑到的帧把按键留到下一帧。
     let advanced = false;
-    if (G && (G.state === 'title' || G.state === 'settings')) advanced = true;   // 标题/设置画面不跑逻辑，按键当帧作废
+    if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'layout')) advanced = true;   // 标题/设置/编辑画面不跑逻辑，按键当帧作废
 
-    if (G && G.state !== 'title' && G.state !== 'settings') {
+    if (G && G.state !== 'title' && G.state !== 'settings' && G.state !== 'layout') {
       if (G.paused || G.freeze) {
         // 暂停时主循环提前返回，所以这里的按键得自己处理，否则暂停后恢复不了
         if (G.paused) handlePauseKeys();
@@ -5024,11 +5241,12 @@
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e8e0f0';
     ctx.fillText('暂停', VIEW_W / 2, VIEW_H / 2 - 34);
-    // 两个选项：继续 / 返回主菜单（鼠标悬停或键盘选中高亮）
+    // 三个选项：继续 / 设置 / 返回主菜单（鼠标悬停或键盘选中高亮）
     const sel = G.pauseSel || 0;
     const items = [
-      { label: '继续游戏', y: VIEW_H / 2 - 4 },
-      { label: '返回主菜单', y: VIEW_H / 2 + 30 }
+      { label: '继续游戏', y: VIEW_H / 2 - 34 },
+      { label: '设置', y: VIEW_H / 2 },
+      { label: '返回主菜单', y: VIEW_H / 2 + 34 }
     ];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
@@ -5037,7 +5255,7 @@
       const active = sel === i || hover;
       ctx.textBaseline = 'middle';
       ctx.fillStyle = active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)';
-      ctx.strokeStyle = active ? (i === 1 ? '#e53935' : '#5aa7e0') : 'rgba(255,255,255,0.18)';
+      ctx.strokeStyle = active ? (i === 2 ? '#e53935' : '#5aa7e0') : 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1.5;
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 5); }
       else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
@@ -5050,7 +5268,7 @@
     }
     ctx.font = '11px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
-    ctx.fillText('W/S 选择 · 回车/左键确认 · ESC 继续', VIEW_W / 2, VIEW_H / 2 + 70);
+    ctx.fillText('W/S 选择 · 回车/左键确认 · ESC 继续', VIEW_W / 2, VIEW_H / 2 + 78);
     ctx.restore();
   }
 
@@ -5059,6 +5277,7 @@
     G.state = 'title';
     G.paused = false;
     G.pauseSel = 0;
+    G.settingsFrom = 'title';
     G.centerText = '';
     G.centerTimer = 0;
     W = null;
@@ -5067,14 +5286,32 @@
     BLASTS.length = 0;
   }
 
+  /** 打开设置页，记录来源（标题 or 暂停），返回时据此决定去向。 */
+  function openSettings(from) {
+    G.settingsFrom = from === 'pause' ? 'pause' : 'title';
+    G.state = 'settings';
+    if (from === 'pause') G.paused = false;
+  }
+
+  /** 关闭设置页：从暂停进入则回到暂停菜单，否则回标题。 */
+  function closeSettings() {
+    if (G.settingsFrom === 'pause') {
+      G.state = 'play';
+      G.paused = true;
+    } else {
+      G.state = 'title';
+    }
+  }
+
   /** 暂停菜单的按键处理（仅在 paused 时由 loop 调用）。 */
   function handlePauseKeys() {
     if (pressed['escape']) { G.paused = false; return; }
-    if (pressed['w'] || pressed['arrowup']) G.pauseSel = 0;
-    if (pressed['s'] || pressed['arrowdown']) G.pauseSel = 1;
+    if (pressed['w'] || pressed['arrowup']) G.pauseSel = (G.pauseSel + 2) % 3;
+    if (pressed['s'] || pressed['arrowdown']) G.pauseSel = (G.pauseSel + 1) % 3;
     if (pressed['enter'] || pressed[' ']) {
-      if (G.pauseSel === 1) goTitle();
-      else G.paused = false;
+      if (G.pauseSel === 0) G.paused = false;
+      else if (G.pauseSel === 1) openSettings('pause');
+      else goTitle();
     }
   }
 
@@ -5152,9 +5389,13 @@
       pressed = Object.create(null);
       return;
     }
-    // 设置页：ESC 返回标题
+    // 设置页：ESC 返回（来源是暂停则回暂停，否则回标题）
     if (G.state === 'settings') {
-      if (pressed['escape']) { G.state = 'title'; pressed = Object.create(null); return; }
+      if (pressed['escape']) { closeSettings(); pressed = Object.create(null); return; }
+    }
+    // 按键自定义编辑页：ESC 保存并返回
+    if (G.state === 'layout') {
+      if (pressed['escape']) { saveTouchLayout(); closeSettings(); pressed = Object.create(null); return; }
     }
     // R：手动换弹（重置关卡功能已去掉，死了会自动重来）
     if (pressed['r'] && G.state === 'play') startReload();
@@ -5215,6 +5456,9 @@
       if (saved === 'touch' || saved === 'pc') inputMode = saved;
     } catch (err) { /* 忽略 */ }
 
+    // 读取自定义触控按键布局（覆盖 TOUCH_LAYOUT 坐标）
+    loadTouchLayout();
+
     fitCanvas();
     window.addEventListener('resize', fitCanvas);
     window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 100));
@@ -5244,7 +5488,8 @@
       timeScale: 1,
       slowTimer: 0,
       paused: false,
-      pauseSel: 0,          // 暂停菜单选中项：0=继续，1=返回主菜单
+      pauseSel: 0,          // 暂停菜单选中项：0=继续，1=设置，2=返回主菜单
+      settingsFrom: 'title', // 设置页来源：'title'（标题进入）| 'pause'（暂停进入），决定返回去向
       deadTimer: 0,
       clearTimer: 0,
       fireTap: false,
@@ -5269,6 +5514,10 @@
       // ?settings=1 直接进设置页，用于截图核对（调试用）
       if (/[?&]settings=1/.test(location.search)) {
         G.state = 'settings';
+      }
+      // ?layout=1 直接进按键自定义编辑页，用于截图核对（调试用）
+      if (/[?&]layout=1/.test(location.search)) {
+        openTouchLayout();
       }
       // ?touch=1 切到手机触控模式（截图核对摇杆/按钮 UI 用）
       if (/[?&]touch=1/.test(location.search)) {
@@ -5426,6 +5675,18 @@
     classifyTouch,
     applyTouchInput,
     skipIntermission,
+    /** 按键自定义：保存 / 恢复默认 / 读取，以及读取某个控件坐标（测试用） */
+    saveTouchLayout,
+    resetTouchLayout,
+    loadTouchLayout,
+    getLayoutPos(id) {
+      const it = LAYOUT_ITEMS.find(i => i.id === id);
+      return it ? { x: it.ref.x, y: it.ref.y } : null;
+    },
+    setLayoutPos(id, x, y) {
+      const it = LAYOUT_ITEMS.find(i => i.id === id);
+      if (it) { it.ref.x = x; it.ref.y = y; }
+    },
     refillArmor,
     openUpgrade,
     closeUpgrade,
@@ -5468,6 +5729,10 @@
     },
     /** 测试辅助：当前是否在开火（由右摇杆边缘/开火键推导） */
     get touchFiring() { return mouse.down; },
+    /** 测试辅助：本帧是否产生了单击（半自动武器开火依据） */
+    get fireTap() { return G ? G.fireTap : false; },
+    /** 测试辅助：消耗掉本帧的单击标记（模拟 updatePlayer 已消费） */
+    consumeFireTap() { if (G) G.fireTap = false; },
     /** 当前散射（度）：腰射 / 瞄准差多少，测试直接断言这个 */
     spreadDeg() {
       const p = G && G.player;
