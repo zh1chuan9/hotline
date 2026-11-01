@@ -852,12 +852,12 @@
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') return;   // 桌面鼠标走 mousedown，这里只处理触摸/笔
-    // 按键自定义编辑界面：触摸下直接用 pointer 处理（拖拽 + 底部按钮），不依赖 click。
+    // 按键自定义编辑界面：pointerdown 只负责「开始拖拽」，按钮（切换/恢复/完成）统一走 click 事件，
+    // 这样单击就能触发切换，不依赖长按。这里不能 preventDefault，否则会吞掉 click 导致按钮失灵。
     if (G && G.state === 'layout') {
-      e.preventDefault();
       const pt = pointerPos(e);
       mouse.x = pt.x; mouse.y = pt.y;
-      handleLayoutClick();
+      beginLayoutDrag();
       return;
     }
     // 菜单按钮统一走 click 事件（见上），这里只处理战斗态摇杆/按钮。
