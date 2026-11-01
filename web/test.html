@@ -941,6 +941,7 @@
     check('左下角命中左摇杆', H.classifyTouch(96, 360 - 84) === 'move');
     check('右下角命中右摇杆', H.classifyTouch(640 - 96, 360 - 84) === 'aim');
     check('开火键命中', H.classifyTouch(640 - 176, 360 - 150) === 'fire');
+    check('瞄准键命中', H.classifyTouch(640 - 176, 360 - 210) === 'aimbtn');
     check('换弹按钮命中', H.classifyTouch(640 - 30, 360 - 236) === 'btn:r');
     check('换枪按钮命中', H.classifyTouch(640 - 30, 360 - 198) === 'btn:q');
     check('手雷按钮命中', H.classifyTouch(640 - 30, 360 - 160) === 'btn:g');
@@ -996,6 +997,54 @@
     check('摇杆开火模式下开火键不再命中 fire', H.classifyTouch(640 - 176, 360 - 150) !== 'fire');
     H.setFireMode('button');
     check('切回按键开火后开火键恢复命中', H.classifyTouch(640 - 176, 360 - 150) === 'fire');
+
+    // 手机「瞄准键」：按住 → mouse.right（触发 ADS 抬枪），松开收回。两种开火模式都有效。
+    H.setInputMode('touch');
+    H.setFireMode('button');
+    check('瞄准键初始不瞄准', H.touchAiming === false);
+    H.holdAimBtn(true);
+    check('按住瞄准键 → 瞄准（mouse.right=' + H.touchAiming + '）', H.touchAiming === true);
+    H.holdAimBtn(false);
+    check('松开瞄准键 → 收回瞄准', H.touchAiming === false);
+    // 摇杆开火模式下瞄准键仍然可用
+    H.setFireMode('stick');
+    H.holdAimBtn(true);
+    check('摇杆开火模式下瞄准键仍可用', H.touchAiming === true);
+    H.holdAimBtn(false);
+    H.setFireMode('button');
+    // 切回电脑键鼠：瞄准键残留应清空
+    H.setInputMode('pc');
+    check('切回键鼠后瞄准键残留清空', H.touchAiming === false);
+    H.setInputMode('touch');
+
+    // ============ 自瞄：只在摇杆指向扇形内轻微修正，绝不反向吸附 ============
+    H.startGame();
+    const gSnap = H.g, pSnap = gSnap.player, wSnap = H.world;
+    wSnap.enemies.length = 0;
+    pSnap.x = 360; pSnap.y = 180;
+    // 玩家右侧 +120 放一个敌人，左侧 -120 放一个敌人（applyTouchAim 只读 alive/x/y，够用）
+    wSnap.enemies.push({ alive: true, x: pSnap.x + 120, y: pSnap.y });
+    wSnap.enemies.push({ alive: true, x: pSnap.x - 120, y: pSnap.y });
+    H.setInputMode('touch');
+    // 摇杆往左推：准心应指向左，不能被右边更近的敌人反向吸走
+    H.setAimDrag(-42, 0);
+    H.applyTouchAim();
+    const apL = H.aimPoint;
+    check('摇杆往左，右边敌人不反向吸附（aim.x=' + apL.x.toFixed(0) + ' < 玩家=' + pSnap.x + '）', apL.x < pSnap.x);
+    // 摇杆往右推：轻微吸附到右边敌人（自瞄仍有效）
+    H.setAimDrag(42, 0);
+    H.applyTouchAim();
+    const apR = H.aimPoint;
+    check('摇杆往右，向右轻微吸附（aim.x=' + apR.x.toFixed(0) + ' > 玩家=' + pSnap.x + '）', apR.x > pSnap.x);
+    // 摇杆回中：不吸附（applyTouchAim 不改变准心，aimX/aimY 清零）
+    H.setAimDrag(0, 0);
+    const apBefore = H.aimPoint;
+    H.applyTouchAim();
+    const apC = H.aimPoint;
+    check('摇杆回中不吸附（准心不变）', apC.x === apBefore.x && apC.y === apBefore.y);
+    // 恢复：清掉假敌人
+    wSnap.enemies.length = 0;
+    H.setInputMode('touch');
 
     // 按键自定义：移动控件位置 → 持久化 → 恢复默认
     const defaultFire = H.getLayoutPos('fire');

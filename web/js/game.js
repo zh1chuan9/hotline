@@ -28,6 +28,11 @@
   const AIM_EDGE_X = 76;       // 瞄准满前探时，玩家中心距画面左右边至少留的 canvas 像素
   const AIM_EDGE_Y = 76;       // 纵向同理（底部有 HUD，别让玩家钻到血条底下）
 
+  // ---- 触屏辅助瞄准（自瞄）参数：只在玩家摇杆指向的扇形内轻微修正，绝不反向吸 ----
+  const AIM_SNAP_RANGE = 260;     // 吸附搜索半径（世界像素），超出不吸
+  const AIM_SNAP_ANGLE = 0.45;    // 吸附半角（弧度，约 26°）：敌人在摇杆方向 ±26° 内才考虑
+  const AIM_SNAP_STRENGTH = 0.55; // 修正强度：敌人方向占比（0..1），越大吸越狠。0.55 保留玩家主导
+
   // ---------------------------------------------------------------- 血量与护甲
   // 单血量 + 三格护甲（参考《使命召唤》要塞护甲板）：
   //   血量上限 100；护甲三格，每格 50 点，共 150 点护甲。
@@ -323,7 +328,9 @@
     // 开火上升沿记录（用于给半自动武器补"单击"语义）
     firePrev: false,
     // 独立开火按钮（右摇杆区域左上角）：按住连发
-    fireBtnActive: false, fireId: -1
+    fireBtnActive: false, fireId: -1,
+    // 独立瞄准按钮（按住抬枪 ADS）：按住 = 右键瞄准，松开收回
+    aimBtnActive: false, aimBtnId: -1
   };
   // 虚拟按钮点击态（本帧刚按下），由按钮 hit 检测填充，注入到 pressed 表
   let touchPressed = Object.create(null);
@@ -336,6 +343,8 @@
     aimBase: { x: VIEW_W - 96, y: VIEW_H - 84, r: 46 },
     // 独立开火键：右摇杆左上
     fireBtn: { x: VIEW_W - 176, y: VIEW_H - 150, r: 30 },
+    // 独立瞄准键：右摇杆右上（按住抬枪 ADS）
+    aimBtn: { x: VIEW_W - 176, y: VIEW_H - 210, r: 30 },
     // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互
     buttons: [
       { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 236 },
@@ -358,6 +367,7 @@
     { id: 'move',  label: '移动',  ref: TOUCH_LAYOUT.moveBase, kind: 'stick' },
     { id: 'aim',   label: '瞄准',  ref: TOUCH_LAYOUT.aimBase,  kind: 'stick' },
     { id: 'fire',  label: '开火',  ref: TOUCH_LAYOUT.fireBtn,  kind: 'circle' },
+    { id: 'aimbtn', label: '瞄准键', ref: TOUCH_LAYOUT.aimBtn,  kind: 'circle' },
     { id: 'r',     label: '换弹',  ref: TOUCH_LAYOUT.buttons[0], kind: 'small' },
     { id: 'q',     label: '换枪',  ref: TOUCH_LAYOUT.buttons[1], kind: 'small' },
     { id: 'g',     label: '手雷',  ref: TOUCH_LAYOUT.buttons[2], kind: 'small' },
@@ -647,6 +657,8 @@
     // 独立开火键优先于右摇杆判定（它在右摇杆边缘外）。
     // 摇杆开火模式下开火键已隐藏，此区域不归为 'fire'，交给右摇杆（aimBase）判定。
     if (fireMode !== 'stick' && near(L.fireBtn, L.fireBtn.r * 1.2)) return 'fire';
+    // 独立瞄准键（按住抬枪），也在右摇杆边缘外
+    if (near(L.aimBtn, L.aimBtn.r * 1.2)) return 'aimbtn';
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
     // 动作按钮
     for (const b of L.buttons) {
@@ -698,7 +710,8 @@
         const R = Math.min(VIEW_W, VIEW_H) * 0.42;
         feedTouchMouse(VIEW_W / 2 + nx * R, VIEW_H / 2 + ny * R);
       } else {
-        // 摇杆回中 → 准心回屏幕中心（保持原朝向，靠 aimDir 的 len<1 判定）
+        // 摇杆回中 → 准心回屏幕中心（保持原朝向，靠 aimDir 的 len<1 判定）；方向也清零，自瞄不吸附
+        touch.aimX = 0; touch.aimY = 0;
         feedTouchMouse(VIEW_W / 2, VIEW_H / 2);
       }
     }
@@ -721,29 +734,48 @@
     if (nextDown && !touch.firePrev) G.fireTap = true;
     touch.firePrev = nextDown;
     mouse.down = nextDown;
-    mouse.right = false;   // 触屏不区分右键；瞄准通过"靠近目标"自动完成（见 applyTouchAim）
+    // 触屏右键 = 按住「瞄准键」抬枪 ADS；否则不瞄准（辅助瞄准 applyTouchAim 会吸附准心）
+    mouse.right = touch.aimBtnActive;
   }
 
-  /** 触屏下的辅助瞄准：右摇杆朝敌人方向时，把准心轻微吸附到最近的敌人身上。 */
+  /** 触屏下的辅助瞄准：只在玩家摇杆指向的扇形内找敌人，轻微修正，绝不反向吸附。 */
   function applyTouchAim() {
     if (inputMode !== 'touch' || !G || !G.player || !W) return;
     if (!touch.aimActive) return;
-    // 找准心方向上的最近敌人
-    let best = null, bestD = 1e9;
+
+    // 玩家摇杆当前指向（单位向量）。这是"玩家想要的方向"，吸附必须围绕它、不能违背它。
+    const wantX = touch.aimX, wantY = touch.aimY;
+    const wantLen = Math.hypot(wantX, wantY);
+    if (wantLen < 0.1) return;   // 摇杆基本回中：不吸附，保持中心
+
     const ox = G.player.x, oy = G.player.y;
+    // 在摇杆方向 ±AIM_SNAP_ANGLE 的锥形内，找夹角最小（最靠近准心）的敌人
+    let best = null, bestAngle = AIM_SNAP_ANGLE + 0.01;
     for (const e of W.enemies) {
       if (!e.alive) continue;
-      const d = Math.hypot(e.x - ox, e.y - oy);
-      if (d < bestD) { bestD = d; best = e; }
+      const dx = e.x - ox, dy = e.y - oy;
+      const d = Math.hypot(dx, dy);
+      if (d < 1 || d > AIM_SNAP_RANGE) continue;   // 太近/太远不吸附
+      const nx = dx / d, ny = dy / d;
+      // 敌人方向与摇杆方向的夹角（点积越小夹角越大）
+      const dot = nx * wantX + ny * wantY;
+      if (dot <= 0) continue;   // 在背后/侧面 90° 外：完全不吸，避免"往左摇却往右吸"
+      const ang = Math.acos(Math.min(1, dot));
+      if (ang < bestAngle) { bestAngle = ang; best = e; }
     }
     if (!best) return;
-    // 只在一定距离内吸附，避免跨屏乱跳
-    if (bestD < 220) {
-      const ax = best.x - ox, ay = best.y - oy;
-      const al = Math.hypot(ax, ay) || 1;
-      const R = Math.min(VIEW_W, VIEW_H) * 0.42;
-      feedTouchMouse(VIEW_W / 2 + (ax / al) * R, VIEW_H / 2 + (ay / al) * R);
-    }
+
+    // 轻微修正：把摇杆方向向敌人方向拉一点点（AIM_SNAP_STRENGTH），保留玩家主导权
+    const dx = best.x - ox, dy = best.y - oy;
+    const d = Math.hypot(dx, dy) || 1;
+    const ex = dx / d, ey = dy / d;
+    const mix = AIM_SNAP_STRENGTH;   // 敌人方向占比（0..1，越大吸越狠）
+    let mx = wantX * (1 - mix) + ex * mix;
+    let my = wantY * (1 - mix) + ey * mix;
+    const ml = Math.hypot(mx, my) || 1;
+    mx /= ml; my /= ml;
+    const R = Math.min(VIEW_W, VIEW_H) * 0.42;
+    feedTouchMouse(VIEW_W / 2 + mx * R, VIEW_H / 2 + my * R);
   }
 
   /** 切换操作方式，并持久化到 localStorage。 */
@@ -762,6 +794,7 @@
       touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
       touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
       touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
+      touch.aimBtnActive = false; touch.aimBtnId = -1;
       keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
     }
   }
@@ -884,6 +917,9 @@
       if (touch.fireBtnActive) return;
       touch.fireBtnActive = true; touch.fireId = e.pointerId;
       touch.firing = true;
+    } else if (ctl === 'aimbtn') {
+      if (touch.aimBtnActive) return;
+      touch.aimBtnActive = true; touch.aimBtnId = e.pointerId;
     } else if (ctl === 'pause') {
       // 暂停按钮：切换暂停（和 ESC 同效果）
       onVirtualKey('escape');
@@ -932,6 +968,8 @@
       touch.firing = false;
     } else if (e.pointerId === touch.fireId) {
       touch.fireBtnActive = false; touch.fireId = -1; touch.firing = false;
+    } else if (e.pointerId === touch.aimBtnId) {
+      touch.aimBtnActive = false; touch.aimBtnId = -1;
     }
     // 释放所有虚拟按钮按下态（简单起见，结束时全清）
     touchPressed = Object.create(null);
@@ -942,6 +980,7 @@
     touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
     touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
     touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
+    touch.aimBtnActive = false; touch.aimBtnId = -1;
     touchPressed = Object.create(null);
   });
 
@@ -4319,6 +4358,18 @@
       ctx.fillText('开火', fb.x, fb.y + 1);
     }
 
+    // ---- 独立瞄准键（按住抬枪 ADS；两种开火模式都显示）----
+    {
+      const ab = L.aimBtn;
+      ctx.globalAlpha = touch.aimBtnActive ? 0.55 : 0.35;
+      ctx.fillStyle = touch.aimBtnActive ? '#7fdca0' : '#3f6b54';
+      ctx.beginPath(); ctx.arc(ab.x, ab.y, ab.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+      ctx.fillText('瞄准', ab.x, ab.y + 1);
+    }
+
     // ---- 动作按钮 ----
     for (const b of L.buttons) {
       const act = !!touchPressed[b.key];
@@ -5938,6 +5989,7 @@
     /** 触控（手机）模式相关：切换操作方式 / 摇杆归类 / 触控输入折算 */
     setInputMode,
     get inputMode() { return inputMode; },
+    applyTouchAim,
     setFireMode,
     get fireMode() { return fireMode; },
     classifyTouch,
@@ -5997,6 +6049,10 @@
     holdFire(down) { mouse.down = !!down; },
     /** 测试辅助：模拟按住/松开右键（瞄准） */
     holdAim(down) { mouse.right = !!down; },
+    /** 测试辅助：模拟按住/松开手机「瞄准键」（走 applyTouchInput 折算成 mouse.right） */
+    holdAimBtn(down) { touch.aimBtnActive = !!down; applyTouchInput(); },
+    /** 测试辅助：手机瞄准键当前是否折算成右键瞄准 */
+    get touchAiming() { return mouse.right; },
     /** 测试辅助：模拟右摇杆拖动到 aimBase + (dx,dy)（用于验证推到边缘开火），dx/dy 传 0 表示回中 */
     setAimDrag(dx, dy) {
       touch.aimActive = true;
