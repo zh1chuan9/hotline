@@ -583,6 +583,19 @@
     check('近战敌人被打死（alive=' + em20.alive + '）', !em20.alive);
     check('敌人近战武器不掉落', !w20.pickups.some(pk => pk.def === 'knife'));
 
+    // ============ 20b. 半自动手枪长按持续射击 ============
+    H.startGame();
+    const g20b = H.g, p20b = g20b.player, w20b = H.world;
+    w20b.enemies.length = 0;           // 清场，避免干扰
+    p20b.weapon = 'pistol'; p20b.ammo = 12; p20b.reserve = 64;
+    p20b.cooldown = 0; p20b.reload = 0; p20b.swapT = 0;
+    p20b.facing = { x: 1, y: 0 };
+    H.holdFire(true);                  // 按住左键（等价于手机一直推着摇杆）
+    const ammo0 = p20b.ammo;
+    for (let i = 0; i < 40; i++) H.step(1);   // 按住约 0.7 秒（手枪 fireRate 0.15）
+    H.holdFire(false);
+    check('手枪长按会持续射击（ammo ' + ammo0 + '→' + p20b.ammo + '）', p20b.ammo < ammo0);
+
     // ============ 21. 死亡后自动重开（重置关卡已去掉） ============
     H.startGame();
     const g21 = H.g;

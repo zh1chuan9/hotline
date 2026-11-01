@@ -2330,8 +2330,10 @@
       // 手持手雷：左键单击（fireTap）丢出，朝准心方向
       if (fireTap) throwGrenade();
     } else if (p.weapon) {
-      // def.auto 换成 gunStat：进化后的霰弹枪会从"点一下打一发"变成按住连发
-      if ((gunStat(p.weapon, 'auto') && fireHeld) || fireTap) {
+      // 按住（fireHeld）或单击（fireTap）都开枪。所有枪械（含手枪/霰弹枪这类半自动）
+      // 长按都会按各自 fireRate 持续射击——手机上"一直推着摇杆"就应持续开火，
+      // 射速仍由 p.cooldown（= fireRate）限制，不会过快。
+      if (fireHeld || fireTap) {
         // 换弹动画期间扣不动扳机（p.cooldown 也压着，这里是显式的一道锁）
         if (p.cooldown <= 0 && p.reload <= 0 && p.swapT <= 0) playerAttack();
       }
