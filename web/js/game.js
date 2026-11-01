@@ -461,20 +461,30 @@
     updateMouse(e);
     if (e.button === 0) mouse.down = true;
     if (e.button === 2) { mouse.right = true; e.preventDefault(); }   // 右键 = 抬枪瞄准
-    onPointerDown(e);
+    // 菜单按钮统一走 click 事件（桌面鼠标与移动 tap 都可靠触发），这里不再调 onPointerDown。
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) mouse.down = false;
     if (e.button === 2) mouse.right = false;
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  // 菜单按钮（标题/设置/暂停/结算）统一用 click 处理：桌面鼠标点击、移动端 tap 都可靠触发，
+  // 避免 pointer/touch 事件的兼容性坑。战斗态下的 click 落到 onPointerDown 里什么都不做。
+  canvas.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    const r = canvas.getBoundingClientRect();
+    mouse.x = (e.clientX - r.left) / r.width * VIEW_W;
+    mouse.y = (e.clientY - r.top) / r.height * VIEW_H;
+    onPointerDown({ button: 0 });
+  });
 
-  // ---- 触控输入：多点追踪，左/右摇杆和按钮各绑定一个 touch identifier ----
-  function touchPos(t) {
+  // ---- 触控输入：用 Pointer Events 统一处理（移动端最兼容的标准方案）。
+  // 只处理 pointerType !== 'mouse'（触摸/笔），桌面鼠标仍走上面的 mousedown/mousemove。
+  function pointerPos(e) {
     const r = canvas.getBoundingClientRect();
     return {
-      x: (t.clientX - r.left) / r.width * VIEW_W,
-      y: (t.clientY - r.top) / r.height * VIEW_H
+      x: (e.clientX - r.left) / r.width * VIEW_W,
+      y: (e.clientY - r.top) / r.height * VIEW_H
     };
   }
   // 把触控坐标（逻辑坐标）换算成鼠标屏幕坐标，直接喂给 mouse，复用准心/朝向逻辑
@@ -482,76 +492,68 @@
     mouse.x = x; mouse.y = y;
   }
 
-  canvas.addEventListener('touchstart', (e) => {
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;   // 桌面鼠标走 mousedown，这里只处理触摸/笔
+    // 菜单按钮统一走 click 事件（见上），这里只处理战斗态摇杆/按钮。
+    // 注意：菜单态下不能 preventDefault，否则会阻止后续的 click 事件，导致按钮点不了。
+    if (!G || G.state !== 'play') return;
+    if (inputMode !== 'touch') return;
     e.preventDefault();
     Sfx.init();
-    for (const t of e.changedTouches) {
-      const pt = touchPos(t);
-      // 菜单界面（标题/设置/暂停/结算）：把触点当鼠标点击，复用按钮命中逻辑。
-      // 注意：这里不管 inputMode 是什么 —— 手机用户第一次进来默认是 pc 模式，
-      // 若标题页 touch 被 inputMode 拦截，就永远进不了设置页去切换手机模式（死锁）。
-      if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'done' || G.paused)) {
-        feedTouchMouse(pt.x, pt.y);
-        onPointerDown({ button: 0 });
-        continue;
-      }
-      // 战斗态才区分操作方式：pc 模式下触屏不做摇杆映射
-      if (inputMode !== 'touch') continue;
-      const ctl = classifyTouch(pt.x, pt.y);   // 见下：命中摇杆/按钮区域
-      if (ctl === 'move') {
-        if (touch.moveActive) continue;
-        touch.moveActive = true; touch.moveId = t.identifier;
-        touch.moveOrigin = pt; touch.moveX = 0; touch.moveY = 0;
-      } else if (ctl === 'aim') {
-        if (touch.aimActive) continue;
-        touch.aimActive = true; touch.aimId = t.identifier;
-        touch.aimOrigin = pt; touch.aimX = 0; touch.aimY = 0;
-      } else if (ctl === 'fire') {
-        if (touch.fireBtnActive) continue;
-        touch.fireBtnActive = true; touch.fireId = t.identifier;
-        touch.firing = true;
-      } else if (ctl === 'pause') {
-        // 暂停按钮：切换暂停（和 ESC 同效果）
-        onVirtualKey('escape');
-      } else if (ctl && ctl.startsWith('btn:')) {
-        const key = ctl.slice(4);
-        touchPressed[key] = true;
-        onVirtualKey(key);
-      }
+    const pt = pointerPos(e);
+    const ctl = classifyTouch(pt.x, pt.y);   // 见下：命中摇杆/按钮区域
+    if (ctl === 'move') {
+      if (touch.moveActive) return;
+      touch.moveActive = true; touch.moveId = e.pointerId;
+      touch.moveOrigin = pt; touch.moveX = 0; touch.moveY = 0;
+    } else if (ctl === 'aim') {
+      if (touch.aimActive) return;
+      touch.aimActive = true; touch.aimId = e.pointerId;
+      touch.aimOrigin = pt; touch.aimX = 0; touch.aimY = 0;
+    } else if (ctl === 'fire') {
+      if (touch.fireBtnActive) return;
+      touch.fireBtnActive = true; touch.fireId = e.pointerId;
+      touch.firing = true;
+    } else if (ctl === 'pause') {
+      // 暂停按钮：切换暂停（和 ESC 同效果）
+      onVirtualKey('escape');
+    } else if (ctl && ctl.startsWith('btn:')) {
+      const key = ctl.slice(4);
+      touchPressed[key] = true;
+      onVirtualKey(key);
     }
-  }, { passive: false });
+  });
 
-  canvas.addEventListener('touchmove', (e) => {
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse') return;
     e.preventDefault();
     if (inputMode !== 'touch') return;
-    for (const t of e.changedTouches) {
-      const pt = touchPos(t);
-      if (t.identifier === touch.moveId) {
-        touch.moveOrigin = pt;
-      } else if (t.identifier === touch.aimId) {
-        touch.aimOrigin = pt;
-      }
+    const pt = pointerPos(e);
+    if (e.pointerId === touch.moveId) {
+      touch.moveOrigin = pt;
+    } else if (e.pointerId === touch.aimId) {
+      touch.aimOrigin = pt;
     }
-  }, { passive: false });
+  });
 
-  canvas.addEventListener('touchend', (e) => {
+  canvas.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'mouse') return;
     e.preventDefault();
     if (inputMode !== 'touch') return;
-    for (const t of e.changedTouches) {
-      if (t.identifier === touch.moveId) {
-        touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
-      } else if (t.identifier === touch.aimId) {
-        touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
-        touch.firing = false;
-      } else if (t.identifier === touch.fireId) {
-        touch.fireBtnActive = false; touch.fireId = -1; touch.firing = false;
-      }
+    if (e.pointerId === touch.moveId) {
+      touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
+    } else if (e.pointerId === touch.aimId) {
+      touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
+      touch.firing = false;
+    } else if (e.pointerId === touch.fireId) {
+      touch.fireBtnActive = false; touch.fireId = -1; touch.firing = false;
     }
     // 释放所有虚拟按钮按下态（简单起见，结束时全清）
     touchPressed = Object.create(null);
-  }, { passive: false });
+  });
 
-  canvas.addEventListener('touchcancel', (e) => {
+  canvas.addEventListener('pointercancel', (e) => {
+    if (e.pointerType === 'mouse') return;
     touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
     touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
     touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
