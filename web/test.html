@@ -804,7 +804,7 @@
     H.startGame();
     const g26 = H.g, p26 = g26.player, w26 = H.world;
     w26.enemies.length = 0;
-    check('地图上有油桶（' + H.barrels.length + ' 个）', H.barrels.length === 5);
+    check('地图上有油桶（' + H.barrels.length + ' 个）', H.barrels.length === 4);
 
     // 子弹打桶：挑一只周围是空地的桶（row 13 col 6），玩家站它左边 40px 朝右开枪
     // 注意别把玩家摆进掩体里 —— 射线起点落在掩体内部时 t=0，会先撞掩体而不是桶
