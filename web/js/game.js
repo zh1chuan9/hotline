@@ -51,7 +51,7 @@
   const SLOT_CONSOLE = 40;
 
   // ---------------------------------------------------------------- 资源
-  const SPRITE_DIR = '../assets/sprites/';
+  const SPRITE_DIR = 'assets/sprites/';
   // 活人造型不用贴图（一个头 + 两只圆手，实时画），这里只留场景、血、尸体和武器
   const SPRITE_NAMES = [
     'wall', 'floor', 'floor2', 'door', 'cover', 'shadow', 'spark', 'dot',
