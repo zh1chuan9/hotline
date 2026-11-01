@@ -195,16 +195,16 @@
     const gOpen = H.g, pOpen = gOpen.player;
     const supOpen = H.world.supplies[0];
     pOpen.x = supOpen.x + 20; pOpen.y = supOpen.y;
-    H.key('b', true);
+    H.key('e', true);
     H.frameEnd(false);                     // 按下那帧没跑 update
-    check('没跑 update 的帧里按 B 也能开商店（state=' + gOpen.state + '）', gOpen.state === 'shop');
-    check('开店的 B 已被消费（残留=' + H.pendingKeys.join(',') + '）', H.pendingKeys.length === 0);
+    check('没跑 update 的帧里按 E 也能开商店（state=' + gOpen.state + '）', gOpen.state === 'shop');
+    check('开店的 E 已被消费（残留=' + H.pendingKeys.join(',') + '）', H.pendingKeys.length === 0);
     H.frameEnd(true);                      // 下一帧
-    check('下一帧商店仍然开着，不会被同一个 B 关掉', gOpen.state === 'shop');
-    H.key('b', false); H.clearPressed();
-    H.key('b', true); H.frameEnd(true);
-    check('松手再按 B 才关商店（state=' + gOpen.state + '）', gOpen.state === 'play');
-    H.key('b', false); H.clearPressed();
+    check('下一帧商店仍然开着，不会被同一个 E 关掉', gOpen.state === 'shop');
+    H.key('e', false); H.clearPressed();
+    H.key('e', true); H.frameEnd(true);
+    check('松手再按 E 才关商店（state=' + gOpen.state + '）', gOpen.state === 'play');
+    H.key('e', false); H.clearPressed();
 
     H.key('escape', true);
     H.frameEnd(false);
@@ -214,11 +214,35 @@
     H.key('escape', false); H.clearPressed();
 
     pOpen.x = H.world.spawn.x; pOpen.y = H.world.spawn.y;
-    H.key('b', true);
+    H.key('e', true);
     H.frameEnd(false);
-    check('远离补给点按 B 只提示、不残留（state=' + gOpen.state + '，残留=' + H.pendingKeys.join(',') + '）',
-      gOpen.state === 'play' && H.pendingKeys.length === 0);
-    H.key('b', false); H.clearPressed();
+    check('远离交互物按 E 不开商店（state=' + gOpen.state + '）', gOpen.state === 'play');
+    H.key('e', false); H.clearPressed();
+
+    // ============ 10.6 暂停菜单：返回主菜单 ============
+    H.startGame();
+    const gPause = H.g;
+    gPause.paused = true;
+    gPause.pauseSel = 0;
+    // ESC 继续游戏
+    H.key('escape', true);
+    H.handlePauseKeys();
+    H.key('escape', false); H.clearPressed();
+    check('暂停菜单按 ESC 继续（paused=' + gPause.paused + '）', gPause.paused === false);
+    // 再暂停，选到「返回主菜单」并确认
+    gPause.paused = true; gPause.pauseSel = 0;
+    H.key('s', true);
+    H.handlePauseKeys();
+    H.key('s', false); H.clearPressed();
+    check('按 S 选中「返回主菜单」（pauseSel=' + gPause.pauseSel + '）', gPause.pauseSel === 1);
+    H.key('enter', true);
+    H.handlePauseKeys();
+    H.key('enter', false); H.clearPressed();
+    check('确认后回到标题页（state=' + gPause.state + '，world=' + (H.world ? '存在' : '清空') + '）',
+      gPause.state === 'title' && H.world === null);
+    // 标题页能正常重新开局
+    H.startGame();
+    check('从标题页重新开局（state=' + H.g.state + '）', H.g.state === 'play');
 
     // ============ 11. 护甲板按 4 一次切出装配 ============
     H.startGame();
@@ -657,48 +681,85 @@
     w25.enemies.length = 0;
     p25.grenades = 2; p25.throwCd = 0;
     H.aim(200, 0);                       // 准心朝右
+    // 按 G 只切出手雷，不直接丢
     H.key('g', true);
     H.step(1); H.frameEnd(true);
     H.key('g', false); H.clearPressed();
-    check('按 G 扔出手雷（飞行中=' + H.grenades.length + '，背包剩=' + p25.grenades + '）',
+    check('按 G 切出手雷（grenadeHeld=' + p25.grenadeHeld + '，飞行中=' + H.grenades.length + '）',
+      p25.grenadeHeld === true && H.grenades.length === 0);
+    // 再按 G 放下手雷
+    H.key('g', true);
+    H.step(1); H.frameEnd(true);
+    H.key('g', false); H.clearPressed();
+    check('再按 G 放下手雷（grenadeHeld=' + p25.grenadeHeld + '）', p25.grenadeHeld === false);
+    // 切出手雷后，左键（J）丢出
+    H.key('g', true);
+    H.step(1); H.frameEnd(true);
+    H.key('g', false); H.clearPressed();
+    H.key('j', true);
+    H.step(1); H.frameEnd(true);
+    H.key('j', false); H.clearPressed();
+    check('切出后左键丢出手雷（飞行中=' + H.grenades.length + '，背包剩=' + p25.grenades + '）',
       H.grenades.length === 1 && p25.grenades === 1);
+    check('丢出后自动放下手雷（grenadeHeld=' + p25.grenadeHeld + '）', p25.grenadeHeld === false);
 
-    // 冷却中连按不会再扔
-    H.key('g', true);
-    H.step(1); H.frameEnd(true);
-    H.key('g', false); H.clearPressed();
-    check('投掷冷却中按 G 不重复扔（飞行中=' + H.grenades.length + '）', H.grenades.length === 1);
-
-    // 引信烧完就地炸开：手雷应该从飞行列表里消失
-    for (let i = 0; i < 60; i++) H.step(1);
-    check('引信烧完后手雷消失（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
-
-    // 没有手雷时不进冷却、不生成飞行物
+    // 没有手雷时按 G 不进入手持
     H.startGame();
     const g25b = H.g, p25b = g25b.player;
     p25b.grenades = 0; p25b.throwCd = 0;
-    H.aim(200, 0);
     H.key('g', true);
     H.step(1); H.frameEnd(true);
     H.key('g', false); H.clearPressed();
-    check('没有手雷时按 G 不投（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
+    check('没有手雷时按 G 不切手持（grenadeHeld=' + p25b.grenadeHeld + '）', p25b.grenadeHeld === false);
+
+    // 引信 3 秒烧完就炸（180 步 = 3 秒）
+    H.startGame();
+    const g25c2 = H.g, p25c2 = g25c2.player, w25c2 = H.world;
+    w25c2.enemies.length = 0;
+    p25c2.grenades = 1; p25c2.throwCd = 0;
+    H.aim(200, 0);
+    H.key('g', true); H.step(1); H.frameEnd(true); H.key('g', false); H.clearPressed();
+    H.key('j', true); H.step(1); H.frameEnd(true); H.key('j', false); H.clearPressed();
+    check('手雷已丢出（飞行中=' + H.grenades.length + '）', H.grenades.length === 1);
+    for (let i = 0; i < 60; i++) { H.world.enemies.length = 0; H.step(1); }   // +1 秒
+    check('1 秒后仍在飞（飞行中=' + H.grenades.length + '）', H.grenades.length === 1);
+    for (let i = 0; i < 140; i++) { H.world.enemies.length = 0; H.step(1); }  // 累计 >3 秒
+    check('3 秒后没砸中就爆炸消失（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
+
+    // 砸到敌人身上立即爆炸
+    H.startGame();
+    const g25d = H.g, p25d = g25d.player, w25d = H.world;
+    w25d.enemies.length = 0;
+    H.startWave();
+    const hit25 = w25d.enemies[0];
+    hit25.x = p25d.x + 60; hit25.y = p25d.y;
+    hit25.hp = hit25.maxHp = 9999;
+    p25d.grenades = 1; p25d.throwCd = 0;
+    H.aim(200, 0);                       // 朝右，正对敌人
+    H.key('g', true); H.step(1); H.frameEnd(true); H.key('g', false); H.clearPressed();
+    H.key('j', true); H.step(1); H.frameEnd(true); H.key('j', false); H.clearPressed();
+    // 让手雷飞向敌人，几帧内应该撞上并爆炸
+    let steps = 0;
+    while (H.grenades.length > 0 && steps++ < 40) { H.step(1); }
+    check('砸到敌人立即爆炸（飞行中=' + H.grenades.length + '，敌人掉血=' + (hit25.hp < 9999) + '）',
+      H.grenades.length === 0 && hit25.hp < 9999);
 
     // 爆炸伤害：把现成的敌人挪到爆炸点旁边，另一个挪远，验证"近的掉血、远的没事"
     H.startGame();
-    const g25c = H.g, p25c = g25c.player, w25c = H.world;
+    const g25e = H.g, p25e = g25e.player, w25e = H.world;
     H.startWave();
-    const near25 = w25c.enemies[0];
-    near25.x = p25c.x + 40; near25.y = p25c.y;
+    const near25 = w25e.enemies[0];
+    near25.x = p25e.x + 40; near25.y = p25e.y;
     near25.hp = near25.maxHp = 300;
-    const far25 = w25c.enemies[1];
-    if (far25) { far25.x = p25c.x + 300; far25.y = p25c.y; far25.hp = far25.maxHp = 300; }
+    const far25 = w25e.enemies[1];
+    if (far25) { far25.x = p25e.x + 300; far25.y = p25e.y; far25.hp = far25.maxHp = 300; }
     const nearHp = near25.hp, farHp = far25 ? far25.hp : 0;
-    H.explode(p25c.x + 40, p25c.y, 76, 135);
+    H.explode(p25e.x + 40, p25e.y, 76, 135);
     check('爆炸伤到范围内的敌人（' + nearHp + '→' + near25.hp + '）', near25.hp < nearHp);
     if (far25) {
       check('爆炸不伤范围外的敌人（' + farHp + '→' + far25.hp + '）', far25.hp === farHp);
     }
-    check('玩家自己的手雷也会自伤（hp=' + Math.round(p25c.hp) + '）', p25c.hp < 100);
+    check('玩家自己的手雷也会自伤（hp=' + Math.round(p25e.hp) + '）', p25e.hp < 100);
 
     // ============ 26. 油桶 ============
     H.startGame();
@@ -806,6 +867,31 @@
     H.startWave();                        // → 第 6 波
     check('第 6 波没有精英',
       w28.enemies.filter(e => e.elite).length === 0);
+
+    // ============ 29. 手机触控模式 ============
+    H.startGame();
+    const g29 = H.g, p29 = g29.player, w29 = H.world;
+    w29.enemies.length = 0;
+    // 默认是电脑键鼠
+    check('默认操作方式是电脑键鼠（inputMode=' + H.inputMode + '）', H.inputMode === 'pc');
+    // 切到手机触控
+    H.setInputMode('touch');
+    check('切到手机触控（inputMode=' + H.inputMode + '）', H.inputMode === 'touch');
+
+    // classifyTouch 归类：左摇杆 / 右摇杆 / 开火键 / 动作按钮 / 暂停键
+    check('左下角命中左摇杆', H.classifyTouch(96, 360 - 84) === 'move');
+    check('右下角命中右摇杆', H.classifyTouch(640 - 96, 360 - 84) === 'aim');
+    check('开火键命中', H.classifyTouch(640 - 176, 360 - 150) === 'fire');
+    check('换弹按钮命中', H.classifyTouch(640 - 30, 360 - 200) === 'btn:r');
+    check('换枪按钮命中', H.classifyTouch(640 - 30, 360 - 156) === 'btn:q');
+    check('手雷按钮命中', H.classifyTouch(640 - 30, 360 - 112) === 'btn:g');
+    check('交互按钮命中', H.classifyTouch(640 - 30, 360 - 68) === 'btn:e');
+    check('左上角暂停键命中', H.classifyTouch(30, 30) === 'pause');
+    check('空白处不命中任何控件', H.classifyTouch(320, 180) === null);
+
+    // 切回电脑，触控残留应被清掉
+    H.setInputMode('pc');
+    check('切回电脑键鼠（inputMode=' + H.inputMode + '）', H.inputMode === 'pc');
 
     report();
   }

@@ -215,11 +215,11 @@
   //
   // 单张波次防守地图（类似 COD 僵尸/PvE 生存）。玩家出生在中央，敌人从四角
   // 和四边的刷怪点一波波涌来，越往后越多、越硬、越快。清完一波自动进下一波。
-  // 击杀攒积分，到地图上的补给点按 B 买武器/弹药/护甲/血包，或玩老虎机摇技能。
+  // 击杀攒积分，到地图上的补给点按 E 买武器/弹药/护甲/血包，或玩老虎机摇技能。
   //
   // 图例：# 墙  . 地板  o 掩体（木箱，挡人挡子弹也挡视线）  X 油桶（可打爆）
-  //       P 玩家出生点  D 门  M 刷怪点  S 补给点（走近按 B 开商店）
-  //       U 武器升级站（第 5 波清完后解锁，走近按 V）
+  //       P 玩家出生点  D 门  M 刷怪点  S 补给点（走近按 E 开商店）
+  //       U 武器升级站（第 5 波清完后解锁，走近按 E）
   //       E 近战  G 枪手  S 霰弹兵（敌人由 spawnEnemies 按刷怪点动态生成）
   const ARENA = {
     title: '防守据点',
@@ -247,9 +247,9 @@
   };
   // 刷怪点：地图四个角 + 四条边中段（从地图里 M 字符读出来）
   const SPAWN_CHAR = 'M';
-  // 补给点字符（走近按 B 打开商店）
+  // 补给点字符（走近按 E 打开商店）
   const SUPPLY_CHAR = 'S';
-  // 武器升级站字符（走近按 V 打开升级界面，第 5 波清完解锁）
+  // 武器升级站字符（走近按 E 打开升级界面，第 5 波清完解锁）
   const UPGRADE_CHAR = 'U';
   // 油桶字符：炸开前挡人挡子弹，被子弹打中或被爆炸波及就引爆
   const BARREL_CHAR = 'X';
@@ -303,6 +303,140 @@
   const mouse = { x: VIEW_W / 2, y: VIEW_H / 2, down: false, right: false };
   let pressed = Object.create(null);   // 本帧刚按下
 
+  // ---- 触控（手机）输入：双摇杆 + 虚拟按钮 ----
+  // inputMode: 'pc' | 'touch'。touch 模式下所有键盘/鼠标输入都来自虚拟控件映射。
+  let inputMode = 'pc';
+  const touch = {
+    // 左摇杆：移动方向（单位向量），active 表示正在拖动
+    moveActive: false, moveId: -1, moveOrigin: null, moveX: 0, moveY: 0,
+    // 右摇杆：瞄准方向（单位向量）。推到边缘（超过 fireDead）才触发开火
+    aimActive: false, aimId: -1, aimOrigin: null, aimX: 0, aimY: 0,
+    firing: false,
+    // 独立开火按钮（右摇杆区域左上角）：按住连发
+    fireBtnActive: false, fireId: -1
+  };
+  // 虚拟按钮点击态（本帧刚按下），由按钮 hit 检测填充，注入到 pressed 表
+  let touchPressed = Object.create(null);
+
+  // ---- 触控控件几何布局（逻辑坐标 VIEW_W×VIEW_H）----
+  const TOUCH_LAYOUT = {
+    // 左摇杆：左下角
+    moveBase: { x: 96, y: VIEW_H - 84, r: 46 },
+    // 右摇杆：右下角（瞄准）
+    aimBase: { x: VIEW_W - 96, y: VIEW_H - 84, r: 46 },
+    // 独立开火键：右摇杆左上
+    fireBtn: { x: VIEW_W - 176, y: VIEW_H - 150, r: 30 },
+    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 交互
+    buttons: [
+      { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 200 },
+      { key: 'q', label: '换枪', x: VIEW_W - 30, y: VIEW_H - 156 },
+      { key: 'g', label: '手雷', x: VIEW_W - 30, y: VIEW_H - 112 },
+      { key: 'e', label: '交互', x: VIEW_W - 30, y: VIEW_H - 68 }
+    ],
+    btnR: 22
+  };
+  // 暂停按钮（左上角，菜单态也显示）
+  const TOUCH_PAUSE = { x: 30, y: 30, r: 20 };
+
+  /** 判断一个触控点落在哪个控件：'move' | 'aim' | 'fire' | 'btn:r' | 'btn:q' ... | 'pause' | null */
+  function classifyTouch(x, y) {
+    const L = TOUCH_LAYOUT;
+    const near = (c, r) => Math.hypot(x - c.x, y - c.y) <= r;
+    // 左摇杆（仅在未激活时，或按距离就近归因）
+    if (near(L.moveBase, L.moveBase.r * 1.4)) return 'move';
+    // 独立开火键优先于右摇杆判定（它在右摇杆边缘外）
+    if (near(L.fireBtn, L.fireBtn.r * 1.2)) return 'fire';
+    if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
+    // 动作按钮
+    for (const b of L.buttons) {
+      if (near(b, L.btnR * 1.2)) return 'btn:' + b.key;
+    }
+    if (near(TOUCH_PAUSE, TOUCH_PAUSE.r * 1.4)) return 'pause';
+    return null;
+  }
+
+  /** 虚拟按钮 → 键盘按键：只触发"本帧按下"（pressed），按钮都是瞬时动作，不需要按住语义。 */
+  function onVirtualKey(key) {
+    pressed[key] = true;
+  }
+
+  /** 每帧把触控摇杆状态折算成 keys / mouse 输入。在 updatePlayer 之前调用。 */
+  function applyTouchInput() {
+    if (inputMode !== 'touch') return;
+    // 左摇杆 → 移动方向
+    let ix = 0, iy = 0;
+    if (touch.moveActive && touch.moveOrigin) {
+      const dx = touch.moveOrigin.x - TOUCH_LAYOUT.moveBase.x;
+      const dy = touch.moveOrigin.y - TOUCH_LAYOUT.moveBase.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 6) {
+        const cl = Math.min(len, TOUCH_LAYOUT.moveBase.r);
+        const nx = dx / len, ny = dy / len;
+        touch.moveX = nx * cl; touch.moveY = ny * cl;
+        // 死区：超过阈值才给移动
+        if (cl > 10) { ix = nx; iy = ny; }
+      }
+    }
+    keys['a'] = ix < -0.3; keys['d'] = ix > 0.3;
+    keys['w'] = iy < -0.3; keys['s'] = iy > 0.3;
+
+    // 右摇杆 → 瞄准方向（喂给 mouse，驱动准心/朝向/相机前探）
+    if (touch.aimActive && touch.aimOrigin) {
+      const dx = touch.aimOrigin.x - TOUCH_LAYOUT.aimBase.x;
+      const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 6) {
+        const nx = dx / len, ny = dy / len;
+        touch.aimX = nx; touch.aimY = ny;
+        // 把方向换算成屏幕边缘的准心位置：准心 = 屏幕中心 + 方向 × 半径
+        const R = Math.min(VIEW_W, VIEW_H) * 0.42;
+        feedTouchMouse(VIEW_W / 2 + nx * R, VIEW_H / 2 + ny * R);
+      } else {
+        // 摇杆回中 → 准心回屏幕中心（保持原朝向，靠 aimDir 的 len<1 判定）
+        feedTouchMouse(VIEW_W / 2, VIEW_H / 2);
+      }
+    }
+    // 右摇杆推到边缘 → 自动开火
+    const fireByAim = touch.aimActive && (Math.hypot(touch.aimX, touch.aimY) > TOUCH_LAYOUT.aimBase.r * 0.82);
+    mouse.down = (fireByAim || touch.fireBtnActive || touch.firing);
+    mouse.right = false;   // 触屏不区分右键；瞄准通过"靠近目标"自动完成（见 applyTouchAim）
+  }
+
+  /** 触屏下的辅助瞄准：右摇杆朝敌人方向时，把准心轻微吸附到最近的敌人身上。 */
+  function applyTouchAim() {
+    if (inputMode !== 'touch' || !G || !G.player || !W) return;
+    if (!touch.aimActive) return;
+    // 找准心方向上的最近敌人
+    let best = null, bestD = 1e9;
+    const ox = G.player.x, oy = G.player.y;
+    for (const e of W.enemies) {
+      if (!e.alive) continue;
+      const d = Math.hypot(e.x - ox, e.y - oy);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return;
+    // 只在一定距离内吸附，避免跨屏乱跳
+    if (bestD < 220) {
+      const ax = best.x - ox, ay = best.y - oy;
+      const al = Math.hypot(ax, ay) || 1;
+      const R = Math.min(VIEW_W, VIEW_H) * 0.42;
+      feedTouchMouse(VIEW_W / 2 + (ax / al) * R, VIEW_H / 2 + (ay / al) * R);
+    }
+  }
+
+  /** 切换操作方式，并持久化到 localStorage。 */
+  function setInputMode(mode) {
+    inputMode = mode;
+    try { localStorage.setItem('hotline.inputMode', mode); } catch (err) { /* 隐私模式下忽略 */ }
+    // 切换到电脑键鼠时，清掉触控残留状态，避免卡住
+    if (mode === 'pc') {
+      touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
+      touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
+      touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
+      keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
+    }
+  }
+
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (!keys[k]) pressed[k] = true;
@@ -334,6 +468,92 @@
     if (e.button === 2) mouse.right = false;
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ---- 触控输入：多点追踪，左/右摇杆和按钮各绑定一个 touch identifier ----
+  function touchPos(t) {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: (t.clientX - r.left) / r.width * VIEW_W,
+      y: (t.clientY - r.top) / r.height * VIEW_H
+    };
+  }
+  // 把触控坐标（逻辑坐标）换算成鼠标屏幕坐标，直接喂给 mouse，复用准心/朝向逻辑
+  function feedTouchMouse(x, y) {
+    mouse.x = x; mouse.y = y;
+  }
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    Sfx.init();
+    if (inputMode !== 'touch') return;
+    for (const t of e.changedTouches) {
+      const pt = touchPos(t);
+      // 菜单界面（标题/设置/暂停/结算）：把触点当鼠标点击，复用按钮命中逻辑
+      if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'done' || G.paused)) {
+        feedTouchMouse(pt.x, pt.y);
+        onPointerDown({ button: 0 });
+        continue;
+      }
+      const ctl = classifyTouch(pt.x, pt.y);   // 见下：命中摇杆/按钮区域
+      if (ctl === 'move') {
+        if (touch.moveActive) continue;
+        touch.moveActive = true; touch.moveId = t.identifier;
+        touch.moveOrigin = pt; touch.moveX = 0; touch.moveY = 0;
+      } else if (ctl === 'aim') {
+        if (touch.aimActive) continue;
+        touch.aimActive = true; touch.aimId = t.identifier;
+        touch.aimOrigin = pt; touch.aimX = 0; touch.aimY = 0;
+      } else if (ctl === 'fire') {
+        if (touch.fireBtnActive) continue;
+        touch.fireBtnActive = true; touch.fireId = t.identifier;
+        touch.firing = true;
+      } else if (ctl === 'pause') {
+        // 暂停按钮：切换暂停（和 ESC 同效果）
+        onVirtualKey('escape');
+      } else if (ctl && ctl.startsWith('btn:')) {
+        const key = ctl.slice(4);
+        touchPressed[key] = true;
+        onVirtualKey(key);
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (inputMode !== 'touch') return;
+    for (const t of e.changedTouches) {
+      const pt = touchPos(t);
+      if (t.identifier === touch.moveId) {
+        touch.moveOrigin = pt;
+      } else if (t.identifier === touch.aimId) {
+        touch.aimOrigin = pt;
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (inputMode !== 'touch') return;
+    for (const t of e.changedTouches) {
+      if (t.identifier === touch.moveId) {
+        touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
+      } else if (t.identifier === touch.aimId) {
+        touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
+        touch.firing = false;
+      } else if (t.identifier === touch.fireId) {
+        touch.fireBtnActive = false; touch.fireId = -1; touch.firing = false;
+      }
+    }
+    // 释放所有虚拟按钮按下态（简单起见，结束时全清）
+    touchPressed = Object.create(null);
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', (e) => {
+    touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
+    touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
+    touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
+    touchPressed = Object.create(null);
+  });
 
   // ---------------------------------------------------------------- 音效（程序合成）
   const Sfx = {
@@ -968,8 +1188,9 @@
       armorSlots: 0,         // 已装备的护甲板格数（0~3，每格 50）
       armorPlates: 0,        // 背包里的护甲板数量（补给点买/掉落，按 4 取出长按左键装一块）
       medkits: 0,            // 背包里的血包数量（自动拾取，按 3 取出长按左键使用）
-      grenades: 2,           // 手雷（按 G 投掷）
+      grenades: 2,           // 手雷（按 G 切换手持，左键投掷）
       throwCd: 0,            // 投掷冷却，防止一通乱按连丢
+      grenadeHeld: false,    // 手持手雷状态：按 G 进入，左键丢出，右键瞄准
       // 血包治疗：按 3 切换到血包后，长按左键读条
       healing: false,
       healCharge: 0,
@@ -1138,23 +1359,49 @@
 
   // ---------------------------------------------------------------- 手雷
   const GRENADE_SPEED = 300;
-  const GRENADE_FUSE = 0.85;    // 飞行时间，撞墙/撞桶会提前炸
+  const GRENADE_FUSE = 3.0;     // 没砸到目标就 3 秒后炸；撞墙/撞桶/撞敌人立即炸
   const GRENADE_RADIUS = 76;
   const GRENADE_DMG = 135;
   const GRENADE_MAX = 5;        // 背包上限
+  const GRENADE_BLINK = 0.7;    // 最后 0.7 秒开始红闪（"准备爆炸"警告）
 
-  /** 扔一颗手雷：按 G，朝准心方向。 */
+  /** 切换手持手雷：按 G 在手雷和武器之间来回切。没雷时提示，不进入手持。 */
+  function toggleGrenade() {
+    const p = G.player;
+    if (!p || !p.alive) return false;
+    if (p.grenadeHeld) {
+      // 已经拿着手雷 → 放下，回到武器
+      p.grenadeHeld = false;
+      Sfx.play('pickup');
+      return true;
+    }
+    if (p.grenades <= 0) {
+      G.toast = '没有手雷';
+      G.toastTimer = 1.2;
+      return false;
+    }
+    // 收起血包/护甲板，切出手雷
+    p.healing = false; p.healCharge = 0;
+    p.plating = false; p.plateCharge = 0;
+    p.grenadeHeld = true;
+    Sfx.play('pickup');
+    return true;
+  }
+
+  /** 扔一颗手雷：手持手雷（按 G 切出）后左键丢出，朝准心方向。 */
   function throwGrenade() {
     const p = G.player;
     if (!p || !p.alive) return false;
     if (p.grenades <= 0) {
       G.toast = '没有手雷';
       G.toastTimer = 1.2;
+      p.grenadeHeld = false;      // 没雷了自动放下，回到武器
       return false;
     }
     if (p.throwCd > 0) return false;
     p.grenades--;
     p.throwCd = 0.5;
+    p.grenadeHeld = false;        // 丢出去了，回到武器
     const aim = aimDir() || p.facing;
     G.grenades.push({
       x: p.x + aim.x * 11, y: p.y + aim.y * 11,
@@ -1182,6 +1429,13 @@
           g.x -= g.vx * dt * 0.5;
           g.y -= g.vy * dt * 0.5;
           boom = true;
+        } else {
+          // 砸到敌人身上：立即爆炸（手雷直接糊脸）
+          for (const e of W.enemies) {
+            if (!e.alive) continue;
+            const r = ACTOR_R + 5 + (e.scale ? e.scale * 2 : 0);
+            if (Math.hypot(g.x - e.x, g.y - e.y) <= r) { boom = true; break; }
+          }
         }
       }
       if (!boom) {
@@ -1360,6 +1614,7 @@
       p.hp = 0;
       p.alive = false;
       p.deathDir = dirAngle;
+      p.grenadeHeld = false;   // 死了放下手雷
       return true;
     }
     return false;
@@ -1535,9 +1790,9 @@
     const ad = aimDir();
     if (ad) { p.facing.x = ad.x; p.facing.y = ad.y; }
 
-    // 瞄准（ADS）：按住右键抬枪。手上是近战 / 正在用血包和护甲板时不算瞄准
+    // 瞄准（ADS）：按住右键抬枪。手上是近战 / 正在用血包护甲板时不算；手持手雷也可以瞄
     const gunDef = p.weapon ? WEAPONS[p.weapon] : null;
-    const canAim = !!(gunDef && !gunDef.melee && !p.healing && !p.plating);
+    const canAim = !!(gunDef && !gunDef.melee && !p.healing && !p.plating) || p.grenadeHeld;
     const wantAim = canAim && mouse.right;
     const aimRate = wantAim ? (1 / AIM_IN) : -(1 / AIM_OUT);
     p.aimT = clamp(p.aimT + aimRate * dt, 0, 1);
@@ -1629,8 +1884,8 @@
     // Q 也可以切主/副武器（老习惯）
     if (pressed['q']) swapWeapon();
 
-    // 手雷（G）：被围住时的解围手段，不用切手
-    if (pressed['g']) throwGrenade();
+    // 手雷（G）：切换手持手雷，切出后左键丢、右键瞄准
+    if (pressed['g']) toggleGrenade();
 
     // 攻击（按住/单击）
     const fireHeld = mouse.down || keys['j'];
@@ -1681,6 +1936,9 @@
         // 松开：读条缓慢回退，但保持持板状态（可重新长按接着装）
         p.plateCharge = Math.max(0, p.plateCharge - dt * 1.2);
       }
+    } else if (p.grenadeHeld) {
+      // 手持手雷：左键单击（fireTap）丢出，朝准心方向
+      if (fireTap) throwGrenade();
     } else if (p.weapon) {
       // def.auto 换成 gunStat：进化后的霰弹枪会从"点一下打一发"变成按住连发
       if ((gunStat(p.weapon, 'auto') && fireHeld) || fireTap) {
@@ -1689,10 +1947,11 @@
       }
     }
 
-    // 拾取：血包/弹药走近就自动捡（与是否持枪无关）；武器才需要按 E 或空手
+    // 拾取：血包/弹药走近就自动捡（与是否持枪无关）；武器才需要按 E 或空手。
+    // 按 E 且靠近交互物（补给点/升级站）时，E 让给"开 UI"，不抢拾取。
     autoPickupConsumables();
-    if (pressed['e']) tryPickup(true);
-    else tryPickup(false);
+    if (pressed['e'] && !interactTarget()) tryPickup(true);
+    else if (!pressed['e']) tryPickup(false);
 
     // 门
     updateDoors(dt);
@@ -1764,9 +2023,10 @@
     if (!p || !p.alive) return false;
 
     if (kind === 'main') {
-      const wasUtility = p.healing || p.plating;
+      const wasUtility = p.healing || p.plating || p.grenadeHeld;
       p.healing = false; p.healCharge = 0;
       p.plating = false; p.plateCharge = 0;
+      p.grenadeHeld = false;
       if (p.curSlot === 'side' && p.side) swapWeapon();   // 手上是副武器 → 换回主武器
       if (wasUtility) Sfx.play('pickup');
       return true;
@@ -1774,9 +2034,10 @@
 
     if (kind === 'side') {
       if (p.curSlot === 'side') {                    // 已经在副武器上，只需放下消耗品
-        if (p.healing || p.plating) {
+        if (p.healing || p.plating || p.grenadeHeld) {
           p.healing = false; p.healCharge = 0;
           p.plating = false; p.plateCharge = 0;
+          p.grenadeHeld = false;
           Sfx.play('pickup');
         }
         return true;
@@ -1799,6 +2060,7 @@
         return false;
       }
       p.plating = false; p.plateCharge = 0;
+      p.grenadeHeld = false;
       p.healing = true;
       Sfx.play('pickup');
       return true;
@@ -1811,6 +2073,7 @@
         return false;
       }
       p.healing = false; p.healCharge = 0;
+      p.grenadeHeld = false;
       p.plating = true;
       Sfx.play('pickup');
       return true;
@@ -1828,6 +2091,7 @@
       p.healing = false; p.healCharge = 0;
       p.plating = false; p.plateCharge = 0;
     }
+    p.grenadeHeld = false;                    // 切枪顺手放下手雷
     const cur = { weapon: p.weapon, ammo: p.ammo, reserve: p.reserve };
     let next = null;
     if (p.side) {
@@ -2313,20 +2577,19 @@
   }
 
   // ---------------------------------------------------------------- 补给点商店
-  // 补给点：地图上的固定点，走近后按 B 打开商店 UI。
+  // 补给点：地图上的固定点，走近后按 E 打开商店 UI。
   // 商品只有：武器 / 弹药 / 护甲板 / 血包。技能不再出售，只能靠老虎机摇出来。
   const SHOP = [
     { id: 'pistol', kind: 'weapon', label: '手枪', price: 0, desc: '' },
     { id: 'smg', kind: 'weapon', label: '冲锋枪', price: 400, desc: '全自动' },
     { id: 'shotgun', kind: 'weapon', label: '霰弹枪', price: 300, desc: '近距离' },
-    { id: 'bat', kind: 'weapon', label: '棒球棍', price: 100, desc: '' },
-    { id: 'knife', kind: 'weapon', label: '匕首', price: 50, desc: '' },
     { id: 'ammo', kind: 'ammo', label: '弹药', price: 120, desc: '补满备弹' },
     { id: 'armor', kind: 'armor', label: '护甲板', price: 250, desc: '一格（长按左键装）' },
     { id: 'grenade', kind: 'grenade', label: '手雷', price: 120, desc: '+2 颗' },
     { id: 'medkit', kind: 'heal', label: '血包', price: 150, desc: '回满血' },
     { id: 'slot', kind: 'slot', label: '老虎机', price: 200, desc: '' }
   ];
+  const SHOP_COLS = 5;   // 商店每列商品数（左列 5 项，右列不足则收尾）
 
   function openShop() {
     G.state = 'shop';
@@ -2724,12 +2987,34 @@
     Sfx.init();
     // 右键只负责瞄准，不拿来开局（免得抬手瞄一下就顺手把标题点掉了）
     if (e && e.button === 2) return;
-    if (G.state === 'title') startGame();
-    else if (G.state === 'done') startGame();
+    // 命中检测：判断点击落在哪个按钮上
+    const hit = (b) => b && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    if (G.state === 'title') {
+      if (hit(TITLE_BTN.start)) startGame();
+      else if (hit(TITLE_BTN.settings)) G.state = 'settings';
+      return;
+    }
+    if (G.state === 'settings') {
+      if (hit(SETTINGS_BTN.sound)) { Sfx.muted = !Sfx.muted; Sfx.play('hit'); }
+      else if (hit(SETTINGS_BTN.control)) { setInputMode(inputMode === 'touch' ? 'pc' : 'touch'); Sfx.play('hit'); }
+      else if (hit(SETTINGS_BTN.back)) G.state = 'title';
+      return;
+    }
+    // 暂停菜单：点击「继续游戏」或「返回主菜单」
+    if (G.paused) {
+      const cy = VIEW_H / 2 - 4;   // 继续游戏按钮中心
+      const ry = VIEW_H / 2 + 30;  // 返回主菜单按钮中心
+      const bx = VIEW_W / 2 - 80, bw = 160, bh = 28;
+      const inBox = (y) => mouse.x >= bx && mouse.x <= bx + bw && mouse.y >= y - 14 && mouse.y <= y - 14 + bh;
+      if (inBox(cy)) G.paused = false;
+      else if (inBox(ry)) goTitle();
+      return;
+    }
+    if (G.state === 'done') startGame();
   }
 
   // ---------------------------------------------------------------- 补给点
-  // 地图上的固定补给点。走近后按 B 打开商店 UI；老虎机也在里面。
+  // 地图上的固定补给点。走近后按 E 打开商店 UI；老虎机也在里面。
   // 补给点位置从地图字符 'S'（商店）读出。
   function nearSupply() {
     if (!W || !G.player) return null;
@@ -2741,12 +3026,26 @@
     return null;
   }
 
-  /** 武器升级站：走近 40 像素内按 V。 */
+  /** 武器升级站：走近 40 像素内按 E。 */
   function nearStation() {
     if (!W || !G.player) return null;
     for (const s of (W.stations || [])) {
       if (Math.hypot(G.player.x - s.x, G.player.y - s.y) <= 40) return s;
     }
+    return null;
+  }
+
+  /**
+   * 统一的"交互目标"判定：走近后按 E 打开对应的 UI。
+   * 优先级：补给点商店 > 武器升级站（两者空间上不会重叠）。
+   * 返回 { type, obj } 或 null（null 表示 E 走拾取武器逻辑）。
+   */
+  function interactTarget() {
+    if (!W || !G.player) return null;
+    const s = nearSupply();
+    if (s) return { type: 'shop', obj: s };
+    const st = nearStation();
+    if (st) return { type: 'upgrade', obj: st };   // 未解锁也在 openUpgrade 里提示
     return null;
   }
 
@@ -2845,6 +3144,9 @@
   function update(dt) {
     if (!W) return;
     if (G.state === 'play') {
+      // 触屏模式：先把摇杆/按钮折算成 keys/mouse，再跑玩家逻辑（复用全部键鼠逻辑）
+      applyTouchInput();
+      applyTouchAim();
       updatePlayer(dt);
       updateBarrels(dt);
       updateGrenades(dt);
@@ -2863,7 +3165,7 @@
           // 第 5 波清完 → 武器升级站解锁（只解锁一次）
           if (G.wave >= UP_UNLOCK_WAVE && !G.upgUnlocked) {
             G.upgUnlocked = true;
-            G.toast = '武器升级站已开放（按 V）';
+            G.toast = '武器升级站已开放（按 E）';
             G.toastTimer = 2.6;
             Sfx.play('clear');
           }
@@ -3001,7 +3303,7 @@
     }
   }
 
-  /** 飞行中的手雷：弹体 + 引信火花，最后 0.3 秒开始闪红。 */
+  /** 飞行中的手雷：弹体 + 引信火花，最后 0.7 秒整颗红闪（准备爆炸警告）。 */
   function drawGrenades() {
     for (const g of G.grenades) {
       ctx.save();
@@ -3010,16 +3312,21 @@
       ctx.beginPath();
       ctx.ellipse(1, 3, 4, 2.6, 0, 0, 6.283);
       ctx.fill();
-      ctx.fillStyle = '#4a5a3a';
+      const urgent = g.t < GRENADE_BLINK;
+      // 红闪：接近爆炸时整颗弹体在灰绿色和红色之间交替
+      const blinkOn = Math.sin(g.spin * 14) > 0;
+      if (urgent && blinkOn) {
+        ctx.fillStyle = '#e23a2a';
+      } else {
+        ctx.fillStyle = '#4a5a3a';
+      }
       ctx.beginPath(); ctx.arc(0, 0, 3.4, 0, 6.283); ctx.fill();
-      ctx.strokeStyle = '#1a2015';
+      ctx.strokeStyle = urgent && blinkOn ? '#7a1410' : '#1a2015';
       ctx.lineWidth = 1;
       ctx.stroke();
-      const urgent = g.t < 0.3;
-      if (!urgent || Math.sin(g.spin * 9) > 0) {
-        ctx.fillStyle = urgent ? '#ff5a3a' : '#ffb347';
-        ctx.beginPath(); ctx.arc(0, -3.1, 1.4, 0, 6.283); ctx.fill();
-      }
+      // 引信火花：普通时橙黄，危急时鲜红
+      ctx.fillStyle = urgent ? '#ff3a2a' : '#ffb347';
+      ctx.beginPath(); ctx.arc(0, -3.1, 1.4, 0, 6.283); ctx.fill();
       ctx.restore();
     }
   }
@@ -3082,7 +3389,7 @@
         ctx.font = 'bold 9px "Microsoft YaHei", monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#8fd8ff';
-        ctx.fillText('按 B 补给', 0, -20);
+        ctx.fillText('按 E 补给', 0, -20);
       }
       ctx.restore();
     }
@@ -3114,7 +3421,7 @@
         ctx.font = 'bold 9px "Microsoft YaHei", monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = unlocked ? '#ffcf7a' : '#8d7f9c';
-        ctx.fillText(unlocked ? '按 V 升级' : '第 ' + UP_UNLOCK_WAVE + ' 波后开放', 0, -20);
+        ctx.fillText(unlocked ? '按 E 升级' : '第 ' + UP_UNLOCK_WAVE + ' 波后开放', 0, -20);
       }
       ctx.restore();
     }
@@ -3243,7 +3550,10 @@
   const GRIP = {
     pistol:  { r: [10.8, 4.9], l: [9.2, 5.8] },
     smg:     { r: [11.0, 5.0], l: [9.4, 5.9] },
-    shotgun: { r: [8.2, 4.0], l: [15.0, 4.4], rs: 0.8, ls: 0.66 }
+    shotgun: { r: [8.2, 4.0], l: [15.0, 4.4], rs: 0.8, ls: 0.66 },
+    // 匕首：横向握持、刀尖朝前，双手一前一后都压在刀柄上（右手靠护手、左手靠柄末）。
+    // 手半径收小、前后错开，才能在 32px 小人上看出是"两只手握同一段柄"而不是"一只手"。
+    knife:   { r: [9.4, 1.9], l: [5.9, 3.1], rs: 0.72, ls: 0.68 }
   };
 
   function shade(hex, k) {
@@ -3275,6 +3585,23 @@
       ctx.fillRect(-6.2, -4.8, 12.4, 1.4);
       ctx.fillStyle = 'rgba(0,0,0,0.18)';
       ctx.fillRect(-6.2, 3.4, 12.4, 1.4);
+      return;
+    }
+    if (kind === 'grenade') {
+      // 手持手雷：绿壳圆弹 + 顶部引信环，蓄势待投
+      ctx.fillStyle = '#12100e';
+      ctx.beginPath(); ctx.arc(0, 0, 5.2, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#4a5a3a';
+      ctx.beginPath(); ctx.arc(0, 0, 4.4, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = '#1a2015';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.fillStyle = '#2a3a22';
+      ctx.fillRect(-1.2, -7.4, 2.4, 2.6);        // 引信座
+      ctx.strokeStyle = '#c9b877';
+      ctx.beginPath(); ctx.arc(0, -6.4, 1.8, -0.6, 3.7); ctx.stroke();   // 拉环
+      ctx.fillStyle = '#ffb347';
+      ctx.beginPath(); ctx.arc(0, -4.6, 1.0, 0, 6.283); ctx.fill();       // 引信火花
       return;
     }
     // 护甲板：带斜切下角的钢板
@@ -3338,9 +3665,9 @@
     const pal = PALETTE[tex] || PALETTE.player;
     const rim = shade(pal.head, 0.4);
 
-    // 手里拿什么：治疗时端血包、装护甲时捧护甲板（这时枪收起来了）
-    const holding = (isPlayer && (a.healing || a.plating))
-      ? (a.healing ? 'medkit' : 'plate') : null;
+    // 手里拿什么：治疗时端血包、装护甲时捧护甲板、持雷时抓手雷（这时枪收起来了）
+    const holding = (isPlayer && (a.healing || a.plating || a.grenadeHeld))
+      ? (a.healing ? 'medkit' : (a.plating ? 'plate' : 'grenade')) : null;
     const held = holding || a.weapon;
 
     // 武器：枪口永远朝向 facing。长枪（22px 的霰弹枪）按多出来的宽度整体前移，
@@ -3495,6 +3822,78 @@
     ctx.globalAlpha = 1;
   }
 
+  /** 绘制触屏虚拟控件：双摇杆 + 动作按钮 + 暂停键（屏幕空间，不随世界缩放）。 */
+  function drawTouchUI() {
+    if (inputMode !== 'touch') return;
+    const L = TOUCH_LAYOUT;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // ---- 左摇杆（移动）----
+    ctx.globalAlpha = 0.30;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(L.moveBase.x, L.moveBase.y, L.moveBase.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(L.moveBase.x, L.moveBase.y, L.moveBase.r, 0, Math.PI * 2); ctx.fill();
+    // 摇杆头
+    const mhx = L.moveBase.x + touch.moveX, mhy = L.moveBase.y + touch.moveY;
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = touch.moveActive ? '#dfe6f0' : '#aeb6c2';
+    ctx.beginPath(); ctx.arc(mhx, mhy, L.moveBase.r * 0.42, 0, Math.PI * 2); ctx.fill();
+
+    // ---- 右摇杆（瞄准/开火）----
+    ctx.globalAlpha = 0.30;
+    ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(L.aimBase.x, L.aimBase.y, L.aimBase.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(L.aimBase.x, L.aimBase.y, L.aimBase.r, 0, Math.PI * 2); ctx.fill();
+    const ahx = L.aimBase.x + touch.aimX, ahy = L.aimBase.y + touch.aimY;
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = touch.aimActive ? '#ffe0c0' : '#c2b2a0';
+    ctx.beginPath(); ctx.arc(ahx, ahy, L.aimBase.r * 0.42, 0, Math.PI * 2); ctx.fill();
+
+    // ---- 独立开火键 ----
+    const fb = L.fireBtn;
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = touch.fireBtnActive ? '#ff6a5a' : '#e05040';
+    ctx.beginPath(); ctx.arc(fb.x, fb.y, fb.r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+    ctx.fillText('开火', fb.x, fb.y + 1);
+
+    // ---- 动作按钮 ----
+    for (const b of L.buttons) {
+      const act = !!touchPressed[b.key];
+      ctx.globalAlpha = act ? 0.55 : 0.30;
+      ctx.fillStyle = act ? '#8ab4e8' : '#3a4a5e';
+      ctx.beginPath(); ctx.arc(b.x, b.y, L.btnR, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+      ctx.fillText(b.label, b.x, b.y + 1);
+    }
+
+    // ---- 暂停键（左上角）----
+    const pp = TOUCH_PAUSE;
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#5a5f6a';
+    ctx.beginPath(); ctx.arc(pp.x, pp.y, pp.r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(pp.x - 4, pp.y - 7, 3, 14);
+    ctx.fillRect(pp.x + 1, pp.y - 7, 3, 14);
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
   function drawVignette() {
     if (!G.vignette) {
       const g = ctx.createRadialGradient(
@@ -3590,7 +3989,7 @@
       }
     }
 
-    // 倒计时：开局准备 / 波次清空后整备，只报数字，不写操作说明
+    // 倒计时：开局准备 / 波次清空后整备，附空格跳过提示
     if (G.state === 'play' && W.cleared && G.intermission > 0) {
       ctx.textAlign = 'center';
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
@@ -3600,6 +3999,13 @@
       ctx.fillText(txt, VIEW_W / 2 + 1, VIEW_H / 2 + 61);
       ctx.fillStyle = '#ffd76e';
       ctx.fillText(txt, VIEW_W / 2, VIEW_H / 2 + 60);
+      // 提示按空格跳过等待
+      ctx.font = '10px "Microsoft YaHei", monospace';
+      const hint = '按 SPACE 跳过';
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillText(hint, VIEW_W / 2 + 1, VIEW_H / 2 + 78);
+      ctx.fillStyle = '#cfd6e6';
+      ctx.fillText(hint, VIEW_W / 2, VIEW_H / 2 + 77);
     }
 
     ctx.restore();
@@ -3946,7 +4352,7 @@
     ctx.fillText('$' + G.cash, VIEW_W / 2, 74);
 
     // 列表
-    const itemsPerCol = 5;
+    const itemsPerCol = SHOP_COLS;
     const colW = VIEW_W / 2;
     ctx.textAlign = 'left';
     for (let i = 0; i < SHOP.length; i++) {
@@ -3982,7 +4388,7 @@
     ctx.textAlign = 'center';
     ctx.font = '10px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#5f5668';
-    ctx.fillText('W/S  ·  回车  ·  ESC', VIEW_W / 2, VIEW_H - 24);
+    ctx.fillText('W/S 选行 · A/D 换列 · 回车 · ESC', VIEW_W / 2, VIEW_H - 24);
 
     // 老虎机结果展示（在底部中间偏上）
     if (G.slotState) {
@@ -4180,6 +4586,12 @@
     ctx.restore();
   }
 
+  // 标题页按钮的命中区域（逻辑坐标，供 drawTitle 与 onPointerDown 共用）
+  const TITLE_BTN = {
+    start: { x: VIEW_W / 2 - 80, y: 176, w: 160, h: 40 },
+    settings: { x: VIEW_W / 2 - 80, y: 226, w: 160, h: 40 }
+  };
+
   function drawTitle() {
     ctx.save();
     ctx.fillStyle = 'rgba(8,6,10,0.82)';
@@ -4187,14 +4599,89 @@
     ctx.textAlign = 'center';
     ctx.font = 'bold 34px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e53935';
-    ctx.fillText('HOTLINE 2.5D', VIEW_W / 2, 120);
-    ctx.font = 'bold 12px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#cfc4d4';
-    ctx.fillText('点击开始', VIEW_W / 2, 210);
+    ctx.fillText('HOTLINE 2.5D', VIEW_W / 2, 110);
+    // 两个按钮：开始游戏 / 设置
+    drawMenuButton(TITLE_BTN.start, '开始游戏', '#e53935');
+    drawMenuButton(TITLE_BTN.settings, '设置', '#5aa7e0');
     // 只留一行最必要的：其余键位靠 HUD 和手感学，不铺教程
     ctx.fillStyle = '#6f6678';
     ctx.font = '11px "Microsoft YaHei", monospace';
-    ctx.fillText('WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · B 补给点', VIEW_W / 2, 258);
+    ctx.fillText('WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 300);
+    ctx.restore();
+  }
+
+  /** 绘制一个菜单按钮（圆角描边 + 文字），hover 高亮。 */
+  function drawMenuButton(b, label, color) {
+    const hover = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // 底板
+    ctx.fillStyle = hover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = hover ? color : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 6);
+    } else {
+      ctx.beginPath();
+      ctx.rect(b.x, b.y, b.w, b.h);
+    }
+    ctx.fill();
+    ctx.stroke();
+    // 文字
+    ctx.font = 'bold 16px "Microsoft YaHei", monospace';
+    ctx.fillStyle = hover ? '#ffffff' : '#cfc4d4';
+    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // 设置页按钮区域
+  const SETTINGS_BTN = {
+    sound: { x: VIEW_W / 2 - 120, y: 138, w: 240, h: 40 },
+    control: { x: VIEW_W / 2 - 120, y: 190, w: 240, h: 40 },
+    back: { x: VIEW_W / 2 - 80, y: 248, w: 160, h: 40 }
+  };
+
+  function drawSettings() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,6,10,0.88)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 26px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#e8e0f0';
+    ctx.fillText('设置', VIEW_W / 2, 96);
+    // 音效开关
+    const sb = SETTINGS_BTN.sound;
+    const sHover = mouse.x >= sb.x && mouse.x <= sb.x + sb.w && mouse.y >= sb.y && mouse.y <= sb.y + sb.h;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = sHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = sHover ? '#5aa7e0' : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(sb.x, sb.y, sb.w, sb.h, 6); }
+    else { ctx.beginPath(); ctx.rect(sb.x, sb.y, sb.w, sb.h); }
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#cfc4d4';
+    ctx.fillText('音效：' + (Sfx.muted ? '关' : '开'), sb.x + sb.w / 2, sb.y + sb.h / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+    // 操作方式：手机触控 / 电脑键鼠
+    const cb = SETTINGS_BTN.control;
+    const cHover = mouse.x >= cb.x && mouse.x <= cb.x + cb.w && mouse.y >= cb.y && mouse.y <= cb.y + cb.h;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = cHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = cHover ? '#e5a13a' : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cb.x, cb.y, cb.w, cb.h, 6); }
+    else { ctx.beginPath(); ctx.rect(cb.x, cb.y, cb.w, cb.h); }
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#e8d8b8';
+    ctx.fillText('操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), cb.x + cb.w / 2, cb.y + cb.h / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+    // 返回按钮
+    drawMenuButton(SETTINGS_BTN.back, '返回', '#5aa7e0');
     ctx.restore();
   }
 
@@ -4307,10 +4794,13 @@
   }
 
   function render() {
+    // 菜单界面显示系统光标，战斗时隐藏系统光标（改用准心）。
+    canvas.style.cursor = (G.state !== 'play' || G.paused) ? 'default' : 'none';
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#0f0c12';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
+    if (G.state === 'settings') { drawSettings(); return; }
     if (G.state === 'title' || !W) { drawTitle(); return; }
 
     // 相机 + 抖动
@@ -4393,6 +4883,7 @@
     // 也不会被边缘暗角/受击闪白糊掉（之前被压暗成一坨暗红，看着像没画）
     drawCrosshair();
     drawHUD();
+    drawTouchUI();
     if (G.state === 'shop') drawShop();
     if (G.state === 'upgrade') drawUpgrade();
   }
@@ -4413,12 +4904,12 @@
     // 这一下按键就被吞了，表现就是"按 4 要按好多下才切出护甲板"。
     // 所以只在跑到过 update 的帧末尾清空，没跑到的帧把按键留到下一帧。
     let advanced = false;
-    if (G && G.state === 'title') advanced = true;   // 标题画面不跑逻辑，按键当帧作废
+    if (G && (G.state === 'title' || G.state === 'settings')) advanced = true;   // 标题/设置画面不跑逻辑，按键当帧作废
 
-    if (G && G.state !== 'title') {
+    if (G && G.state !== 'title' && G.state !== 'settings') {
       if (G.paused || G.freeze) {
-        // 暂停时主循环提前返回，所以这里的 ESC 得自己处理，否则暂停后恢复不了
-        if (G.paused && pressed['escape']) G.paused = false;
+        // 暂停时主循环提前返回，所以这里的按键得自己处理，否则暂停后恢复不了
+        if (G.paused) handlePauseKeys();
         pressed = Object.create(null);
         render();
         if (G.paused) drawPause();
@@ -4468,11 +4959,59 @@
     ctx.textAlign = 'center';
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e8e0f0';
-    ctx.fillText('暂停', VIEW_W / 2, VIEW_H / 2 - 8);
-    ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+    ctx.fillText('暂停', VIEW_W / 2, VIEW_H / 2 - 34);
+    // 两个选项：继续 / 返回主菜单（鼠标悬停或键盘选中高亮）
+    const sel = G.pauseSel || 0;
+    const items = [
+      { label: '继续游戏', y: VIEW_H / 2 - 4 },
+      { label: '返回主菜单', y: VIEW_H / 2 + 30 }
+    ];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const b = { x: VIEW_W / 2 - 80, y: it.y - 14, w: 160, h: 28 };
+      const hover = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+      const active = sel === i || hover;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)';
+      ctx.strokeStyle = active ? (i === 1 ? '#e53935' : '#5aa7e0') : 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 1.5;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 5); }
+      else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+      ctx.fillStyle = active ? '#ffffff' : '#cfc4d4';
+      ctx.fillText(it.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      ctx.textBaseline = 'alphabetic';
+    }
+    ctx.font = '11px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
-    ctx.fillText('ESC 继续', VIEW_W / 2, VIEW_H / 2 + 20);
+    ctx.fillText('W/S 选择 · 回车/左键确认 · ESC 继续', VIEW_W / 2, VIEW_H / 2 + 70);
     ctx.restore();
+  }
+
+  /** 返回主菜单：清空世界和玩家，state 回 title（标题页纯 UI，不跑游戏逻辑）。 */
+  function goTitle() {
+    G.state = 'title';
+    G.paused = false;
+    G.pauseSel = 0;
+    G.centerText = '';
+    G.centerTimer = 0;
+    W = null;
+    G.player = null;
+    G.grenades = [];
+    BLASTS.length = 0;
+  }
+
+  /** 暂停菜单的按键处理（仅在 paused 时由 loop 调用）。 */
+  function handlePauseKeys() {
+    if (pressed['escape']) { G.paused = false; return; }
+    if (pressed['w'] || pressed['arrowup']) G.pauseSel = 0;
+    if (pressed['s'] || pressed['arrowdown']) G.pauseSel = 1;
+    if (pressed['enter'] || pressed[' ']) {
+      if (G.pauseSel === 1) goTitle();
+      else G.paused = false;
+    }
   }
 
   function handleGlobalKeys(advanced) {
@@ -4486,11 +5025,11 @@
         return;
       }
     }
-    // 补给点商店操作：上下选，回车/左键买，B 或 ESC 关闭
+    // 补给点商店操作：上下选，回车/左键买，E 或 ESC 关闭
     if (G.state === 'shop') {
-      // 老虎机是商店里的一个子界面：回车再摇一次，ESC / B 退回商品列表
+      // 老虎机是商店里的一个子界面：回车再摇一次，ESC / E 退回商品列表
       if (G.slotState) {
-        if (pressed['escape'] || pressed['b']) {
+        if (pressed['escape'] || pressed['e']) {
           G.slotState = null;
           Sfx.play('empty');
         } else if (pressed['enter'] || pressed[' ']) {
@@ -4506,23 +5045,44 @@
         pressed = Object.create(null);
         return;
       }
-      if (pressed['w'] || pressed['arrowup']) { G.shopSel = (G.shopSel + SHOP.length - 1) % SHOP.length; }
-      if (pressed['s'] || pressed['arrowdown']) { G.shopSel = (G.shopSel + 1) % SHOP.length; }
+      // 网格导航：W/S 在列内上下移动，A/D 左右换列（同行对齐，右列项不足时 clamp 到末项）
+      const nCols = Math.ceil(SHOP.length / SHOP_COLS);   // 列数（当前 2 列）
+      const shopCol = Math.floor(G.shopSel / SHOP_COLS);  // 当前列 0=左 1=右
+      const shopRow = G.shopSel % SHOP_COLS;              // 当前行（列内偏移）
+      if (pressed['w'] || pressed['arrowup']) {
+        G.shopSel = (shopRow + SHOP_COLS - 1) % SHOP_COLS + shopCol * SHOP_COLS;
+      }
+      if (pressed['s'] || pressed['arrowdown']) {
+        G.shopSel = (shopRow + 1) % SHOP_COLS + shopCol * SHOP_COLS;
+      }
+      if (pressed['a'] || pressed['arrowleft']) {
+        if (shopCol > 0) G.shopSel = shopRow;             // 左移：回左列同行
+      }
+      if (pressed['d'] || pressed['arrowright']) {
+        if (shopCol < nCols - 1) {
+          const rightLen = SHOP.length - SHOP_COLS;       // 右列实际项数
+          G.shopSel = SHOP_COLS + Math.min(shopRow, rightLen - 1);   // 右移：同行对齐，不足则贴末项
+        }
+      }
       if (pressed['enter'] || pressed[' '] || pressed['j']) buyShopItem();
-      if (pressed['b'] || pressed['escape']) closeShop();
+      if (pressed['e'] || pressed['escape']) closeShop();
       pressed = Object.create(null);
       return;
     }
-    // 武器升级站：A/D 换枪、W/S 换线、回车买、V/ESC 关闭
+    // 武器升级站：A/D 换枪、W/S 换线、回车买、E/ESC 关闭
     if (G.state === 'upgrade') {
       if (pressed['a'] || pressed['arrowleft']) G.upgSel.gun = (G.upgSel.gun + UP_GUNS.length - 1) % UP_GUNS.length;
       if (pressed['d'] || pressed['arrowright']) G.upgSel.gun = (G.upgSel.gun + 1) % UP_GUNS.length;
       if (pressed['w'] || pressed['arrowup']) G.upgSel.line = Math.max(0, G.upgSel.line - 1);
       if (pressed['s'] || pressed['arrowdown']) G.upgSel.line = Math.min(UPGRADE_LINES.length, G.upgSel.line + 1);
       if (pressed['enter'] || pressed[' '] || pressed['j']) buyUpgrade();
-      if (pressed['v'] || pressed['escape']) closeUpgrade();
+      if (pressed['e'] || pressed['escape']) closeUpgrade();
       pressed = Object.create(null);
       return;
+    }
+    // 设置页：ESC 返回标题
+    if (G.state === 'settings') {
+      if (pressed['escape']) { G.state = 'title'; pressed = Object.create(null); return; }
     }
     // R：手动换弹（重置关卡功能已去掉，死了会自动重来）
     if (pressed['r'] && G.state === 'play') startReload();
@@ -4533,27 +5093,19 @@
       if (G.doubleScore > 0) G.doubleScore--;
       startWave();
     }
-    // B 键：走近补给点才能开商店
-    if (pressed['b'] && G.state === 'play') {
-      if (nearSupply()) openShop();
-      else {
-        G.toast = '离补给点太远';
-        G.toastTimer = 1.5;
-        pressed = Object.create(null);   // 远处的这次按键也要吃掉，别在下一帧再弹一遍
-      }
-    }
-    // V 键：走近升级站才能开（第 5 波后解锁）
-    if (pressed['v'] && G.state === 'play') {
-      if (nearStation()) {
+    // E 键：走近补给点开商店，走近升级站开升级界面（第 5 波后解锁）。
+    // 都没靠近时，E 交给拾取武器逻辑（updatePlayer 里已用 interactTarget 区分）。
+    if (pressed['e'] && G.state === 'play') {
+      const t = interactTarget();
+      if (t && t.type === 'shop') {
+        openShop();
+        pressed = Object.create(null);
+      } else if (t && t.type === 'upgrade') {
         if (G.upgUnlocked) openUpgrade();
         else {
           G.toast = '升级站 第 ' + UP_UNLOCK_WAVE + ' 波后开放';
           G.toastTimer = 1.8;
-          pressed = Object.create(null);
         }
-      } else {
-        G.toast = '离升级站太远';
-        G.toastTimer = 1.5;
         pressed = Object.create(null);
       }
     }
@@ -4590,6 +5142,12 @@
     fitCanvas();
     window.addEventListener('resize', fitCanvas);
 
+    // 读取上次的操作方式（手机触控 / 电脑键鼠），默认电脑
+    try {
+      const saved = localStorage.getItem('hotline.inputMode');
+      if (saved === 'touch' || saved === 'pc') inputMode = saved;
+    } catch (err) { /* 忽略 */ }
+
     G = {
       state: 'title',
       levelIndex: 0,
@@ -4613,6 +5171,7 @@
       timeScale: 1,
       slowTimer: 0,
       paused: false,
+      pauseSel: 0,          // 暂停菜单选中项：0=继续，1=返回主菜单
       deadTimer: 0,
       clearTimer: 0,
       fireTap: false,
@@ -4633,6 +5192,14 @@
       // ?autostart=1 直接进第一波，方便截图和自动化测试；?prep=1 保留开局 30 秒准备期
       if (/[?&]autostart=1/.test(location.search)) {
         startGame({ prep: /[?&]prep=1/.test(location.search) });
+      }
+      // ?settings=1 直接进设置页，用于截图核对（调试用）
+      if (/[?&]settings=1/.test(location.search)) {
+        G.state = 'settings';
+      }
+      // ?touch=1 切到手机触控模式（截图核对摇杆/按钮 UI 用）
+      if (/[?&]touch=1/.test(location.search)) {
+        setInputMode('touch');
       }
       // ?peek=1 出生点挪到第一个敌人旁边，用于看战斗区域（调试用）
       if (/[?&]peek=1/.test(location.search) && W && W.enemies.length) {
@@ -4725,6 +5292,15 @@
         G.cash = 2500;
         openShop();
       }
+      // ?pause=1 直接打开暂停菜单（截图核对 UI 用）
+      if (/[?&]pause=1/.test(location.search) && G.player) {
+        G.paused = true;
+      }
+      // ?grenade=1 切出手雷手持状态（截图核对手持手雷视觉用）
+      if (/[?&]grenade=1/.test(location.search) && G.player) {
+        G.player.grenadeHeld = true;
+        G.player.grenades = 3;
+      }
       // ?aim=dx,dy 把鼠标固定在画面中心偏移 (dx,dy) 的位置，用于截图核对相机前探（调试用）
       const aimM = /[?&]aim=(-?[\d.]+),(-?[\d.]+)/.exec(location.search);
       if (aimM) {
@@ -4763,11 +5339,19 @@
     openShop,
     buyShopItem,
     closeShop,
+    goTitle,
+    handlePauseKeys,
     startSlot,
     updateSlot,
     grantSkill,
     nearSupply,
     nearStation,
+    interactTarget,
+    /** 触控（手机）模式相关：切换操作方式 / 摇杆归类 / 触控输入折算 */
+    setInputMode,
+    get inputMode() { return inputMode; },
+    classifyTouch,
+    applyTouchInput,
     refillArmor,
     openUpgrade,
     closeUpgrade,
