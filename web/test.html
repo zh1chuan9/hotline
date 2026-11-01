@@ -901,6 +901,15 @@
     w29.cleared = false; g29.intermission = 0;
     check('非整备期不再命中跳过按钮', H.classifyTouch(320, 180 + 96) === null);
 
+    // 右摇杆推到边缘 → 自动开火（aimBase 半径 46，边缘阈值约 37px）
+    H.setInputMode('touch');
+    H.setAimDrag(20, 0);   // 拖 20px，未到边缘
+    check('右摇杆拖 20px 不开火', H.touchFiring === false);
+    H.setAimDrag(42, 0);   // 拖 42px，超过边缘阈值
+    check('右摇杆拖到边缘开火（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
+    H.setAimDrag(0, 0);    // 回中
+    check('右摇杆回中停止开火', H.touchFiring === false);
+
     // 切回电脑，触控残留应被清掉
     H.setInputMode('pc');
     check('切回电脑键鼠（inputMode=' + H.inputMode + '）', H.inputMode === 'pc');

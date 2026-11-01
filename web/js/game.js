@@ -290,10 +290,18 @@
   ctx.imageSmoothingEnabled = false;
 
   function fitCanvas() {
-    const pad = 24;
+    const pad = 0;
     const availW = window.innerWidth - pad, availH = window.innerHeight - pad;
-    let scale = Math.min(availW / VIEW_W, availH / VIEW_H);
+    let scale;
+    if (inputMode === 'touch') {
+      // 触控（手机）：铺满屏幕宽度，高度按比例缩放（横屏下接近铺满；竖屏则上下留黑边）
+      scale = availW / VIEW_W;
+    } else {
+      scale = Math.min(availW / VIEW_W, availH / VIEW_H);
+    }
     if (scale > 3) scale = Math.floor(scale * 2) / 2;
+    // 兜底：极端小屏也保证至少能显示
+    scale = Math.max(scale, 0.5);
     canvas.style.width = Math.round(VIEW_W * scale) + 'px';
     canvas.style.height = Math.round(VIEW_H * scale) + 'px';
   }
@@ -403,8 +411,13 @@
         feedTouchMouse(VIEW_W / 2, VIEW_H / 2);
       }
     }
-    // 右摇杆推到边缘 → 自动开火
-    const fireByAim = touch.aimActive && (Math.hypot(touch.aimX, touch.aimY) > TOUCH_LAYOUT.aimBase.r * 0.82);
+    // 右摇杆推到边缘 → 自动开火（用实际拖出的像素位移判断，而非归一化方向）
+    let fireByAim = false;
+    if (touch.aimActive && touch.aimOrigin) {
+      const dx = touch.aimOrigin.x - TOUCH_LAYOUT.aimBase.x;
+      const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
+      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.80;
+    }
     mouse.down = (fireByAim || touch.fireBtnActive || touch.firing);
     mouse.right = false;   // 触屏不区分右键；瞄准通过"靠近目标"自动完成（见 applyTouchAim）
   }
@@ -435,13 +448,35 @@
   function setInputMode(mode) {
     inputMode = mode;
     try { localStorage.setItem('hotline.inputMode', mode); } catch (err) { /* 隐私模式下忽略 */ }
-    // 切换到电脑键鼠时，清掉触控残留状态，避免卡住
-    if (mode === 'pc') {
+    fitCanvas();
+    // 切换到手机触控：请求横屏（全屏 + 方向锁），铺满手机宽度
+    if (mode === 'touch') {
+      requestLandscape();
+      // 清掉电脑键鼠残留
+      keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
+      mouse.down = false; mouse.right = false;
+    } else {
+      // 切换到电脑键鼠时，清掉触控残留状态，避免卡住
       touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
       touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
       touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
       keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
     }
+  }
+
+  /** 手机触控模式：请求全屏 + 屏幕方向锁（横屏）。失败时静默降级。 */
+  function requestLandscape() {
+    try {
+      const el = document.documentElement;
+      const p = el.requestFullscreen && el.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    } catch (err) { /* 忽略 */ }
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        const p = screen.orientation.lock('landscape');
+        if (p && p.catch) p.catch(() => {});
+      }
+    } catch (err) { /* 忽略 */ }
   }
 
   window.addEventListener('keydown', (e) => {
@@ -5174,14 +5209,17 @@
   }
 
   function boot() {
-    fitCanvas();
-    window.addEventListener('resize', fitCanvas);
-
     // 读取上次的操作方式（手机触控 / 电脑键鼠），默认电脑
     try {
       const saved = localStorage.getItem('hotline.inputMode');
       if (saved === 'touch' || saved === 'pc') inputMode = saved;
     } catch (err) { /* 忽略 */ }
+
+    fitCanvas();
+    window.addEventListener('resize', fitCanvas);
+    window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 100));
+    // 上次是手机触控 → 重新铺满宽度（横屏）
+    if (inputMode === 'touch') requestLandscape();
 
     G = {
       state: 'title',
@@ -5422,6 +5460,14 @@
     holdFire(down) { mouse.down = !!down; },
     /** 测试辅助：模拟按住/松开右键（瞄准） */
     holdAim(down) { mouse.right = !!down; },
+    /** 测试辅助：模拟右摇杆拖动到 aimBase + (dx,dy)（用于验证推到边缘开火），dx/dy 传 0 表示回中 */
+    setAimDrag(dx, dy) {
+      touch.aimActive = true;
+      touch.aimOrigin = { x: TOUCH_LAYOUT.aimBase.x + dx, y: TOUCH_LAYOUT.aimBase.y + dy };
+      applyTouchInput();
+    },
+    /** 测试辅助：当前是否在开火（由右摇杆边缘/开火键推导） */
+    get touchFiring() { return mouse.down; },
     /** 当前散射（度）：腰射 / 瞄准差多少，测试直接断言这个 */
     spreadDeg() {
       const p = G && G.player;
