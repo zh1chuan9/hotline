@@ -290,15 +290,13 @@
   ctx.imageSmoothingEnabled = false;
 
   function fitCanvas() {
-    const pad = 0;
+    // 安全边距：手机上浏览器的地址栏/刘海/手势条会占用屏幕边缘，
+    // 留一点余量避免 HUD（血条/护甲/弹药/按钮）被裁掉。
+    const pad = inputMode === 'touch' ? 18 : 0;
     const availW = window.innerWidth - pad, availH = window.innerHeight - pad;
-    let scale;
-    if (inputMode === 'touch') {
-      // 触控（手机）：铺满屏幕宽度，高度按比例缩放（横屏下接近铺满；竖屏则上下留黑边）
-      scale = availW / VIEW_W;
-    } else {
-      scale = Math.min(availW / VIEW_W, availH / VIEW_H);
-    }
+    // 统一用 min：保证整幅画面（含上下 HUD）完整可见，不裁边。
+    // 横版游戏在更宽的屏幕上（如手机横屏 2.17:1）会左右留少量黑边，但 HUD 不再被切掉。
+    let scale = Math.min(availW / VIEW_W, availH / VIEW_H);
     if (scale > 3) scale = Math.floor(scale * 2) / 2;
     // 兜底：极端小屏也保证至少能显示
     scale = Math.max(scale, 0.5);
