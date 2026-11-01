@@ -314,6 +314,8 @@
   // ---- 触控（手机）输入：双摇杆 + 虚拟按钮 ----
   // inputMode: 'pc' | 'touch'。touch 模式下所有键盘/鼠标输入都来自虚拟控件映射。
   let inputMode = 'pc';
+  // fireMode: 'button'（点击开火按钮射击）| 'stick'（拖动摇杆持续射击）。二者二选一，持久化。
+  let fireMode = 'button';
   const touch = {
     // 左摇杆：移动方向（单位向量），active 表示正在拖动
     moveActive: false, moveId: -1, moveOrigin: null, moveX: 0, moveY: 0,
@@ -556,12 +558,14 @@
         feedTouchMouse(VIEW_W / 2, VIEW_H / 2);
       }
     }
-    // 右摇杆推到边缘 → 自动开火（用实际拖出的像素位移判断，而非归一化方向）
+    // 开火方式二选一：
+    //   fireMode='button'：只由独立「开火」按钮触发，右摇杆仅瞄准。
+    //   fireMode='stick' ：右摇杆推到边缘持续射击（也保留开火按钮可用）。
     let fireByAim = false;
-    if (touch.aimActive && touch.aimOrigin) {
+    if (fireMode === 'stick' && touch.aimActive && touch.aimOrigin) {
       const dx = touch.aimOrigin.x - TOUCH_LAYOUT.aimBase.x;
       const dy = touch.aimOrigin.y - TOUCH_LAYOUT.aimBase.y;
-      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.80;
+      fireByAim = Math.hypot(dx, dy) > TOUCH_LAYOUT.aimBase.r * 0.55;
     }
     const nextDown = (fireByAim || touch.fireBtnActive || touch.firing);
     // 上升沿 → 记一次"单击"：半自动武器（手枪/霰弹枪/狙击）需要 fireTap 才开枪，
@@ -612,6 +616,14 @@
       touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
       keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
     }
+  }
+
+  /** 切换开火方式：'button'（按键开火）| 'stick'（摇杆开火），持久化。 */
+  function setFireMode(mode) {
+    fireMode = (mode === 'stick') ? 'stick' : 'button';
+    try { localStorage.setItem('hotline.fireMode', fireMode); } catch (err) { /* 忽略 */ }
+    // 切换后清掉开火上升沿，避免残留单击
+    touch.firePrev = false;
   }
 
   /** 手机触控模式：请求全屏 + 屏幕方向锁（横屏）。失败时静默降级。 */
@@ -3237,6 +3249,7 @@
     if (G.state === 'settings') {
       if (hit(SETTINGS_BTN.sound)) { Sfx.muted = !Sfx.muted; Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.control)) { setInputMode(inputMode === 'touch' ? 'pc' : 'touch'); Sfx.play('hit'); }
+      else if (hit(SETTINGS_BTN.fire)) { setFireMode(fireMode === 'stick' ? 'button' : 'stick'); Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.layout)) { if (inputMode === 'touch') openTouchLayout(); }
       else if (hit(SETTINGS_BTN.back)) { closeSettings(); }
       return;
@@ -4899,10 +4912,11 @@
 
   // 设置页按钮区域
   const SETTINGS_BTN = {
-    sound: { x: VIEW_W / 2 - 120, y: 130, w: 240, h: 36 },
-    control: { x: VIEW_W / 2 - 120, y: 174, w: 240, h: 36 },
-    layout: { x: VIEW_W / 2 - 120, y: 218, w: 240, h: 36 },
-    back: { x: VIEW_W / 2 - 80, y: 268, w: 160, h: 40 }
+    sound: { x: VIEW_W / 2 - 120, y: 120, w: 240, h: 34 },
+    control: { x: VIEW_W / 2 - 120, y: 162, w: 240, h: 34 },
+    fire: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },
+    layout: { x: VIEW_W / 2 - 120, y: 246, w: 240, h: 34 },
+    back: { x: VIEW_W / 2 - 80, y: 292, w: 160, h: 40 }
   };
 
   function drawSettings() {
@@ -4943,8 +4957,24 @@
     ctx.fillStyle = '#e8d8b8';
     ctx.fillText('操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), cb.x + cb.w / 2, cb.y + cb.h / 2 + 1);
     ctx.textBaseline = 'alphabetic';
-    // 自定义按键（仅手机触控模式显示）
+    // 开火方式 + 自定义按键（仅手机触控模式显示）
     if (inputMode === 'touch') {
+      // 开火方式：按键开火 / 摇杆开火（二选一）
+      const fb = SETTINGS_BTN.fire;
+      const fHover = mouse.x >= fb.x && mouse.x <= fb.x + fb.w && mouse.y >= fb.y && mouse.y <= fb.y + fb.h;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = fHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = fHover ? '#e5a13a' : 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1.5;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(fb.x, fb.y, fb.w, fb.h, 6); }
+      else { ctx.beginPath(); ctx.rect(fb.x, fb.y, fb.w, fb.h); }
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+      ctx.fillStyle = '#e8d8b8';
+      ctx.fillText('开火方式：' + (fireMode === 'stick' ? '摇杆开火' : '按键开火'), fb.x + fb.w / 2, fb.y + fb.h / 2 + 1);
+      ctx.textBaseline = 'alphabetic';
+
       const lb = SETTINGS_BTN.layout;
       const lHover = mouse.x >= lb.x && mouse.x <= lb.x + lb.w && mouse.y >= lb.y && mouse.y <= lb.y + lb.h;
       ctx.textBaseline = 'middle';
@@ -5456,6 +5486,12 @@
       if (saved === 'touch' || saved === 'pc') inputMode = saved;
     } catch (err) { /* 忽略 */ }
 
+    // 读取上次的开火方式（按键开火 / 摇杆开火），默认按键
+    try {
+      const fm = localStorage.getItem('hotline.fireMode');
+      if (fm === 'button' || fm === 'stick') fireMode = fm;
+    } catch (err) { /* 忽略 */ }
+
     // 读取自定义触控按键布局（覆盖 TOUCH_LAYOUT 坐标）
     loadTouchLayout();
 
@@ -5672,6 +5708,8 @@
     /** 触控（手机）模式相关：切换操作方式 / 摇杆归类 / 触控输入折算 */
     setInputMode,
     get inputMode() { return inputMode; },
+    setFireMode,
+    get fireMode() { return fireMode; },
     classifyTouch,
     applyTouchInput,
     skipIntermission,

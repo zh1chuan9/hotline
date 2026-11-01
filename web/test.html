@@ -927,12 +927,20 @@
     w29.cleared = false; g29.intermission = 0;
     check('非整备期不再命中跳过按钮', H.classifyTouch(320, 180 + 96) === null);
 
-    // 右摇杆推到边缘 → 自动开火（aimBase 半径 46，边缘阈值约 37px）
+    // 开火方式双模式：默认按键开火，拖摇杆不开火；切到摇杆开火后拖摇杆才开火
     H.setInputMode('touch');
+    H.setFireMode('button');
+    check('默认开火方式是按键开火（fireMode=' + H.fireMode + '）', H.fireMode === 'button');
+    H.setAimDrag(42, 0);   // 按键开火模式下拖到边缘
+    check('按键开火模式下拖摇杆不开火（mouse.down=' + H.touchFiring + '）', H.touchFiring === false);
+    H.setAimDrag(0, 0);
+    // 切到摇杆开火
+    H.setFireMode('stick');
+    check('切到摇杆开火（fireMode=' + H.fireMode + '）', H.fireMode === 'stick');
     H.setAimDrag(20, 0);   // 拖 20px，未到边缘
-    check('右摇杆拖 20px 不开火', H.touchFiring === false);
+    check('摇杆开火模式下拖 20px 不开火', H.touchFiring === false);
     H.setAimDrag(42, 0);   // 拖 42px，超过边缘阈值
-    check('右摇杆拖到边缘开火（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
+    check('摇杆开火模式下拖到边缘开火（mouse.down=' + H.touchFiring + '）', H.touchFiring === true);
     // 推到边缘的上升沿应产生一次"单击"，供半自动武器（手枪/霰弹枪）开火
     check('推到边缘产生单击（fireTap）', H.fireTap === true);
     H.consumeFireTap();
@@ -941,6 +949,11 @@
     H.setAimDrag(42, 0);   // 再次推到边缘
     check('再次推到边缘再次产生单击', H.fireTap === true);
     H.consumeFireTap();
+    H.setAimDrag(0, 0);
+    // 切回按键开火，摇杆不再开火
+    H.setFireMode('button');
+    H.setAimDrag(42, 0);
+    check('切回按键开火后拖摇杆不开火', H.touchFiring === false);
     H.setAimDrag(0, 0);
 
     // 按键自定义：移动控件位置 → 持久化 → 恢复默认
