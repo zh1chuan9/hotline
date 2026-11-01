@@ -10,6 +10,9 @@
     background: #0b0a0d;
     overflow: hidden;
     font-family: "Microsoft YaHei", "PingFang SC", monospace;
+    touch-action: none;              /* 禁止浏览器对触摸做滚动/缩放，交给我们自己处理 */
+    -webkit-user-select: none;
+    user-select: none;
   }
   #stage {
     position: fixed; inset: 0;
@@ -22,6 +25,7 @@
     background: #0f0c12;
     box-shadow: 0 0 60px rgba(0,0,0,.9);
     cursor: none;
+    touch-action: none;              /* 关键：让触摸事件完整到达 canvas，不被浏览器手势吃掉 */
   }
   #boot {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);

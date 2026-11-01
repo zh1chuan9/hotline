@@ -485,15 +485,18 @@
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     Sfx.init();
-    if (inputMode !== 'touch') return;
     for (const t of e.changedTouches) {
       const pt = touchPos(t);
-      // 菜单界面（标题/设置/暂停/结算）：把触点当鼠标点击，复用按钮命中逻辑
+      // 菜单界面（标题/设置/暂停/结算）：把触点当鼠标点击，复用按钮命中逻辑。
+      // 注意：这里不管 inputMode 是什么 —— 手机用户第一次进来默认是 pc 模式，
+      // 若标题页 touch 被 inputMode 拦截，就永远进不了设置页去切换手机模式（死锁）。
       if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'done' || G.paused)) {
         feedTouchMouse(pt.x, pt.y);
         onPointerDown({ button: 0 });
         continue;
       }
+      // 战斗态才区分操作方式：pc 模式下触屏不做摇杆映射
+      if (inputMode !== 'touch') continue;
       const ctl = classifyTouch(pt.x, pt.y);   // 见下：命中摇杆/按钮区域
       if (ctl === 'move') {
         if (touch.moveActive) continue;
