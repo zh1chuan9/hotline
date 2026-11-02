@@ -34,12 +34,20 @@
   const AIM_SNAP_STRENGTH = 0.55; // 修正强度：敌人方向占比（0..1），越大吸越狠。0.55 保留玩家主导
 
   // ---------------------------------------------------------------- 血量与护甲
-  // 单血量 + 三格护甲（参考《使命召唤》要塞护甲板）：
-  //   血量上限 100；护甲三格，每格 50 点，共 150 点护甲。
+  // 单血量 + 可升级护甲（升级站里买，跟着这一局走，死了重开归 1 级）。
+  //   血量上限 100。护甲分 4 级：1 级单格 50 → 2 级三格 50 → 3 级两格紫甲 75 → 4 级金甲单格 150。
   //   受击时护甲先扣，护甲扣完才掉血。护甲板可以一格一格地补充。
   const HP_MAX = 100;
-  const ARMOR_SLOTS = 3;      // 护甲格数
-  const ARMOR_PER_SLOT = 50;  // 每格护甲值
+  const ARMOR_PLATE_CAP = 3;  // 背包里最多背几块护甲板（和"护甲格数"无关，是携带上限）
+  // 护甲 4 个等级：每级决定格数(slots) + 每格护甲值(per) + 外观颜色 + 满甲值。
+  // 满甲值 50 → 150 → 150 → 150 递增，格数 1→3→2→1，越高级甲越"整块"、颜色越金。
+  const ARMOR_TIERS = [
+    { slots: 1, per: 50,  name: '基础甲', color: '#5aa7e0', desc: '单格 50' },
+    { slots: 3, per: 50,  name: '强化甲', color: '#5aa7e0', desc: '三格 · 每格 50' },
+    { slots: 2, per: 75,  name: '精英甲', color: '#b07ae8', desc: '两格紫甲 · 每格 75' },
+    { slots: 1, per: 150, name: '黄金甲', color: '#ffd76e', desc: '金甲 · 单格 150' }
+  ];
+  const ARMOR_UP_PRICE = [600, 900, 1200];   // 护甲升级到 2/3/4 级的价格（1 级初始免费）
 
   // 手持消耗品的读条时长（秒）：按住左键读满才生效
   const HEAL_TIME = 2.0;      // 血包：2 秒回 50
@@ -130,6 +138,7 @@
   const UP_RANGE_PER = 0.22;       // 每级射程 +22%
   const UP_LASER_SPREAD = [1, 0.86, 0.72, 0.60];   // 激光等级 → 散布倍率
   const UP_EVO_PRICE = 1800;       // 进化价（还要四条线全满才开放）
+  const UP_ARMOR_LINE = UPGRADE_LINES.length + 1;   // 升级站里「护甲」升级行的索引（进化=length，护甲=length+1）
   const UP_EVO_SHOT_RATE = 0.30;   // 半自动霰弹枪的射击间隔
   const DUAL_GUNS = { pistol: true, smg: true };   // 进化成"双持"的两种枪
   const UP_EVO_NAME = { pistol: '双枪', smg: '双持', shotgun: '半自动' };
@@ -1614,7 +1623,8 @@
       deathT: 0,
       hp: HP_MAX,            // 单血量（上限 100）
       armor: 0,              // 当前护甲值（扣除优先于血量）
-      armorSlots: 0,         // 已装备的护甲板格数（0~3，每格 50）
+      armorSlots: 0,         // 已装备的护甲板格数（跟随护甲等级走，0~当前等级格数）
+      armorTier: 0,          // 护甲等级 0..3（ARMOR_TIERS）：1 级单格 50 → 4 级金甲单格 150
       armorPlates: 0,        // 背包里的护甲板数量（补给点买/掉落，按 4 取出长按左键装一块）
       medkits: 0,            // 背包里的血包数量（自动拾取，按 3 取出长按左键使用）
       grenades: 2,           // 手雷（按 G 切换手持，左键投掷）
@@ -1674,25 +1684,35 @@
   /** 换弹时长倍率（1 起，往下减，最快也要花 40% 时间）。 */
   function reloadMul(p) { return 1 - skillBonus(p, 'reload'); }
 
-  // 三格护甲：armorSlots 表示插了几块板，armor 是当前剩余护甲值。
-  // 补甲时把 armorSlots 打满，armor = armorSlots * 50。
-  function refillArmor(p) {
-    p.armorSlots = ARMOR_SLOTS;
-    p.armor = ARMOR_SLOTS * ARMOR_PER_SLOT;
+  // 护甲等级体系：armorTier 是 0..3（对应 ARMOR_TIERS），每级决定格数/每格值/颜色。
+  // 满甲值 = slots × per，逐级升高。补甲、受击、HUD 都从当前等级取数，不再用固定常量。
+  function armorTier(p) {
+    return ARMOR_TIERS[clamp(p.armorTier || 0, 0, ARMOR_TIERS.length - 1)];
   }
+  function armorMax(p) {
+    const t = armorTier(p);
+    return t.slots * t.per;
+  }
+  function armorSlotCount(p) { return armorTier(p).slots; }
+  function armorPerSlot(p) { return armorTier(p).per; }
 
-  const ARMOR_MAX = ARMOR_SLOTS * ARMOR_PER_SLOT;
+  // 补甲：按当前护甲等级打满（armorSlots 跟随等级、armor 补到满甲值）。
+  function refillArmor(p) {
+    const t = armorTier(p);
+    p.armorSlots = t.slots;
+    p.armor = t.slots * t.per;
+  }
 
   /**
    * 护甲满了没有 —— 只看**护甲值**，别看格数。
    * armorSlots 只在被打穿（armor<=0）时才清零，所以"插了 3 格板、被打掉一半"
    * 这种状态格数仍是 3；按格数判满就会出现"甲只剩 60，却说护甲已满，装不上板"。
    */
-  function armorFull(p) { return p.armor >= ARMOR_MAX - 0.001; }
+  function armorFull(p) { return p.armor >= armorMax(p) - 0.001; }
 
-  /** 格数跟着护甲值走（每格 50，向上取整）：半格也算一格，方便 HUD 和拾取逻辑对齐。 */
+  /** 格数跟着护甲值走（按当前等级每格值向上取整）：半格也算一格，方便 HUD 和拾取逻辑对齐。 */
   function syncArmorSlots(p) {
-    p.armorSlots = Math.ceil(clamp(p.armor, 0, ARMOR_MAX) / ARMOR_PER_SLOT);
+    p.armorSlots = Math.ceil(clamp(p.armor, 0, armorMax(p)) / armorPerSlot(p));
   }
 
   // ---------------------------------------------------------------- 战斗
@@ -2112,7 +2132,7 @@
       // 精英：直接给稀有资源，掉在地上反而容易漏捡
       if (e.elite) {
         killer.grenades = Math.min(GRENADE_MAX, killer.grenades + 1);
-        killer.armorPlates = Math.min(ARMOR_SLOTS, killer.armorPlates + 1);
+        killer.armorPlates = Math.min(ARMOR_PLATE_CAP, killer.armorPlates + 1);
         FX.addText(e.x, e.y - 26, '精英 · +1 手雷 +1 护甲板', '#ffd76e');
         G.toast = '精英击杀';
         G.toastTimer = 2;
@@ -2364,7 +2384,7 @@
             G.toastTimer = 1.2;
           } else {
             p.armorPlates--;                     // 消耗一块护甲板
-            p.armor = Math.min(ARMOR_MAX, p.armor + ARMOR_PER_SLOT);
+            p.armor = Math.min(armorMax(p), p.armor + armorPerSlot(p));
             syncArmorSlots(p);
             FX.addText(p.x, p.y - 14, '+护甲', '#5aa7e0');
             Sfx.play('pickup');
@@ -3122,7 +3142,7 @@
       Sfx.play('pickup');
     } else if (item.kind === 'armor') {
       // 护甲板进背包，按 4 取出长按左键 1 秒装入（一块一格）
-      if (p.armorPlates >= ARMOR_SLOTS) { Sfx.play('empty'); return; }
+      if (p.armorPlates >= ARMOR_PLATE_CAP) { Sfx.play('empty'); return; }
       p.armorPlates++;
       G.cash -= item.price;
       Sfx.play('pickup');
@@ -3160,7 +3180,7 @@
     // 光标默认落在手上这把枪上，省得每次进来都要先按两下 A/D
     const wi = UP_GUNS.indexOf(G.player && G.player.weapon);
     if (wi >= 0) G.upgSel.gun = wi;
-    G.upgSel.line = clamp(G.upgSel.line, 0, UPGRADE_LINES.length);
+    G.upgSel.line = clamp(G.upgSel.line, 0, UP_ARMOR_LINE);
     Sfx.play('clear');
     pressed = Object.create(null);
     return true;
@@ -3191,20 +3211,20 @@
       const ux = tabX0 + i * (tabW + tabGap);
       if (x >= ux && x < ux + tabW && y >= 88 && y < 88 + 30) return { gun: i };
     }
-    // 升级行（4 条线 + 进化）
-    const rowY = 142, rowH = 34;
-    for (let li = 0; li <= UPGRADE_LINES.length; li++) {
+    // 升级行（4 条线 + 进化 + 护甲）
+    const rowY = 128, rowH = 30;
+    for (let li = 0; li <= UP_ARMOR_LINE; li++) {
       const yy = rowY + li * rowH;
       if (x >= 40 && x <= VIEW_W - 40 && y >= yy - 14 && y < yy - 14 + 30) return { line: li };
     }
     return null;
   }
 
-  /** 光标所指的一格：line 0..3 是四条升级线，4 是进化。 */
+  /** 光标所指的一格：line 0..3 是四条升级线，4 是进化，5 是护甲升级。 */
   function upSelEntry() {
     const sel = G.upgSel || { gun: 0, line: 0 };
     const gunId = UP_GUNS[clamp(sel.gun, 0, UP_GUNS.length - 1)];
-    const line = clamp(sel.line, 0, UPGRADE_LINES.length);
+    const line = clamp(sel.line, 0, UP_ARMOR_LINE);
     return {
       gunId, line,
       def: line < UPGRADE_LINES.length ? UPGRADE_LINES[line] : null,
@@ -3212,12 +3232,30 @@
     };
   }
 
-  /** 买一格：升级，或者四条线全满时的进化。返回是否真的买到。 */
+  /** 买一格：升级，或者四条线全满时的进化，或者护甲等级升级。返回是否真的买到。 */
   function buyUpgrade() {
     const { gunId, line, def, u } = upSelEntry();
-    if (!u) return false;
     const p = G.player;
     const owned = !!(p && (p.weapon === gunId || (p.side && p.side.weapon === gunId)));
+
+    // ---------------- 护甲等级升级（独立于枪，跟这一局走）
+    if (line === UP_ARMOR_LINE) {
+      if (!p) return false;
+      const tier = p.armorTier || 0;
+      if (tier >= ARMOR_TIERS.length - 1) { Sfx.play('empty'); return false; }   // 已满级（金甲）
+      const price = ARMOR_UP_PRICE[tier];
+      if (G.cash < price) { Sfx.play('empty'); return false; }
+      G.cash -= price;
+      p.armorTier = tier + 1;
+      refillArmor(p);                                  // 升级当场补满到新等级
+      FX.addText(p.x, p.y - 18, '护甲升级 · ' + ARMOR_TIERS[p.armorTier].name, '#ffd76e');
+      G.toast = '护甲升级：' + ARMOR_TIERS[p.armorTier].name;
+      G.toastTimer = 1.8;
+      Sfx.play('clear');
+      return true;
+    }
+
+    if (!u) return false;
 
     if (line >= UPGRADE_LINES.length) {
       // ---------------- 进化
@@ -3550,7 +3588,7 @@
       if (t) {
         if (t.gun !== undefined) {
           G.upgSel.gun = t.gun;
-          G.upgSel.line = Math.min(G.upgSel.line, UPGRADE_LINES.length);
+          G.upgSel.line = Math.min(G.upgSel.line, UP_ARMOR_LINE);
         } else if (t.line !== undefined) {
           G.upgSel.line = t.line;
         }
@@ -4628,7 +4666,7 @@
     ctx.restore();
   }
 
-  // 左下：血量条 + 三格护甲。只给条和格，不写任何数字
+  // 左下：血量条 + 护甲（格数/颜色随护甲等级走）。只给条和格，不写任何数字
   function drawBodyHUD() {
     const p = G.player;
     if (!p) return;
@@ -4636,7 +4674,10 @@
     const hpY = VIEW_H - 40 + HUD_OFF.body.y, hpH = 12;
     const gap = 5;
     const apY = VIEW_H - 22 + HUD_OFF.body.y, apH = 8;
-    const slotW = (barW - gap * (ARMOR_SLOTS - 1)) / ARMOR_SLOTS;
+    const slots = armorSlotCount(p);
+    const per = armorPerSlot(p);
+    const tier = armorTier(p);
+    const slotW = (barW - gap * (slots - 1)) / slots;
 
     // 读条（治疗 / 装护甲板）压在血条上方
     if (p.healing || p.plating) {
@@ -4669,17 +4710,19 @@
       ctx.strokeRect(x0 - 1.5, hpY - 1.5, barW + 3, hpH + 3);
     }
 
-    // 护甲三格：每格 = 一块甲板，没装的格子留一圈暗蓝边框，空甲也看得出有三个位
-    for (let i = 0; i < ARMOR_SLOTS; i++) {
+    // 护甲格：格数和颜色随护甲等级走（1 级单格蓝 → 3 级两格紫 → 4 级单格金）。
+    // 没装的格子留一圈暗色边框，空甲也看得出有几个位。
+    for (let i = 0; i < slots; i++) {
       const sx = x0 + i * (slotW + gap);
       ctx.fillStyle = 'rgba(6,4,8,0.75)';
       ctx.fillRect(sx - 1, apY - 1, slotW + 2, apH + 2);
-      const slotFill = clamp((p.armor - i * ARMOR_PER_SLOT) / ARMOR_PER_SLOT, 0, 1);
+      const slotFill = clamp((p.armor - i * per) / per, 0, 1);
       if (slotFill > 0) {
-        ctx.fillStyle = '#5aa7e0';
+        ctx.fillStyle = tier.color;
         ctx.fillRect(sx, apY, Math.round(slotW * slotFill), apH);
       } else {
-        ctx.strokeStyle = 'rgba(90,167,224,0.30)';
+        // 空槽边框用等级色的低透明度，颜色一致
+        ctx.strokeStyle = rgbaHex(tier.color, 0.30);
         ctx.lineWidth = 1;
         ctx.strokeRect(sx + 0.5, apY + 0.5, slotW - 1, apH - 1);
       }
@@ -5121,7 +5164,7 @@
 
     const sel = G.upgSel || { gun: 0, line: 0 };
     const gunId = UP_GUNS[clamp(sel.gun, 0, UP_GUNS.length - 1)];
-    const line = clamp(sel.line, 0, UPGRADE_LINES.length);
+    const line = clamp(sel.line, 0, UP_ARMOR_LINE);
     const u = gunUp(gunId) || { dmg: 0, mag: 0, range: 0, laser: 0, evo: false };
     const owned = !!(G.player && (G.player.weapon === gunId || (G.player.side && G.player.side.weapon === gunId)));
 
@@ -5142,12 +5185,48 @@
       ctx.fillText(WEAPONS[id].name + (have ? '' : '（未持有）') + evoTag, ux + tabW / 2, 107);
     }
 
-    // 四条升级线 + 进化行
-    const rowY = 142, rowH = 34;
-    for (let li = 0; li <= UPGRADE_LINES.length; li++) {
+    // 四条升级线 + 进化行 + 护甲升级行
+    const rowY = 128, rowH = 30;
+    for (let li = 0; li <= UP_ARMOR_LINE; li++) {
       const y = rowY + li * rowH;
       const isSel = line === li;
       const def = li < UPGRADE_LINES.length ? UPGRADE_LINES[li] : null;
+      // 护甲升级行：独立于枪，跟着这一局走
+      if (li === UP_ARMOR_LINE) {
+        const pt = G.player || { armorTier: 0 };
+        const tier = pt.armorTier || 0;
+        const maxed = tier >= ARMOR_TIERS.length - 1;
+        const curTier = ARMOR_TIERS[tier];
+        const nextTier = maxed ? null : ARMOR_TIERS[tier + 1];
+        const cost = maxed ? 0 : ARMOR_UP_PRICE[tier];
+        const afford = !maxed && G.cash >= cost;
+        ctx.fillStyle = isSel ? 'rgba(120,180,255,0.16)' : 'rgba(255,255,255,0.03)';
+        ctx.fillRect(40, y - 14, VIEW_W - 80, 30);
+        if (isSel) { ctx.strokeStyle = 'rgba(120,180,255,0.7)'; ctx.strokeRect(40.5, y - 13.5, VIEW_W - 81, 29); }
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+        ctx.fillStyle = isSel ? '#dceaff' : (maxed ? '#ffd76e' : '#cfc4d4');
+        ctx.fillText('护甲等级', 54, y);
+        // 等级点（4 级）
+        for (let d = 0; d < ARMOR_TIERS.length; d++) {
+          ctx.fillStyle = d <= tier ? (d === ARMOR_TIERS.length - 1 ? '#ffd76e' : '#7fb7ff') : '#4a4450';
+          ctx.beginPath(); ctx.arc(150 + d * 16, y - 4, 3.5, 0, 6.283); ctx.fill();
+        }
+        // 当前 → 下一级描述
+        ctx.font = '10px "Microsoft YaHei", monospace';
+        ctx.fillStyle = '#9c90a8';
+        const sub = maxed
+          ? curTier.name + '（满级 · ' + curTier.desc + '）'
+          : curTier.name + ' ' + curTier.desc + ' → ' + nextTier.name + ' ' + nextTier.desc;
+        ctx.fillText(sub, 54, y + 15);
+        // 价格
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 12px "Microsoft YaHei", monospace';
+        ctx.fillStyle = maxed ? '#5a5064' : (afford ? '#ffd76e' : '#8a5a4a');
+        ctx.fillText(maxed ? '满' : '$' + cost, VIEW_W - 54, y);
+        ctx.textAlign = 'left';
+        continue;
+      }
       // 进化行：四条全满才亮
       if (li >= UPGRADE_LINES.length) {
         const ready = upAllMaxed(gunId);
@@ -5803,7 +5882,7 @@
       if (pressed['a'] || pressed['arrowleft']) G.upgSel.gun = (G.upgSel.gun + UP_GUNS.length - 1) % UP_GUNS.length;
       if (pressed['d'] || pressed['arrowright']) G.upgSel.gun = (G.upgSel.gun + 1) % UP_GUNS.length;
       if (pressed['w'] || pressed['arrowup']) G.upgSel.line = Math.max(0, G.upgSel.line - 1);
-      if (pressed['s'] || pressed['arrowdown']) G.upgSel.line = Math.min(UPGRADE_LINES.length, G.upgSel.line + 1);
+      if (pressed['s'] || pressed['arrowdown']) G.upgSel.line = Math.min(UP_ARMOR_LINE, G.upgSel.line + 1);
       if (pressed['enter'] || pressed[' '] || pressed['j']) buyUpgrade();
       if (pressed['e'] || pressed['escape']) closeUpgrade();
       pressed = Object.create(null);
@@ -6143,6 +6222,9 @@
     get layoutMode() { return layoutMode; },
     openTouchLayout,
     refillArmor,
+    /** 护甲等级辅助（测试护甲升级用） */
+    armorMax,
+    armorTier,
     openUpgrade,
     closeUpgrade,
     buyUpgrade,
@@ -6156,6 +6238,8 @@
     upCost,
     get upgrades() { return G ? G.upg : null; },
     get upgUnlocked() { return G ? G.upgUnlocked : false; },
+    get UP_ARMOR_LINE() { return UP_ARMOR_LINE; },
+    get ARMOR_TIERS() { return ARMOR_TIERS; },
     get upgLines() { return UPGRADE_LINES; },
     get upGuns() { return UP_GUNS; },
     /** 图标调试：把武器剪影 / 消耗品图标画到外部 context 上（对比形状用） */
