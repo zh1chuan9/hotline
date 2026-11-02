@@ -3144,6 +3144,35 @@
     pressed = Object.create(null);
   }
 
+  /** 升级站底部「购买」「退出」按钮布局，供绘制与点击复用。 */
+  function upgradeButtons() {
+    const bw = 140, bh = 38, gap = 32;
+    const y = VIEW_H - 58;
+    const cx = VIEW_W / 2;
+    return {
+      buy:  { x: cx - gap / 2 - bw, y, w: bw, h: bh },
+      exit: { x: cx + gap / 2, y, w: bw, h: bh },
+    };
+  }
+
+  /** 升级站命中检测：返回点击落在哪一格。{ gun } = 标签页换枪，{ line } = 升级行，null = 没点中。 */
+  function upgradeHitAt(x, y) {
+    // 标签页（三把枪）
+    const tabW = 168, tabGap = 10;
+    const tabX0 = VIEW_W / 2 - (3 * tabW + 2 * tabGap) / 2;
+    for (let i = 0; i < UP_GUNS.length; i++) {
+      const ux = tabX0 + i * (tabW + tabGap);
+      if (x >= ux && x < ux + tabW && y >= 88 && y < 88 + 30) return { gun: i };
+    }
+    // 升级行（4 条线 + 进化）
+    const rowY = 142, rowH = 34;
+    for (let li = 0; li <= UPGRADE_LINES.length; li++) {
+      const yy = rowY + li * rowH;
+      if (x >= 40 && x <= VIEW_W - 40 && y >= yy - 14 && y < yy - 14 + 30) return { line: li };
+    }
+    return null;
+  }
+
   /** 光标所指的一格：line 0..3 是四条升级线，4 是进化。 */
   function upSelEntry() {
     const sel = G.upgSel || { gun: 0, line: 0 };
@@ -3482,6 +3511,25 @@
       // 点商品行：选中该行
       const idx = shopItemAt(mouse.x, mouse.y);
       if (idx >= 0) { G.shopSel = idx; Sfx.play('hit'); return; }
+      return;
+    }
+    if (G.state === 'upgrade') {
+      // 底部「购买」「退出」按钮
+      const btns = upgradeButtons();
+      if (hit(btns.exit)) { closeUpgrade(); return; }
+      if (hit(btns.buy)) { buyUpgrade(); return; }
+      // 点标签换枪 / 点升级行选中
+      const t = upgradeHitAt(mouse.x, mouse.y);
+      if (t) {
+        if (t.gun !== undefined) {
+          G.upgSel.gun = t.gun;
+          G.upgSel.line = Math.min(G.upgSel.line, UPGRADE_LINES.length);
+        } else if (t.line !== undefined) {
+          G.upgSel.line = t.line;
+        }
+        Sfx.play('hit');
+        return;
+      }
       return;
     }
     if (G.state === 'layout') {
@@ -3879,7 +3927,7 @@
         ctx.font = 'bold 9px "Microsoft YaHei", monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#8fd8ff';
-        ctx.fillText('按 E 补给', 0, -20);
+        ctx.fillText(inputMode === 'touch' ? '按 交互' : '按 E 补给', 0, -20);
       }
       ctx.restore();
     }
@@ -3911,7 +3959,9 @@
         ctx.font = 'bold 9px "Microsoft YaHei", monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = unlocked ? '#ffcf7a' : '#8d7f9c';
-        ctx.fillText(unlocked ? '按 E 升级' : '第 ' + UP_UNLOCK_WAVE + ' 波后开放', 0, -20);
+        ctx.fillText(unlocked
+          ? (inputMode === 'touch' ? '按 交互' : '按 E 升级')
+          : '第 ' + UP_UNLOCK_WAVE + ' 波后开放', 0, -20);
       }
       ctx.restore();
     }
@@ -4738,7 +4788,7 @@
     if (frac > RELOAD_HINT_WARN) return;        // 还够用，不显示
 
     const crit = frac <= RELOAD_HINT_CRIT;
-    const txt = '按 R 换弹';
+    const txt = inputMode === 'touch' ? '按 换弹' : '按 R 换弹';
     const y = VIEW_H - 26 + HUD_OFF.reload.y;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -4926,7 +4976,9 @@
     ctx.textAlign = 'center';
     ctx.font = '10px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#5f5668';
-    ctx.fillText('W/S 选行 · A/D 换列 · 回车购买 · ESC 退出', VIEW_W / 2, VIEW_H - 24);
+    ctx.fillText(inputMode === 'touch'
+      ? '点商品选中 · 点「购买」/「退出」'
+      : 'W/S 选行 · A/D 换列 · 回车购买 · ESC 退出', VIEW_W / 2, VIEW_H - 24);
 
     // 老虎机结果展示（在底部中间偏上）
     if (G.slotState) {
@@ -5001,7 +5053,9 @@
     const slotPrice = (SHOP.find(it => it.kind === 'slot') || { price: 0 }).price;
     ctx.font = '10px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#5f5668';
-    ctx.fillText('回车 $' + slotPrice + '  ·  ESC 返回', VIEW_W / 2, VIEW_H - 40);
+    ctx.fillText(inputMode === 'touch'
+      ? '点「购买」$' + slotPrice + '  ·  点「退出」返回'
+      : '回车 $' + slotPrice + '  ·  ESC 返回', VIEW_W / 2, VIEW_H - 40);
   }
 
   // ---------------------------------------------------------------- 武器升级站 UI
@@ -5110,10 +5164,31 @@
       ctx.textAlign = 'left';
     }
 
+    // 底部「购买」「退出」按钮（触屏可点，桌面鼠标也能点）
+    {
+      const btns = upgradeButtons();
+      const drawBtn = (b, label, kind) => {
+        const hov = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+        ctx.fillStyle = hov ? 'rgba(255,179,71,0.20)' : 'rgba(255,255,255,0.06)';
+        ctx.strokeStyle = hov ? '#ffb347' : 'rgba(255,255,255,0.28)';
+        ctx.lineWidth = 1;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); }
+        else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = kind === 'buy' ? '#ffb347' : '#cfc4d4';
+        ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+        ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      };
+      drawBtn(btns.buy, '购买', 'buy');
+      drawBtn(btns.exit, '退出', 'exit');
+    }
+
     ctx.textAlign = 'center';
     ctx.font = '10px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#5f5668';
-    ctx.fillText('A/D 换枪  ·  W/S 换项  ·  回车购买  ·  V/ESC 返回', VIEW_W / 2, VIEW_H - 24);
+    ctx.fillText(inputMode === 'touch'
+      ? '点标签换枪 · 点行选中 · 点「购买」/「退出」'
+      : 'A/D 换枪  ·  W/S 换项  ·  回车购买  ·  V/ESC 返回', VIEW_W / 2, VIEW_H - 24);
 
     // 未持有的枪提示
     if (!owned) {
@@ -5144,7 +5219,9 @@
     // 只留一行最必要的：其余键位靠 HUD 和手感学，不铺教程
     ctx.fillStyle = '#6f6678';
     ctx.font = '11px "Microsoft YaHei", monospace';
-    ctx.fillText('WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 300);
+    ctx.fillText(inputMode === 'touch'
+      ? '左摇杆移动 · 右摇杆瞄准 · 瞄准键抬枪 · 交互键交互'
+      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 300);
     ctx.restore();
   }
 
@@ -5561,7 +5638,9 @@
     }
     ctx.font = '11px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
-    ctx.fillText('W/S 选择 · 回车/左键确认 · ESC 继续', VIEW_W / 2, VIEW_H / 2 + 78);
+    ctx.fillText(inputMode === 'touch'
+      ? '点选项确认 · 点「继续游戏」返回'
+      : 'W/S 选择 · 回车/左键确认 · ESC 继续', VIEW_W / 2, VIEW_H / 2 + 78);
     ctx.restore();
   }
 
@@ -6019,6 +6098,9 @@
     openUpgrade,
     closeUpgrade,
     buyUpgrade,
+    /** 升级站底部按钮布局 / 命中检测（测试点击购买、退出、换枪、选行用） */
+    upgradeButtons,
+    upgradeHitAt,
     gunStat,
     gunUp,
     gunEvolved,

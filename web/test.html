@@ -1083,6 +1083,35 @@
     H.setInputMode('pc');
     check('切回电脑键鼠（inputMode=' + H.inputMode + '）', H.inputMode === 'pc');
 
+    // ============ 升级站点击购买/退出按钮 ============
+    H.startGame();
+    const gUp = H.g, pUp = gUp.player;
+    gUp.upgUnlocked = true;
+    gUp.cash = 5000;
+    H.openUpgrade();
+    check('打开升级站（state=' + gUp.state + '）', gUp.state === 'upgrade');
+    const ub = H.upgradeButtons();
+    check('升级站有「购买」「退出」按钮', !!ub.buy && !!ub.exit);
+    // 命中检测：点第一把枪标签（第 0 个标签）→ gun 0；点第一行升级线 → line 0
+    const tabHit = H.upgradeHitAt(58 + 84, 100);
+    check('点标签命中换枪（gun=' + (tabHit && tabHit.gun) + '）', tabHit && tabHit.gun === 0);
+    const lineHit = H.upgradeHitAt(200, 142);
+    check('点升级行命中（line=' + (lineHit && lineHit.line) + '）', lineHit && lineHit.line === 0);
+    // 点标签换枪（切到第 2 把）
+    H.tap(58 + 168 + 10 + 84, 100);
+    check('点标签换枪（gun=' + gUp.upgSel.gun + '）', gUp.upgSel.gun === 1);
+    // 点升级行选中（切到 line 1）
+    H.tap(200, 142 + 34);
+    check('点行选中（line=' + gUp.upgSel.line + '）', gUp.upgSel.line === 1);
+    // 点「购买」按钮 → 扣款（升级第一行伤害）
+    gUp.upgSel = { gun: 0, line: 0 };
+    const upCashBefore = gUp.cash;
+    H.tap(ub.buy.x + ub.buy.w / 2, ub.buy.y + ub.buy.h / 2);
+    check('点「购买」升级扣款（cash ' + upCashBefore + '→' + gUp.cash + '）', gUp.cash < upCashBefore);
+    // 点「退出」按钮 → 关闭升级站
+    H.tap(ub.exit.x + ub.exit.w / 2, ub.exit.y + ub.exit.h / 2);
+    check('点「退出」关闭升级站（state=' + gUp.state + '）', gUp.state === 'play');
+
     report();
   }
 
