@@ -383,6 +383,37 @@
     check('血包2秒读完回50血（hp=' + pK.hp + '，medkits=' + pK.medkits + '）',
       pK.hp === 80 && pK.medkits === 0 && pK.healing === false);
 
+    // ============ 11b2. 切换医疗包/护甲板/切回枪的过渡动画（equipT） ============
+    // 切医疗包：触发 equipT 动画（掏出的过渡）
+    H.startGame();
+    const pEq = H.g.player;
+    pEq.medkits = 1; pEq.armorPlates = 1;
+    pEq.equipT = 0; pEq.equipTotal = 0;
+    H.key('3', true); H.step(1); H.clearPressed();
+    check('切医疗包触发过渡动画（equipT=' + pEq.equipT.toFixed(2) + ' > 0）',
+      pEq.healing === true && pEq.equipT > 0);
+    // 动画期间扣不动扳机（cooldown 被拉高）
+    check('切换期间锁扳机（cooldown=' + pEq.cooldown.toFixed(2) + ' > 0）', pEq.cooldown > 0);
+    // 连续按 3 不重复触发动画（已在治疗中，equipT 不应被重置）
+    for (let i = 0; i < 20; i++) H.step(1);   // 等动画走完
+    pEq.equipT = 0; pEq.equipTotal = 0;
+    H.key('3', true); H.step(1); H.clearPressed();
+    check('已在治疗中重复按3不重复触发（equipT=' + pEq.equipT + '）', pEq.healing === true && pEq.equipT === 0);
+    // 切回主武器：从消耗品切回枪也触发动画
+    pEq.equipT = 0;
+    H.key('1', true); H.step(1); H.clearPressed();
+    check('用完切回枪触发过渡动画（equipT=' + pEq.equipT.toFixed(2) + ' > 0，healing=' + pEq.healing + '）',
+      pEq.healing === false && pEq.equipT > 0);
+    // 切护甲板：触发动画
+    for (let i = 0; i < 20; i++) H.step(1);
+    pEq.equipT = 0; pEq.equipTotal = 0;
+    H.key('4', true); H.step(1); H.clearPressed();
+    check('切护甲板触发过渡动画（equipT=' + pEq.equipT.toFixed(2) + ' > 0）',
+      pEq.plating === true && pEq.equipT > 0);
+    // 动画会随时间衰减归零
+    for (let i = 0; i < 40; i++) H.step(1);
+    check('过渡动画随时间衰减归零（equipT=' + pEq.equipT + '）', pEq.equipT === 0);
+
     // ============ 11c. 高刷新率下按键不会被吞（"按4要按好多下"的根因） ============
     H.startGame();
     const pD = H.g.player;

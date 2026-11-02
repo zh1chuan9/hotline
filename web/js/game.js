@@ -1637,6 +1637,9 @@
       // 换枪动画：swapT > 0 表示正在掏枪/收枪（按新枪的 drawTime 走），期间锁扳机
       swapT: 0,
       swapTotal: 0,
+      // 手持物切换动画：切医疗包/护甲板、用完切回枪时触发，让手持物/枪有"掏出→收起"的过渡
+      equipT: 0,
+      equipTotal: 0,
       // 散弹枪逐发装填：shellReload > 0 表示正在塞当前这一发
       shellReload: 0,
       shellTotal: 0
@@ -2263,6 +2266,11 @@
       p.swapT -= dt;
       if (p.swapT <= 0) { p.swapT = 0; p.swapTotal = 0; }
     }
+    // 手持物切换动画：倒计时（医疗包/护甲板/切回枪）
+    if (p.equipT > 0) {
+      p.equipT -= dt;
+      if (p.equipT <= 0) { p.equipT = 0; p.equipTotal = 0; }
+    }
     if (p.reload > 0) {
       p.reload -= dt;
       if (p.weapon === 'shotgun' && p.shellReload > 0) {
@@ -2337,6 +2345,7 @@
             FX.addText(p.x, p.y - 14, '+50 HP', '#7fdca0');
             Sfx.play('pickup');
           }
+          startEquip(0.18);                     // 用完切回枪：过渡动画
         }
       } else if (p.healCharge > 0) {
         // 松开：读条暂停但不清零（点几下也能慢慢攒满，不用一次按住 2 秒）
@@ -2360,6 +2369,7 @@
             FX.addText(p.x, p.y - 14, '+护甲', '#5aa7e0');
             Sfx.play('pickup');
           }
+          startEquip(0.18);                      // 用完切回枪：过渡动画
         }
       } else if (p.plateCharge > 0) {
         // 松开：读条缓慢回退，但保持持板状态（可重新长按接着装）
@@ -2445,6 +2455,17 @@
   }
 
   /**
+   * 触发一次"切换手持物"动画：医疗包/护甲板/切回枪都用它。
+   * 让手上的家伙有个短暂的"收起→掏出"过渡，而不是瞬切。期间锁扳机。
+   */
+  function startEquip(dur) {
+    const p = G.player;
+    if (!p) return;
+    p.equipTotal = p.equipT = (dur == null ? 0.18 : dur);
+    p.cooldown = Math.max(p.cooldown, p.equipT);   // 切换期间扣不动扳机
+  }
+
+  /**
    * 数字键直达手持物：1 主武器 / 2 副武器 / 3 血包 / 4 护甲板。
    * 不做 toggle —— 按一下就到位，想收起来按 1 回枪。
    * 也不拦"血满/甲满"：满血满甲一样能切出来，真用不掉时再提示。
@@ -2459,7 +2480,7 @@
       p.plating = false; p.plateCharge = 0;
       p.grenadeHeld = false;
       if (p.curSlot === 'side' && p.side) swapWeapon();   // 手上是副武器 → 换回主武器
-      if (wasUtility) Sfx.play('pickup');
+      if (wasUtility) { Sfx.play('pickup'); startEquip(0.18); }   // 从消耗品切回枪：补个过渡
       return true;
     }
 
@@ -2470,6 +2491,7 @@
           p.plating = false; p.plateCharge = 0;
           p.grenadeHeld = false;
           Sfx.play('pickup');
+          startEquip(0.18);
         }
         return true;
       }
@@ -2478,9 +2500,12 @@
         G.toastTimer = 1.2;
         return false;
       }
+      const wasUtility = p.healing || p.plating || p.grenadeHeld;
       p.healing = false; p.healCharge = 0;
       p.plating = false; p.plateCharge = 0;
+      p.grenadeHeld = false;
       swapWeapon();
+      if (wasUtility) startEquip(0.18);              // 从消耗品切到副武器：补个过渡
       return true;
     }
 
@@ -2490,10 +2515,11 @@
         G.toastTimer = 1.2;
         return false;
       }
+      const wasAlready = p.healing;
       p.plating = false; p.plateCharge = 0;
       p.grenadeHeld = false;
       p.healing = true;
-      Sfx.play('pickup');
+      if (!wasAlready) { Sfx.play('pickup'); startEquip(0.18); }   // 掏出医疗包：过渡
       return true;
     }
 
@@ -2503,10 +2529,11 @@
         G.toastTimer = 1.2;
         return false;
       }
+      const wasAlready = p.plating;
       p.healing = false; p.healCharge = 0;
       p.grenadeHeld = false;
       p.plating = true;
-      Sfx.play('pickup');
+      if (!wasAlready) { Sfx.play('pickup'); startEquip(0.18); }   // 掏出护甲板：过渡
       return true;
     }
     return false;
@@ -4233,6 +4260,12 @@
       const e = Math.sin(Math.PI * Math.min(1, prog * 1.6));   // 起手收、末尾回，中间最深
       pull = e * 7.5;                                // 比换弹收得更深，一眼看出"在换家伙"
       tilt = -e * 0.22;                              // 反方向侧倾，跟换弹区分开
+    } else if (isPlayer && a.equipT > 0 && a.equipTotal > 0 && !holding) {
+      // 切回枪 / 切消耗品的过渡：枪做一个"收起→端出"的小动作，和掏消耗品的节奏对上
+      const prog = clamp(1 - a.equipT / a.equipTotal, 0, 1);
+      const e = Math.sin(Math.PI * Math.min(1, prog * 1.6));
+      pull = e * 6.0;
+      tilt = e * 0.10;
     }
     const angG = ang + tilt;                         // 枪和手用这个角度
 
@@ -4272,12 +4305,19 @@
       dot(hx - 0.6, hy - 0.7, h.r * 0.38, shade(pal.skin, 1.22));
     }
 
-    // 捧着的消耗品：压在手上面，才像"手里正拿着它"，不被手挡住
+    // 捧着的消耗品：压在手上面，才像"手里正拿着它"，不被手挡住。
+    // 切换时从怀里掏出：前段缩在胸前（小、靠后），后段伸到手上（正常大小、前伸）。
     if (holding) {
+      let eq = 1, eqReach = 0;
+      if (isPlayer && a.equipT > 0 && a.equipTotal > 0) {
+        const prog = clamp(1 - a.equipT / a.equipTotal, 0, 1);   // 0→1 掏出过程
+        eq = 0.55 + 0.45 * Math.sin(Math.PI * prog * 0.5 + Math.PI * 0.5);   // 小 → 正常
+        eqReach = (1 - Math.sin(Math.PI * Math.min(1, prog * 1.4))) * 4.5;     // 后 → 前
+      }
       ctx.save();
       ctx.rotate(ang);
-      ctx.translate(14.6, 0);
-      ctx.scale(0.9, 0.9);
+      ctx.translate(14.6 - eqReach, 0);
+      ctx.scale(0.9 * eq, 0.9 * eq);
       drawHeldItem(holding);
       ctx.restore();
     }
@@ -4576,6 +4616,14 @@
         ctx.fillText(hint, VIEW_W / 2, VIEW_H / 2 + 77);
       }
     }
+
+    // 正下方小灰字：版本号（低调地贴在底部中间，不影响操作）
+    ctx.textAlign = 'center';
+    ctx.font = '9px Consolas, "Microsoft YaHei", monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillText('v0.01', VIEW_W / 2 + 1, VIEW_H - 10);
+    ctx.fillStyle = 'rgba(185, 178, 194, 0.8)';
+    ctx.fillText('v0.01', VIEW_W / 2, VIEW_H - 11);
 
     ctx.restore();
   }
