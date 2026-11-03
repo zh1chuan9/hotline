@@ -1650,6 +1650,9 @@
       // 手持物切换动画：切医疗包/护甲板、用完切回枪时触发，让手持物/枪有"掏出→收起"的过渡
       equipT: 0,
       equipTotal: 0,
+      // 扳机就绪标记：用完护甲板/医疗包切回枪后置 false，要求重新按一下开火键才恢复开火，
+      // 避免"手指还按着"就误开火浪费子弹。
+      armed: true,
       // 散弹枪逐发装填：shellReload > 0 表示正在塞当前这一发
       shellReload: 0,
       shellTotal: 0
@@ -2365,7 +2368,7 @@
             FX.addText(p.x, p.y - 14, '+50 HP', '#7fdca0');
             Sfx.play('pickup');
           }
-          startEquip(0.18);                     // 用完切回枪：过渡动画
+          startEquip(0.18, true);               // 用完切回枪：过渡动画 + 重置扳机
         }
       } else if (p.healCharge > 0) {
         // 松开：读条暂停但不清零（点几下也能慢慢攒满，不用一次按住 2 秒）
@@ -2389,7 +2392,7 @@
             FX.addText(p.x, p.y - 14, '+护甲', '#5aa7e0');
             Sfx.play('pickup');
           }
-          startEquip(0.18);                      // 用完切回枪：过渡动画
+          startEquip(0.18, true);               // 用完切回枪：过渡动画 + 重置扳机
         }
       } else if (p.plateCharge > 0) {
         // 松开：读条缓慢回退，但保持持板状态（可重新长按接着装）
@@ -2402,7 +2405,12 @@
       // 按住（fireHeld）或单击（fireTap）都开枪。所有枪械（含手枪/霰弹枪这类半自动）
       // 长按都会按各自 fireRate 持续射击——手机上"一直推着摇杆"就应持续开火，
       // 射速仍由 p.cooldown（= fireRate）限制，不会过快。
-      if (fireHeld || fireTap) {
+      //
+      // 扳机就绪（armed）：用完护甲板/医疗包切回枪后 armed=false，此时"手指还按着"
+      // （fireHeld 恒真）不该再开枪；必须重新按一下（fireTap 上升沿）才重新武装并开火，
+      // 避免误开火浪费子弹。
+      if (fireTap) p.armed = true;
+      if ((fireHeld || fireTap) && p.armed) {
         // 换弹动画期间扣不动扳机（p.cooldown 也压着，这里是显式的一道锁）
         if (p.cooldown <= 0 && p.reload <= 0 && p.swapT <= 0) playerAttack();
       }
@@ -2478,11 +2486,13 @@
    * 触发一次"切换手持物"动画：医疗包/护甲板/切回枪都用它。
    * 让手上的家伙有个短暂的"收起→掏出"过渡，而不是瞬切。期间锁扳机。
    */
-  function startEquip(dur) {
+  function startEquip(dur, resetTrigger) {
     const p = G.player;
     if (!p) return;
     p.equipTotal = p.equipT = (dur == null ? 0.18 : dur);
     p.cooldown = Math.max(p.cooldown, p.equipT);   // 切换期间扣不动扳机
+    // 切回枪的场景：要求玩家重新按一下开火键才恢复开火，避免"手指还按着"就误开火。
+    if (resetTrigger) p.armed = false;
   }
 
   /**
@@ -2500,7 +2510,7 @@
       p.plating = false; p.plateCharge = 0;
       p.grenadeHeld = false;
       if (p.curSlot === 'side' && p.side) swapWeapon();   // 手上是副武器 → 换回主武器
-      if (wasUtility) { Sfx.play('pickup'); startEquip(0.18); }   // 从消耗品切回枪：补个过渡
+      if (wasUtility) { Sfx.play('pickup'); startEquip(0.18, true); }   // 从消耗品切回枪：补个过渡 + 重置扳机
       return true;
     }
 
@@ -2511,7 +2521,7 @@
           p.plating = false; p.plateCharge = 0;
           p.grenadeHeld = false;
           Sfx.play('pickup');
-          startEquip(0.18);
+          startEquip(0.18, true);
         }
         return true;
       }
@@ -2525,7 +2535,7 @@
       p.plating = false; p.plateCharge = 0;
       p.grenadeHeld = false;
       swapWeapon();
-      if (wasUtility) startEquip(0.18);              // 从消耗品切到副武器：补个过渡
+      if (wasUtility) startEquip(0.18, true);        // 从消耗品切到副武器：补个过渡 + 重置扳机
       return true;
     }
 

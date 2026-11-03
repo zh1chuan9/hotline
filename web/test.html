@@ -383,6 +383,34 @@
     check('血包2秒读完回50血（hp=' + pK.hp + '，medkits=' + pK.medkits + '）',
       pK.hp === 80 && pK.medkits === 0 && pK.healing === false);
 
+    // ============ 11b1. 用完护甲板/医疗包后按住不误开火（需重新按扳机） ============
+    H.startGame();
+    const pBug = H.g.player;
+    H.world.enemies.length = 0;
+    H.world.pickups.length = 0;
+    pBug.weapon = 'pistol'; pBug.ammo = 8; pBug.reserve = 50;
+    pBug.cooldown = 0; pBug.reload = 0; pBug.swapT = 0; pBug.equipT = 0; pBug.equipTotal = 0;
+    pBug.plating = false; pBug.healing = false; pBug.grenadeHeld = false;
+    // 模拟刚用完护甲板切回枪：armed 已被 startEquip(..., true) 重置为 false
+    pBug.armed = false;
+    // 手指还按着开火键（fireHeld 恒真），但没有新的"按下"上升沿
+    H.holdFire(true);
+    H.g.fireTap = false;
+    H.step(1);
+    check('用完护甲板后按住不误开火（ammo 仍为 ' + pBug.ammo + '）', pBug.ammo === 8);
+    // 重新按一下扳机（fireTap 上升沿）→ 重新武装并开火
+    H.g.fireTap = true;
+    H.step(1);
+    check('重新按扳机才开火（ammo=' + pBug.ammo + '，armed=' + pBug.armed + '）',
+      pBug.ammo < 8 && pBug.armed === true);
+    // 常态（armed=true）按住即可持续开火，不受影响
+    pBug.ammo = 8; pBug.cooldown = 0;
+    H.holdFire(true);
+    H.g.fireTap = false;
+    H.step(1);
+    check('常态按住持续开火（ammo=' + pBug.ammo + '）', pBug.ammo < 8);
+    H.holdFire(false);
+
     // ============ 11b2. 切换医疗包/护甲板/切回枪的过渡动画（equipT） ============
     // 切医疗包：触发 equipT 动画（掏出的过渡）
     H.startGame();
