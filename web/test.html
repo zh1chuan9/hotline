@@ -962,14 +962,34 @@
     check('保底局必出奖励（result=' + sl.result + '）', !!sl.result);
     check('中奖后保底计数清零（pity=' + gS.slotPity + '）', gS.slotPity === 0);
 
-    // ============ 28. 精英（第 7 波起，带小护甲） ============
+    // ============ 28. BOSS（每 5 波，带独立血条）+ 精英（第 7 波起，带小护甲） ============
     H.startGame();
     const g28 = H.g, w28 = H.world, p28 = g28.player;
-    g28.wave = 5;
-    H.startWave();                        // → 第 6 波（不刷精英）
-    check('第 6 波没有精英（精英从第 7 波起）',
+
+    // 第 5 波：刷 BOSS（带 boss 标记，无护甲，独立血条由 drawBossBars 画）
+    g28.wave = 4;
+    H.startWave();                        // → 第 5 波（刷 BOSS）
+    const bosses5 = w28.enemies.filter(e => e.boss);
+    check('第 5 波刷出 BOSS（' + bosses5.length + '）', bosses5.length === 1);
+    const boss5 = bosses5[0];
+    check('BOSS 体型更大（scale=' + (boss5.scale || 1) + '）', (boss5.scale || 1) >= 1.4);
+    check('BOSS 无护甲（armor=' + (boss5.armor || 0) + '）', (boss5.armor || 0) === 0);
+    check('第 5 波没有精英（精英从第 7 波起）',
       w28.enemies.filter(e => e.elite).length === 0);
 
+    // 击杀 BOSS：必给 1 手雷 + 1 护甲板
+    p28.grenades = 0; p28.armorPlates = 0;
+    H.hitEnemy(boss5, 9999);
+    check('击杀 BOSS 给稀有资源（手雷=' + p28.grenades + '，护甲板=' + p28.armorPlates + '）',
+      p28.grenades === 1 && p28.armorPlates === 1);
+
+    // 第 6 波：不刷 BOSS 也不刷精英
+    g28.wave = 5;
+    H.startWave();                        // → 第 6 波
+    check('第 6 波没有 BOSS', w28.enemies.filter(e => e.boss).length === 0);
+    check('第 6 波没有精英', w28.enemies.filter(e => e.elite).length === 0);
+
+    // 第 7 波：刷精英（带小护甲）
     g28.wave = 6;
     H.startWave();                        // → 第 7 波（刷精英）
     const elites = w28.enemies.filter(e => e.elite);
@@ -978,6 +998,7 @@
     check('精英体型放大（scale=' + (el.scale || 1) + '）', (el.scale || 1) > 1.2);
     check('精英血量高于同期小怪（' + el.hp + '）', el.hp > 100);
     check('精英带小护甲（armor=' + el.armor + '）', el.armor > 0);
+    check('精英不是 BOSS（boss=' + (el.boss || false) + '）', !el.boss);
 
     // 命中护甲：先扣甲不掉血
     const elHpBefore = el.hp;

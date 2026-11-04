@@ -1972,7 +1972,7 @@
       let dmg;
       if (isPlayerHit) {
         dmg = shooter && shooter.kind ? (ENEMY_KIND[shooter.kind].dmg || 15) : 15;
-        if (shooter && shooter.elite) dmg = Math.round(dmg * 1.5);   // 精英枪更疼
+        if (shooter && (shooter.elite || shooter.boss)) dmg = Math.round(dmg * 1.5);   // 精英/BOSS 枪更疼
       } else {
         // 玩家开枪要算上升级：直接读 WEAPONS 只会拿到出厂伤害
         dmg = (shooter && shooter.weapon)
@@ -2033,7 +2033,7 @@
       if (isPlayer) dmg = Math.round(def.dmg || 30);
       else {
         dmg = actor.kind ? (ENEMY_KIND[actor.kind].dmg || 15) : 15;
-        if (actor.elite) dmg = Math.round(dmg * 1.5);
+        if (actor.elite || actor.boss) dmg = Math.round(dmg * 1.5);
       }
       // 近战也能爆头：挥击时准心压在对方头上
       let headshot = false;
@@ -2171,7 +2171,7 @@
       // 积分：基础分 + 波次加成，连击翻倍，爆头额外加成
       const K = ENEMY_KIND[e.kind];
       const waveBonus = 1 + (G.wave || 0) * 0.15;
-      const base = Math.round(K.score * waveBonus * (e.elite ? 3 : 1));
+      const base = Math.round(K.score * waveBonus * ((e.elite || e.boss) ? 3 : 1));
       G.combo++;
       G.comboTimer = 2.5;
       if (G.combo > G.bestCombo) G.bestCombo = G.combo;
@@ -2184,12 +2184,12 @@
         headshot ? '#ff9a5a' : (G.combo > 1 ? '#ffd76e' : '#ffffff'));
       // 概率掉落：血包 / 子弹
       rollDrop(e);
-      // 精英：直接给稀有资源，掉在地上反而容易漏捡
-      if (e.elite) {
+      // 精英/BOSS：直接给稀有资源，掉在地上反而容易漏捡
+      if (e.elite || e.boss) {
         killer.grenades = Math.min(GRENADE_MAX, killer.grenades + 1);
         killer.armorPlates = Math.min(ARMOR_PLATE_CAP, killer.armorPlates + 1);
-        FX.addText(e.x, e.y - 26, '精英 · +1 手雷 +1 护甲板', '#ffd76e');
-        G.toast = '精英击杀';
+        FX.addText(e.x, e.y - 26, (e.boss ? 'BOSS' : '精英') + ' · +1 手雷 +1 护甲板', '#ffd76e');
+        G.toast = (e.boss ? 'BOSS' : '精英') + '击杀';
         G.toastTimer = 2;
       }
     }
@@ -3503,12 +3503,37 @@
     G.toastTimer = 2.5;
     FX.addText(G.player.x, G.player.y - 20, '第 ' + G.wave + ' 波', '#ffd76e');
 
-    // 第 7 波起每波加入一个精英：血厚、有小护甲、体型大、掉手雷和护甲板。
-    // 前 6 波让玩家先熟悉节奏，第 7 波开始上强度，也给"第几波"这件事一个记忆点。
+    // 每 5 波来一个 BOSS：血厚、体型大、头顶独立血条、掉手雷和护甲板，
+    // 让"第几波"这件事有记忆点，而不是只有数字在涨
+    if (G.wave % 5 === 0) spawnBoss(pts, hpScale, spdScale);
+    // 第 7 波起每波另加一个精英：血偏厚 + 一层小护甲，体型略大，没有独立血条。
+    // 精英是"每波固定上一点强度"，BOSS 是"每 5 波一个大高潮"，两者并存不冲突。
     if (G.wave >= 7) spawnElite(pts, hpScale, spdScale);
   }
 
-  /** 精英：普通敌人的强化版（血更厚 + 一层小护甲），击杀给稀有资源。不是 boss，没有独立血条。 */
+  /** BOSS：普通敌人的重装版，头顶独立血条，击杀给稀有资源。 */
+  function spawnBoss(pts, hpScale, spdScale) {
+    const kind = G.wave >= 10 ? 'shotgun' : 'gun';
+    const K = ENEMY_KIND[kind];
+    const pt = pts[Math.floor(Math.random() * pts.length)];
+    const e = makeEnemy(kind, pt.x, pt.y);
+    e.boss = true;
+    e.scale = 1.45;
+    e.maxHp = e.hp = Math.round(K.hp * hpScale * 6);
+    e.speed = K.speed * spdScale * 0.92;
+    e.keep = Math.round(K.keep * 0.8);       // 比普通枪手压得更近，逼玩家动起来
+    e.hunt = true;
+    e.state = 'chase';
+    e.lastSeen.x = G.player.x;
+    e.lastSeen.y = G.player.y;
+    e.facing = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+    W.enemies.push(e);
+    G.toast = '第 ' + G.wave + ' 波 · BOSS';
+    G.toastTimer = 2.8;
+    return e;
+  }
+
+  /** 精英：普通敌人的强化版（血偏厚 + 一层小护甲），击杀给稀有资源。不是 BOSS，没有独立血条。 */
   function spawnElite(pts, hpScale, spdScale) {
     const kind = G.wave >= 10 ? 'shotgun' : 'gun';
     const K = ENEMY_KIND[kind];
@@ -3530,6 +3555,20 @@
     G.toast = '第 ' + G.wave + ' 波 · 精英';
     G.toastTimer = 2.8;
     return e;
+  }
+
+  /** BOSS 头顶的血条（世界坐标，跟着相机走）。 */
+  function drawBossBars() {
+    for (const e of W.enemies) {
+      if (!e.alive || !e.boss) continue;
+      const bw = 36, bh = 4;
+      const y = e.y - 15 * (e.scale || 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(e.x - bw / 2, y, bw, bh);
+      ctx.fillStyle = '#e0402c';
+      ctx.fillRect(e.x - bw / 2 + 0.7, y + 0.7,
+        (bw - 1.4) * clamp(e.hp / e.maxHp, 0, 1), bh - 1.4);
+    }
   }
 
   function startGame(opts) {
@@ -4295,11 +4334,11 @@
     ctx.drawImage(IMG.shadow, -8, -8, 16, 16);
     ctx.globalAlpha = 1;
 
-    // 精英：脚下一圈脉动的红环。光靠体型区分不够，混战时一眼要能认出来
-    if (a.elite && a.alive) {
+    // 精英/BOSS：脚下一圈脉动的环。光靠体型区分不够，混战时一眼要能认出来
+    if ((a.elite || a.boss) && a.alive) {
       const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
       ctx.globalAlpha = 0.3 + pulse * 0.25;
-      ctx.strokeStyle = '#e0402c';
+      ctx.strokeStyle = a.boss ? '#ffd76e' : '#e0402c';   // BOSS 金环、精英红环
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(0, 0, 12, 0, 6.283);
@@ -5763,6 +5802,7 @@
     drawEffects();
     drawBlasts();
     drawWorldTexts();
+    drawBossBars();
     ctx.restore();
 
     // 受击闪白
