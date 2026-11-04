@@ -111,10 +111,10 @@
       blood: { pools: 3, spurts: 3, streaks: 2, scale: 0.95, spray: 18, speckles: 24 }
     },
     knife: {
-      name: '匕首', melee: true, fireRate: 0.26, mag: Infinity,
-      reach: 30, arc: 100, shake: 2.0, sound: 'swing', icon: 'w_knife', dmg: 40, price: 50,
+      name: '武士刀', melee: true, fireRate: 0.32, mag: Infinity,
+      reach: 42, arc: 95, shake: 2.4, sound: 'swing', icon: 'w_knife', dmg: 48, price: 50,
       drawTime: 0.16,
-      blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.8, spray: 13, speckles: 16 }
+      blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.85, spray: 14, speckles: 18 }
     }
   };
   // ---------------------------------------------------------------- 武器升级
@@ -4166,9 +4166,9 @@
     pistol:  { r: [10.8, 4.9], l: [9.2, 5.8] },
     smg:     { r: [11.0, 5.0], l: [9.4, 5.9] },
     shotgun: { r: [8.2, 4.0], l: [15.0, 4.4], rs: 0.8, ls: 0.66 },
-    // 匕首：横向握持、刀尖朝前，双手一前一后都压在刀柄上（右手靠护手、左手靠柄末）。
-    // 手半径收小、前后错开，才能在 32px 小人上看出是"两只手握同一段柄"而不是"一只手"。
-    knife:   { r: [9.4, 1.9], l: [5.9, 3.1], rs: 0.72, ls: 0.68 }
+    // 武士刀：单手握柄，右手握在刀镡后方的刀柄上（贴图里刀柄 x=1..5，约在角色前方 6~9px），
+    // 左手靠后虚扶柄末。手落点偏后，让长刀身完全露出来，别让手糊在刀刃上。
+    knife:   { r: [7.6, 1.6], l: [4.6, 2.6], rs: 0.72, ls: 0.68 }
   };
 
   function shade(hex, k) {
@@ -4776,7 +4776,7 @@
     w_smg: [0, 6, 18, 11],
     w_shotgun: [0, 6, 22, 7],
     w_bat: [0, 6, 18, 6],
-    w_knife: [1, 6, 16, 8]
+    w_knife: [1, 5, 23, 7]
   };
   const TINT_CACHE = new Map();
 
