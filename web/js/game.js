@@ -1057,6 +1057,10 @@
         case 'shotgun': this.noise(0.30, 1200, 0.8, 0.45, 0.3); this.tone(160, 45, 0.18, 0.16, 'sawtooth'); break;
         case 'swing': this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
         case 'hit': this.noise(0.12, 420, 1.0, 0.28, 0.2); this.tone(120, 50, 0.10, 0.14, 'square'); break;
+        // 击中敌人护甲：金属"铛"一声，和打肉体的闷响区分开
+        case 'armorhit': this.noise(0.08, 2400, 2.0, 0.22, 0.1); this.tone(680, 420, 0.06, 0.10, 'triangle'); break;
+        // 击碎敌人护甲：清脆的碎裂"噼啪"
+        case 'armorbreak': this.noise(0.28, 1800, 1.4, 0.32, 0.22); this.tone(920, 240, 0.16, 0.12, 'square'); this.tone(420, 180, 0.10, 0.08, 'sawtooth'); break;
         case 'die': this.noise(0.34, 520, 0.9, 0.30, 0.3); this.tone(150, 40, 0.28, 0.12, 'sawtooth'); break;
         case 'empty': this.tone(900, 700, 0.04, 0.07, 'square'); break;
         // 换弹：拔弹匣是干涩的"哐"，拍上弹匣是闷一点的"咔"
@@ -1477,6 +1481,7 @@
     parts: [],
     texts: [],
     clips: [],       // 换弹时甩出去的旧弹匣（要旋转，粒子那套圆点表达不了）
+    shards: [],      // 护甲被打碎时飞出的甲片（旋转的方形碎片）
     shake: 0,
     shakeT: 0,
     hitstop: 0,
@@ -1543,6 +1548,21 @@
     addText(x, y, txt, color) {
       this.texts.push({ x, y, txt, color: color || '#fff', life: 0.9, max: 0.9 });
     },
+    /** 护甲破碎：飞出几片旋转的灰蓝甲片，边转边淡出。 */
+    addShards(x, y, dir, n) {
+      const a = Math.atan2(dir.y, dir.x);
+      for (let i = 0; i < (n || 8); i++) {
+        const aa = a + (Math.random() - 0.5) * 2.4;
+        const s = 50 + Math.random() * 120;
+        this.shards.push({
+          x, y, vx: Math.cos(aa) * s, vy: Math.sin(aa) * s,
+          rot: Math.random() * 6.28, rotV: (Math.random() < 0.5 ? -1 : 1) * (8 + Math.random() * 10),
+          life: 0.4 + Math.random() * 0.35, max: 0.75,
+          size: 1.6 + Math.random() * 1.8,
+          color: Math.random() < 0.5 ? '#7fa8c8' : '#b8d4e4'
+        });
+      }
+    },
     kick(amount, dur) {
       this.shake = Math.max(this.shake, amount);
       this.shakeT = Math.max(this.shakeT, dur || 0.14);
@@ -1575,6 +1595,15 @@
         t.y -= 24 * dt; t.life -= dt;
         if (t.life <= 0) this.texts.splice(i, 1);
       }
+      for (let i = this.shards.length - 1; i >= 0; i--) {
+        const s = this.shards[i];
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        s.vx *= 0.88; s.vy *= 0.88;
+        s.rot += s.rotV * dt;
+        s.rotV *= Math.pow(0.3, dt);
+        s.life -= dt;
+        if (s.life <= 0) this.shards.splice(i, 1);
+      }
       if (this.shakeT > 0) {
         this.shakeT -= dt;
         if (this.shakeT <= 0) this.shake = 0;
@@ -1586,6 +1615,7 @@
       this.parts.length = 0;
       this.texts.length = 0;
       this.clips.length = 0;
+      this.shards.length = 0;
       this.shake = 0; this.shakeT = 0; this.hitstop = 0; this.flash = 0;
     }
   };
@@ -2076,9 +2106,30 @@
     return false;
   }
 
-  /** 对敌人造成伤害，返回是否死亡。 */
+  /** 对敌人造成伤害，返回是否死亡。精英先扣护甲：护甲打光前只碎甲不掉血。 */
   function damageEnemy(e, dmg, dirAngle, byPlayer, headshot) {
     if (!e.alive) return true;
+    // 护甲先扣（仅精英有）。击中护甲时给准心护甲反馈，护甲被打空那一下给破碎反馈。
+    if (e.armor > 0) {
+      const absorbed = Math.min(e.armor, dmg);
+      e.armor -= absorbed;
+      dmg -= absorbed;
+      if (byPlayer) {
+        if (e.armor <= 0) {
+          // 这一击打碎护甲：破碎图案 + 破碎音效 + 碎甲粒子
+          G.armorBreakT = 0.5;
+          G.armorHitT = 0;
+          Sfx.play('armorbreak');
+          FX.addShards(e.x, e.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) }, 10);
+        } else {
+          // 只是击中护甲（还没碎）：护甲标志 + 命中音效
+          G.armorHitT = 0.18;
+          Sfx.play('armorhit');
+        }
+      }
+      // 护甲还在，这一击没掉血，直接返回
+      if (e.armor > 0) return false;
+    }
     e.hp -= dmg;
     FX.addBlood(e.x, e.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) }, 4, 0.7);
     if (headshot) {
@@ -3452,22 +3503,24 @@
     G.toastTimer = 2.5;
     FX.addText(G.player.x, G.player.y - 20, '第 ' + G.wave + ' 波', '#ffd76e');
 
-    // 每 5 波来一个精英：血厚、体型大、掉手雷和护甲板，
-    // 让"第几波"这件事有记忆点，而不是只有数字在涨
-    if (G.wave % 5 === 0) spawnElite(pts, hpScale, spdScale);
+    // 第 7 波起每波加入一个精英：血厚、有小护甲、体型大、掉手雷和护甲板。
+    // 前 6 波让玩家先熟悉节奏，第 7 波开始上强度，也给"第几波"这件事一个记忆点。
+    if (G.wave >= 7) spawnElite(pts, hpScale, spdScale);
   }
 
-  /** 精英：普通敌人的强化版，头顶有血条，击杀给稀有资源。 */
+  /** 精英：普通敌人的强化版（血更厚 + 一层小护甲），击杀给稀有资源。不是 boss，没有独立血条。 */
   function spawnElite(pts, hpScale, spdScale) {
     const kind = G.wave >= 10 ? 'shotgun' : 'gun';
     const K = ENEMY_KIND[kind];
     const pt = pts[Math.floor(Math.random() * pts.length)];
     const e = makeEnemy(kind, pt.x, pt.y);
     e.elite = true;
-    e.scale = 1.45;
-    e.maxHp = e.hp = Math.round(K.hp * hpScale * 6);
-    e.speed = K.speed * spdScale * 0.92;
-    e.keep = Math.round(K.keep * 0.8);       // 比普通枪手压得更近，逼玩家动起来
+    e.scale = 1.3;
+    e.maxHp = e.hp = Math.round(K.hp * hpScale * 4);
+    e.speed = K.speed * spdScale * 0.95;
+    e.keep = Math.round(K.keep * 0.85);       // 比普通枪手压得更近，逼玩家动起来
+    e.armor = 40;                              // 一小层护甲：打掉前子弹只碎甲不掉血
+    e.maxArmor = 40;
     e.hunt = true;
     e.state = 'chase';
     e.lastSeen.x = G.player.x;
@@ -3477,20 +3530,6 @@
     G.toast = '第 ' + G.wave + ' 波 · 精英';
     G.toastTimer = 2.8;
     return e;
-  }
-
-  /** 精英头顶的血条（世界坐标，跟着相机走）。 */
-  function drawEliteBars() {
-    for (const e of W.enemies) {
-      if (!e.alive || !e.elite) continue;
-      const bw = 36, bh = 4;
-      const y = e.y - 15 * (e.scale || 1);
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillRect(e.x - bw / 2, y, bw, bh);
-      ctx.fillStyle = '#e0402c';
-      ctx.fillRect(e.x - bw / 2 + 0.7, y + 0.7,
-        (bw - 1.4) * clamp(e.hp / e.maxHp, 0, 1), bh - 1.4);
-    }
   }
 
   function startGame(opts) {
@@ -4427,6 +4466,16 @@
       ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
       ctx.fillStyle = p.color;
       ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    // 碎甲片：旋转的方形，边转边淡出
+    for (const s of FX.shards) {
+      ctx.save();
+      ctx.globalAlpha = clamp(s.life / s.max, 0, 1);
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.rot);
+      ctx.fillStyle = s.color;
+      ctx.fillRect(-s.size / 2, -s.size / 2, s.size, s.size);
+      ctx.restore();
     }
     // 换弹甩出去的旧弹匣 / 空弹壳。弹匣是小方块、弹壳是更小的红壳，都边转边淡出。
     // 地板本身偏暗，先勾一圈黑描边才看得出是"地上的东西"，不然像块脏点。
@@ -5591,6 +5640,50 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    // 击中敌人护甲：准心旁弹一个盾牌标志（蓝灰），提示"这枪只打掉了甲"
+    if (G.armorHitT > 0) {
+      const a = clamp(G.armorHitT / 0.18, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = '#8fd0ff';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(90,170,224,0.25)';
+      // 盾牌：上边一个小圆顶 + 下方收窄
+      ctx.beginPath();
+      ctx.moveTo(x + 16, y - 8);
+      ctx.quadraticCurveTo(x + 16, y - 14, x + 10, y - 14);
+      ctx.quadraticCurveTo(x + 7, y - 14, x + 7, y - 8);
+      ctx.lineTo(x + 7, y + 2);
+      ctx.lineTo(x + 4, y + 4);
+      ctx.lineTo(x + 4, y + 7);
+      ctx.lineTo(x + 19, y + 7);
+      ctx.lineTo(x + 19, y + 4);
+      ctx.lineTo(x + 16, y + 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    // 护甲被打碎：准心旁散开的破碎裂纹图案
+    if (G.armorBreakT > 0) {
+      const a = clamp(G.armorBreakT / 0.5, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = '#cfe8ff';
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      const cx = x + 16, cy = y - 4;
+      // 一圈向外放射的短裂纹，模拟甲片崩裂
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * Math.PI * 2 + 0.3;
+        const r0 = 5, r1 = 9 + (1 - a) * 3;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0);
+        ctx.lineTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -5663,7 +5756,6 @@
     for (const e of W.enemies) {
       if (e.alive) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
     }
-    drawEliteBars();
     drawActor(G.player, 'player', true, 'corpse_player');
     drawLaser();
 
@@ -5755,6 +5847,8 @@
         }
         if (G.comboTimer > 0) { G.comboTimer -= dt; if (G.comboTimer <= 0) G.combo = 0; }
         if (G.toastTimer > 0) G.toastTimer -= dt;
+        if (G.armorHitT > 0) G.armorHitT -= dt;
+        if (G.armorBreakT > 0) G.armorBreakT -= dt;
         if (G.centerTimer > 0) { G.centerTimer -= dt; if (G.centerTimer <= 0 && (G.state === 'clear' || G.state === 'play')) G.centerText = ''; }
       }
     }
@@ -6040,6 +6134,9 @@
       fireTap: false,
       grenades: [],        // 飞行中的手雷
       blasts: [],          // 冲击波（视觉层，和 BLASTS 互为引用）
+      // 命中反馈：击中敌人护甲 / 击碎敌人护甲时的准心旁提示（计时器，>0 时显示）
+      armorHitT: 0,
+      armorBreakT: 0,
       // 武器升级：按枪种记账（pistol/smg/shotgun），第 5 波清完解锁
       upg: makeUpgrades(),
       upgUnlocked: false,

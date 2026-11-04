@@ -962,16 +962,28 @@
     check('保底局必出奖励（result=' + sl.result + '）', !!sl.result);
     check('中奖后保底计数清零（pity=' + gS.slotPity + '）', gS.slotPity === 0);
 
-    // ============ 28. 精英波 ============
+    // ============ 28. 精英（第 7 波起，带小护甲） ============
     H.startGame();
     const g28 = H.g, w28 = H.world, p28 = g28.player;
-    g28.wave = 4;
-    H.startWave();                        // → 第 5 波
+    g28.wave = 5;
+    H.startWave();                        // → 第 6 波（不刷精英）
+    check('第 6 波没有精英（精英从第 7 波起）',
+      w28.enemies.filter(e => e.elite).length === 0);
+
+    g28.wave = 6;
+    H.startWave();                        // → 第 7 波（刷精英）
     const elites = w28.enemies.filter(e => e.elite);
-    check('第 5 波刷出 1 只精英（' + elites.length + '）', elites.length === 1);
+    check('第 7 波刷出 1 只精英（' + elites.length + '）', elites.length === 1);
     const el = elites[0];
     check('精英体型放大（scale=' + (el.scale || 1) + '）', (el.scale || 1) > 1.2);
-    check('精英血量远高于同期小怪（' + el.hp + '）', el.hp > 100);
+    check('精英血量高于同期小怪（' + el.hp + '）', el.hp > 100);
+    check('精英带小护甲（armor=' + el.armor + '）', el.armor > 0);
+
+    // 命中护甲：先扣甲不掉血
+    const elHpBefore = el.hp;
+    H.hitEnemy(el, 10);                   // 10 伤 < 40 护甲，全被甲吸收
+    check('击中护甲只扣甲不掉血（armor=' + el.armor + '，hp=' + el.hp + '）',
+      el.armor === 30 && el.hp === elHpBefore);
 
     // 击杀：必给 1 手雷 + 1 护甲板
     p28.grenades = 0; p28.armorPlates = 0;
@@ -979,12 +991,6 @@
     check('击杀精英给稀有资源（手雷=' + p28.grenades + '，护甲板=' + p28.armorPlates + '）',
       p28.grenades === 1 && p28.armorPlates === 1);
     check('精英死亡后不再是活着的敌人', el.alive === false);
-
-    // 非 5 的倍数不刷精英
-    g28.wave = 5;
-    H.startWave();                        // → 第 6 波
-    check('第 6 波没有精英',
-      w28.enemies.filter(e => e.elite).length === 0);
 
     // ============ 29. 手机触控模式 ============
     H.startGame();
