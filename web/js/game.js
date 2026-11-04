@@ -4396,24 +4396,24 @@
     }
     const angG = ang + tilt;                         // 枪和手用这个角度
 
-    // 双持（手枪/冲锋枪进化后）：左右手各一把，**镜像向两侧展开**。
-    // 两把枪的起点就沿枪身法线方向左右错开（dualOff），再各自往外偏一个角度（dualSpread），
-    // 呈「V」字朝前 —— 一眼能看出是两只手各握一把，而不是并排叠在一起。
+    // 双持（手枪/冲锋枪进化后）：左右手各一把，**镜像对称、枪口都对准心**。
+    // 两把枪沿枪身法线方向左右错开（dualOff），但都不偏转角度 —— 枪口平行地朝 facing（准心）。
+    // 左手枪沿枪管轴上下翻转（scale 1,-1），握把从「枪身下方」翻到「枪身上方」，
+    // 于是左手枪是右手枪关于枪管中线的「镜中倒影」，左右手对称各握一把。
     const isDual = isPlayer && !holding && held && gunEvolved(held) && DUAL_GUNS[held];
-    const dualSpread = isDual ? 0.30 : 0;   // 每把枪相对 facing 的偏转角（弧度），约 ±17°
-    const dualOff = isDual ? 4.0 : 0;       // 每把枪起点离中线的法向偏移（px）
+    const dualOff = isDual ? 3.6 : 0;       // 每把枪起点离中线的法向偏移（px），左右对称
 
     if (wimg) {
       // 枪身法线方向（垂直于 facing）：双持时两把枪起点沿这个方向左右错开
       const nxG = -Math.sin(angG), nyG = Math.cos(angG);
       for (const s of (isDual ? [1, -1] : [0])) {
-        // s=+1 右手枪：起点偏右、枪身顺时针偏转；s=-1 左手枪：起点偏左、逆时针偏转
-        const aG = isDual ? angG + s * dualSpread : angG;
+        // s=+1 右手枪：起点偏右、正常画（握把在下）；s=-1 左手枪：起点偏左、沿枪管轴上下翻转（握把在上）。
+        // 两把枪都朝 facing（准心），不偏角度；左右只差一个法向错位 + 一面上下镜像。
         ctx.save();
-        ctx.rotate(aG);
+        ctx.rotate(angG);
         ctx.translate(11.6 + gunShift - kick - pull + nxG * s * dualOff,
                       2 + pullY + nyG * s * dualOff);
-        ctx.scale(0.72, 0.72);
+        ctx.scale(0.72, 0.72 * (isDual && s < 0 ? -1 : 1));   // 左手枪沿枪管轴上下镜像
         ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
         ctx.restore();
       }
@@ -4428,11 +4428,11 @@
       // 后坐时手跟着枪一起往回缩，不然会看到"枪缩了、手还伸着"；换弹内收同理
       const back = gunShift - kick * 0.5 - pull;
       if (isDual) {
-        // 双持：左右手各握一把枪，每只手跟随自己那把枪的角度（镜像展开）+ 法向错开。
-        // 右手握右枪（+dualSpread、+dualOff）、左手握左枪（-dualSpread、-dualOff），
-        // 都落在各自枪的握把处，手随枪一起向两侧展开。
-        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY + dualOff, r: HAND_R * (grip.rs || 0.92), da: +dualSpread });   // 右手握右枪
-        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY - dualOff, r: HAND_R * (grip.ls || 0.8), da: -dualSpread });    // 左手握左枪
+        // 双持：右手握右枪（握把在下，y 正）、左手握左枪（握把在上，y 负 —— 镜像）。
+        // 两把枪角度相同、都朝准心，所以手不叠偏转角（da=0）；左手枪上下翻转后，
+        // 左手握点也沿枪管轴镜像（y 变负），落在翻转后握把的「上方」，形成「镜中倒影」持枪。
+        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY + dualOff, r: HAND_R * (grip.rs || 0.92), da: 0 });   // 右手握右枪（握把在下）
+        hands.push({ x: grip.r[0] + back, y: -(grip.r[1]) + pullY - dualOff, r: HAND_R * (grip.rs || 0.92), da: 0 }); // 左手握左枪（握把在上，镜像）
       } else {
         hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY, r: HAND_R * (grip.rs || 0.92), da: 0 });   // 右手扣扳机
         hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY, r: HAND_R * (grip.ls || 0.8), da: 0 });    // 左手托护木/包握把
