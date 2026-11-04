@@ -4318,22 +4318,23 @@
     }
     const angG = ang + tilt;                         // 枪和手用这个角度
 
-    // 双持（手枪/冲锋枪进化后）：左右手各一把，沿枪身法线方向左右错开，和开火时"左右各出一发"呼应。
-    // 主枪（右手）稍靠前，副枪（左手）略靠后，才有"两把并排朝前"的层次感。
-    // dualOff 取 3.5：手枪贴图很小（约 9px 宽），错开太小两把会叠成一把看不出来。
+    // 双持（手枪/冲锋枪进化后）：左右手各一把，**镜像向两侧展开**。
+    // 两把枪的起点就沿枪身法线方向左右错开（dualOff），再各自往外偏一个角度（dualSpread），
+    // 呈「V」字朝前 —— 一眼能看出是两只手各握一把，而不是并排叠在一起。
     const isDual = isPlayer && !holding && held && gunEvolved(held) && DUAL_GUNS[held];
-    const dualOff = isDual ? 3.5 : 0;                 // 每把枪离中线的法向偏移
+    const dualSpread = isDual ? 0.30 : 0;   // 每把枪相对 facing 的偏转角（弧度），约 ±17°
+    const dualOff = isDual ? 4.0 : 0;       // 每把枪起点离中线的法向偏移（px）
 
     if (wimg) {
-      // 枪身法线方向（垂直于 facing）：双持时两把枪沿这个方向左右错开
+      // 枪身法线方向（垂直于 facing）：双持时两把枪起点沿这个方向左右错开
       const nxG = -Math.sin(angG), nyG = Math.cos(angG);
-      for (const s of (isDual ? [-1, 1] : [0])) {
-        // s=1 右手枪靠前一点（沿枪口方向 +1.2），s=-1 左手枪靠后，一前一后更立体
-        const fwd = isDual ? (s === 1 ? 1.2 : -1.2) : 0;
+      for (const s of (isDual ? [1, -1] : [0])) {
+        // s=+1 右手枪：起点偏右、枪身顺时针偏转；s=-1 左手枪：起点偏左、逆时针偏转
+        const aG = isDual ? angG + s * dualSpread : angG;
         ctx.save();
-        ctx.rotate(angG);
-        ctx.translate(11.6 + gunShift - kick - pull + nxG * s * dualOff + Math.cos(angG) * fwd,
-                      2 + pullY + nyG * s * dualOff + Math.sin(angG) * fwd);
+        ctx.rotate(aG);
+        ctx.translate(11.6 + gunShift - kick - pull + nxG * s * dualOff,
+                      2 + pullY + nyG * s * dualOff);
         ctx.scale(0.72, 0.72);
         ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
         ctx.restore();
@@ -4349,25 +4350,29 @@
       // 后坐时手跟着枪一起往回缩，不然会看到"枪缩了、手还伸着"；换弹内收同理
       const back = gunShift - kick * 0.5 - pull;
       if (isDual) {
-        // 双持：左右手各握一把枪，沿法线方向（局部 y）左右错开，和两把枪的位置对齐
-        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY + dualOff, r: HAND_R * (grip.rs || 0.92) });   // 右手握右枪
-        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY - dualOff, r: HAND_R * (grip.ls || 0.8) });    // 左手握左枪
+        // 双持：左右手各握一把枪，每只手跟随自己那把枪的角度（镜像展开）+ 法向错开。
+        // 右手握右枪（+dualSpread、+dualOff）、左手握左枪（-dualSpread、-dualOff），
+        // 都落在各自枪的握把处，手随枪一起向两侧展开。
+        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY + dualOff, r: HAND_R * (grip.rs || 0.92), da: +dualSpread });   // 右手握右枪
+        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY - dualOff, r: HAND_R * (grip.ls || 0.8), da: -dualSpread });    // 左手握左枪
       } else {
-        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY, r: HAND_R * (grip.rs || 0.92) });   // 右手扣扳机
-        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY, r: HAND_R * (grip.ls || 0.8) });    // 左手托护木/包握把
+        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY, r: HAND_R * (grip.rs || 0.92), da: 0 });   // 右手扣扳机
+        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY, r: HAND_R * (grip.ls || 0.8), da: 0 });    // 左手托护木/包握把
       }
     } else {
       const arc = holding ? HAND_ARC * 0.62 : HAND_ARC;
       const reach = holding ? HAND_REACH * 1.12 : HAND_REACH;
       const hr = holding ? HAND_R * 0.9 : HAND_R;
       for (const s of [-1, 1]) {
-        hands.push({ x: Math.cos(s * arc) * reach, y: Math.sin(s * arc) * reach, r: hr });
+        hands.push({ x: Math.cos(s * arc) * reach, y: Math.sin(s * arc) * reach, r: hr, da: 0 });
       }
     }
     for (const h of hands) {
-      // 局部（枪身坐标系）→ 世界：跟着朝向旋转（换弹时再叠一点侧倾，手才不会留在枪外面）
-      const hx = Math.cos(angG) * h.x - Math.sin(angG) * h.y;
-      const hy = Math.sin(angG) * h.x + Math.cos(angG) * h.y;
+      // 局部（枪身坐标系）→ 世界：跟着朝向旋转（双持时每只手再叠自己那把枪的偏转角，
+      // 换弹时再叠一点侧倾，手才不会留在枪外面）
+      const ha = angG + (h.da || 0);
+      const hx = Math.cos(ha) * h.x - Math.sin(ha) * h.y;
+      const hy = Math.sin(ha) * h.x + Math.cos(ha) * h.y;
       dot(hx, hy, h.r + 0.9, rim);
       dot(hx, hy, h.r, pal.skin);
       dot(hx - 0.6, hy - 0.7, h.r * 0.38, shade(pal.skin, 1.22));
