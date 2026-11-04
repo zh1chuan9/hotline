@@ -4404,15 +4404,16 @@
     const dualOff = isDual ? 3.6 : 0;       // 每把枪起点离中线的法向偏移（px），左右对称
 
     if (wimg) {
-      // 枪身法线方向（垂直于 facing）：双持时两把枪起点沿这个方向左右错开
-      const nxG = -Math.sin(angG), nyG = Math.cos(angG);
       for (const s of (isDual ? [1, -1] : [0])) {
         // s=+1 右手枪：起点偏右、正常画（握把在下）；s=-1 左手枪：起点偏左、沿枪管轴上下翻转（握把在上）。
         // 两把枪都朝 facing（准心），不偏角度；左右只差一个法向错位 + 一面上下镜像。
+        // 注意：rotate 之后 translate 的 y 轴已经是「垂直于枪管」的法向，所以错位直接
+        // 加到 translate 的 y 上（±dualOff）即可 —— 绝不能再用世界坐标系法向量 (nxG,nyG)
+        // 混进局部坐标，否则一转身错位方向就歪，枪会从手上「滑出去」。
         ctx.save();
         ctx.rotate(angG);
-        ctx.translate(11.6 + gunShift - kick - pull + nxG * s * dualOff,
-                      2 + pullY + nyG * s * dualOff);
+        ctx.translate(11.6 + gunShift - kick - pull,
+                      2 + pullY + s * dualOff);
         ctx.scale(0.72, 0.72 * (isDual && s < 0 ? -1 : 1));   // 左手枪沿枪管轴上下镜像
         ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
         ctx.restore();
