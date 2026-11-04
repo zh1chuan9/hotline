@@ -4317,13 +4317,26 @@
     }
     const angG = ang + tilt;                         // 枪和手用这个角度
 
+    // 双持（手枪/冲锋枪进化后）：左右手各一把，沿枪身法线方向左右错开，和开火时"左右各出一发"呼应。
+    // 主枪（右手）稍靠前，副枪（左手）略靠后，才有"两把并排朝前"的层次感。
+    // dualOff 取 3.5：手枪贴图很小（约 9px 宽），错开太小两把会叠成一把看不出来。
+    const isDual = isPlayer && !holding && held && gunEvolved(held) && DUAL_GUNS[held];
+    const dualOff = isDual ? 3.5 : 0;                 // 每把枪离中线的法向偏移
+
     if (wimg) {
-      ctx.save();
-      ctx.rotate(angG);
-      ctx.translate(11.6 + gunShift - kick - pull, 2 + pullY);
-      ctx.scale(0.72, 0.72);
-      ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
-      ctx.restore();
+      // 枪身法线方向（垂直于 facing）：双持时两把枪沿这个方向左右错开
+      const nxG = -Math.sin(angG), nyG = Math.cos(angG);
+      for (const s of (isDual ? [-1, 1] : [0])) {
+        // s=1 右手枪靠前一点（沿枪口方向 +1.2），s=-1 左手枪靠后，一前一后更立体
+        const fwd = isDual ? (s === 1 ? 1.2 : -1.2) : 0;
+        ctx.save();
+        ctx.rotate(angG);
+        ctx.translate(11.6 + gunShift - kick - pull + nxG * s * dualOff + Math.cos(angG) * fwd,
+                      2 + pullY + nyG * s * dualOff + Math.sin(angG) * fwd);
+        ctx.scale(0.72, 0.72);
+        ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
+        ctx.restore();
+      }
     }
 
     // 手：两条路径 —— 持枪走 GRIP 里的手势位，其余（近战/空手/捧东西）绕朝向对称摆。
@@ -4334,8 +4347,14 @@
     if (grip) {
       // 后坐时手跟着枪一起往回缩，不然会看到"枪缩了、手还伸着"；换弹内收同理
       const back = gunShift - kick * 0.5 - pull;
-      hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY, r: HAND_R * (grip.rs || 0.92) });   // 右手扣扳机
-      hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY, r: HAND_R * (grip.ls || 0.8) });    // 左手托护木/包握把
+      if (isDual) {
+        // 双持：左右手各握一把枪，沿法线方向（局部 y）左右错开，和两把枪的位置对齐
+        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY + dualOff, r: HAND_R * (grip.rs || 0.92) });   // 右手握右枪
+        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY - dualOff, r: HAND_R * (grip.ls || 0.8) });    // 左手握左枪
+      } else {
+        hands.push({ x: grip.r[0] + back, y: grip.r[1] + pullY, r: HAND_R * (grip.rs || 0.92) });   // 右手扣扳机
+        hands.push({ x: grip.l[0] + back, y: grip.l[1] + pullY, r: HAND_R * (grip.ls || 0.8) });    // 左手托护木/包握把
+      }
     } else {
       const arc = holding ? HAND_ARC * 0.62 : HAND_ARC;
       const reach = holding ? HAND_REACH * 1.12 : HAND_REACH;
@@ -6087,6 +6106,11 @@
       if (sideM && G.player && WEAPONS[sideM[1]]) {
         const sd = WEAPONS[sideM[1]];
         G.player.side = { weapon: sideM[1], ammo: sd.mag, reserve: sd.reserveMax || 0 };
+      }
+      // ?dual=1 把当前武器进化成"双持"状态（截图核对双枪视觉用）
+      if (/[?&]dual=1/.test(location.search) && G.player && G.upg) {
+        const dw = G.player.weapon;
+        if (dw && DUAL_GUNS[dw]) G.upg[dw].evo = true;
       }
       // ?upgrade=1 直接打开升级站（截图核对 UI 用），顺便给点钱和几把枪
       if (/[?&]upgrade=1/.test(location.search) && G.player) {

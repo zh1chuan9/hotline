@@ -1207,6 +1207,24 @@
     check('满级金甲不再升级（tier=' + pAr.armorTier + '，cash=' + gAr.cash + '）',
       pAr.armorTier === 3 && gAr.cash === cash4);
 
+    // ============ 双枪（进化）判定：手枪/冲锋枪进化后识别为双持、弹匣翻倍、每发两弹 ============
+    H.startGame();
+    const gDw = H.g;
+    // 初始未进化：单发、单弹匣、非双持
+    check('初始手枪非双持（pellets=' + H.gunStat('pistol', 'pellets') + '）', H.gunStat('pistol', 'pellets') === 1);
+    check('初始手枪未进化（gunEvolved=' + H.gunEvolved('pistol') + '）', H.gunEvolved('pistol') === false);
+    // 进化手枪 → 双枪：弹匣翻倍（8→16）、每发两弹（pellets 1→2）、gunEvolved 变 true
+    gDw.upg.pistol.evo = true;
+    check('进化后手枪双持（pellets=' + H.gunStat('pistol', 'pellets') + '）', H.gunStat('pistol', 'pellets') === 2);
+    check('进化后弹匣翻倍（mag=' + H.gunStat('pistol', 'mag') + '）', H.gunStat('pistol', 'mag') === 16);
+    check('进化后 gunEvolved 为真（' + H.gunEvolved('pistol') + '）', H.gunEvolved('pistol') === true);
+    // 冲锋枪同理（双持）；霰弹枪进化是"半自动"不是双持（pellets 不变、fireRate 变）
+    gDw.upg.smg.evo = true;
+    check('进化后冲锋枪双持（pellets=' + H.gunStat('smg', 'pellets') + '）', H.gunStat('smg', 'pellets') === 2);
+    gDw.upg.shotgun.evo = true;
+    check('霰弹枪进化是半自动不是双持（pellets=' + H.gunStat('shotgun', 'pellets') + '，auto=' + H.gunStat('shotgun', 'auto') + '）',
+      H.gunStat('shotgun', 'pellets') === 7 && H.gunStat('shotgun', 'auto') === true);
+
     report();
   }
 
