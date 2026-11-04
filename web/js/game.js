@@ -43,11 +43,12 @@
   // 满甲值 50 → 150 → 150 → 150 递增，格数 1→3→2→1，越高级甲越"整块"、颜色越金。
   const ARMOR_TIERS = [
     { slots: 1, per: 50,  name: '基础甲', color: '#5aa7e0', desc: '单格 50' },
+    { slots: 2, per: 50,  name: '进阶甲', color: '#5aa7e0', desc: '两格 · 每格 50' },
     { slots: 3, per: 50,  name: '强化甲', color: '#5aa7e0', desc: '三格 · 每格 50' },
     { slots: 2, per: 75,  name: '精英甲', color: '#b07ae8', desc: '两格紫甲 · 每格 75' },
     { slots: 1, per: 150, name: '黄金甲', color: '#ffd76e', desc: '金甲 · 单格 150' }
   ];
-  const ARMOR_UP_PRICE = [600, 900, 1200];   // 护甲升级到 2/3/4 级的价格（1 级初始免费）
+  const ARMOR_UP_PRICE = [400, 600, 900, 1200];   // 护甲升级到 2/3/4/5 级的价格（1 级初始免费）
 
   // 手持消耗品的读条时长（秒）：按住左键读满才生效
   const HEAL_TIME = 2.0;      // 血包：2 秒回 50
@@ -1624,7 +1625,7 @@
       hp: HP_MAX,            // 单血量（上限 100）
       armor: 0,              // 当前护甲值（扣除优先于血量）
       armorSlots: 0,         // 已装备的护甲板格数（跟随护甲等级走，0~当前等级格数）
-      armorTier: 0,          // 护甲等级 0..3（ARMOR_TIERS）：1 级单格 50 → 4 级金甲单格 150
+      armorTier: 0,          // 护甲等级 0..4（ARMOR_TIERS）：1 级单格 50 → 5 级金甲单格 150
       armorPlates: 0,        // 背包里的护甲板数量（补给点买/掉落，按 4 取出长按左键装一块）
       medkits: 0,            // 背包里的血包数量（自动拾取，按 3 取出长按左键使用）
       grenades: 2,           // 手雷（按 G 切换手持，左键投掷）
@@ -1687,7 +1688,7 @@
   /** 换弹时长倍率（1 起，往下减，最快也要花 40% 时间）。 */
   function reloadMul(p) { return 1 - skillBonus(p, 'reload'); }
 
-  // 护甲等级体系：armorTier 是 0..3（对应 ARMOR_TIERS），每级决定格数/每格值/颜色。
+  // 护甲等级体系：armorTier 是 0..4（对应 ARMOR_TIERS），每级决定格数/每格值/颜色。
   // 满甲值 = slots × per，逐级升高。补甲、受击、HUD 都从当前等级取数，不再用固定常量。
   function armorTier(p) {
     return ARMOR_TIERS[clamp(p.armorTier || 0, 0, ARMOR_TIERS.length - 1)];
@@ -4739,7 +4740,7 @@
       ctx.strokeRect(x0 - 1.5, hpY - 1.5, barW + 3, hpH + 3);
     }
 
-    // 护甲格：格数和颜色随护甲等级走（1 级单格蓝 → 3 级两格紫 → 4 级单格金）。
+    // 护甲格：格数和颜色随护甲等级走（1 级单格蓝 → 2 级两格蓝 → 3 级三格蓝 → 4 级两格紫 → 5 级单格金）。
     // 没装的格子留一圈暗色边框，空甲也看得出有几个位。
     for (let i = 0; i < slots; i++) {
       const sx = x0 + i * (slotW + gap);
@@ -5236,7 +5237,7 @@
         ctx.font = 'bold 13px "Microsoft YaHei", monospace';
         ctx.fillStyle = isSel ? '#dceaff' : (maxed ? '#ffd76e' : '#cfc4d4');
         ctx.fillText('护甲等级', 54, y);
-        // 等级点（4 级）
+        // 等级点（5 级）
         for (let d = 0; d < ARMOR_TIERS.length; d++) {
           ctx.fillStyle = d <= tier ? (d === ARMOR_TIERS.length - 1 ? '#ffd76e' : '#7fb7ff') : '#4a4450';
           ctx.beginPath(); ctx.arc(150 + d * 16, y - 4, 3.5, 0, 6.283); ctx.fill();

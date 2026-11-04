@@ -306,7 +306,7 @@
       pA.armorPlates === 0 && pA.armorSlots === 1 && pA.armor === 50);
     H.holdFire(false);
     // 护甲满时按 4 仍能切出来（不再拦住切换），只是读完不扣板
-    pA.armorTier = 1; pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 150;
+    pA.armorTier = 2; pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 150;
     H.key('4', true);
     H.step(1);
     check('护甲已满也能切出护甲板（plating=' + pA.plating + '）', pA.plating === true);
@@ -318,7 +318,7 @@
     H.clearPressed();
 
     // 被削掉一半的甲（3 格板还在，但只剩 60 点）必须还能补 —— 判满只看护甲值
-    pA.armorTier = 1; pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 60;
+    pA.armorTier = 2; pA.armorPlates = 1; pA.armorSlots = 3; pA.armor = 60;
     H.clearPressed();
     H.key('4', true); H.step(1); H.clearPressed();
     check('半甲按4仍能取出护甲板（plating=' + pA.plating + '）', pA.plating === true);
@@ -1179,33 +1179,39 @@
     // 初始 1 级：单格 50，满甲 50
     check('护甲初始 1 级（tier=' + pAr.armorTier + '，满甲=' + H.armorMax(pAr) + '）',
       pAr.armorTier === 0 && H.armorMax(pAr) === 50);
-    // 升到 2 级：3 格 × 50，满甲 150
+    // 升到 2 级：两格 × 50，满甲 100
     H.openUpgrade();
     gAr.upgSel = { gun: 0, line: H.UP_ARMOR_LINE };
     const cash1 = gAr.cash;
     H.buyUpgrade();
-    check('护甲升 2 级（tier=' + pAr.armorTier + '，满甲=' + H.armorMax(pAr) + '，扣款 ' + cash1 + '→' + gAr.cash + '）',
-      pAr.armorTier === 1 && H.armorMax(pAr) === 150 && gAr.cash === cash1 - 600);
-    check('升级后护甲当场补满（armor=' + pAr.armor + '）', pAr.armor === 150);
-    // 升到 3 级：2 格紫甲 × 75，满甲 150
+    check('护甲升 2 级（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，满甲=' + H.armorMax(pAr) + '，扣款 ' + cash1 + '→' + gAr.cash + '）',
+      pAr.armorTier === 1 && H.armorTier(pAr).slots === 2 && H.armorMax(pAr) === 100 && gAr.cash === cash1 - 400);
+    check('升级后护甲当场补满（armor=' + pAr.armor + '）', pAr.armor === 100);
+    // 升到 3 级：三格 × 50，满甲 150
     gAr.upgSel.line = H.UP_ARMOR_LINE;
     const cash2 = gAr.cash;
     H.buyUpgrade();
-    check('护甲升 3 级（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，每格=' + H.armorTier(pAr).per + '）',
-      pAr.armorTier === 2 && H.armorTier(pAr).slots === 2 && H.armorTier(pAr).per === 75 && gAr.cash === cash2 - 900);
-    // 升到 4 级（满级）：金甲单格 150
+    check('护甲升 3 级（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，满甲=' + H.armorMax(pAr) + '）',
+      pAr.armorTier === 2 && H.armorTier(pAr).slots === 3 && H.armorMax(pAr) === 150 && gAr.cash === cash2 - 600);
+    // 升到 4 级：两格紫甲 × 75，满甲 150
     gAr.upgSel.line = H.UP_ARMOR_LINE;
     const cash3 = gAr.cash;
     H.buyUpgrade();
-    check('护甲升 4 级金甲（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，每格=' + H.armorTier(pAr).per + '）',
-      pAr.armorTier === 3 && H.armorTier(pAr).slots === 1 && H.armorTier(pAr).per === 150 && gAr.cash === cash3 - 1200);
-    check('金甲满甲 150（armor=' + pAr.armor + '）', pAr.armor === 150);
-    // 满级再买：不扣款、不升级
+    check('护甲升 4 级（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，每格=' + H.armorTier(pAr).per + '）',
+      pAr.armorTier === 3 && H.armorTier(pAr).slots === 2 && H.armorTier(pAr).per === 75 && gAr.cash === cash3 - 900);
+    // 升到 5 级（满级）：金甲单格 150
     gAr.upgSel.line = H.UP_ARMOR_LINE;
     const cash4 = gAr.cash;
     H.buyUpgrade();
+    check('护甲升 5 级金甲（tier=' + pAr.armorTier + '，格数=' + H.armorTier(pAr).slots + '，每格=' + H.armorTier(pAr).per + '）',
+      pAr.armorTier === 4 && H.armorTier(pAr).slots === 1 && H.armorTier(pAr).per === 150 && gAr.cash === cash4 - 1200);
+    check('金甲满甲 150（armor=' + pAr.armor + '）', pAr.armor === 150);
+    // 满级再买：不扣款、不升级
+    gAr.upgSel.line = H.UP_ARMOR_LINE;
+    const cash5 = gAr.cash;
+    H.buyUpgrade();
     check('满级金甲不再升级（tier=' + pAr.armorTier + '，cash=' + gAr.cash + '）',
-      pAr.armorTier === 3 && gAr.cash === cash4);
+      pAr.armorTier === 4 && gAr.cash === cash5);
 
     // ============ 双枪（进化）判定：手枪/冲锋枪进化后识别为双持、弹匣翻倍、每发两弹 ============
     H.startGame();
