@@ -1258,6 +1258,28 @@
     check('霰弹枪进化是半自动不是双持（pellets=' + H.gunStat('shotgun', 'pellets') + '，auto=' + H.gunStat('shotgun', 'auto') + '）',
       H.gunStat('shotgun', 'pellets') === 7 && H.gunStat('shotgun', 'auto') === true);
 
+    // ============ 30. 剧情模式（逐关推进 + 评分结算） ============
+    H.startGame({ mode: 'story' });
+    const gSt = H.g, wSt = H.world, pSt = gSt.player;
+    check('剧情模式已进入（mode=' + gSt.mode + '）', gSt.mode === 'story');
+    check('剧情第一关地图加载（' + wSt.title + '）', !!wSt && wSt.w > 0 && wSt.h > 0);
+    check('剧情第一关有预设敌人（' + wSt.enemies.length + ' 个）', wSt.enemies.length >= 3);
+    check('剧情敌人全部 alive', wSt.enemies.every(e => e.alive));
+    check('剧情模式 HUD 关卡进度（storyLevel=' + gSt.storyLevel + '）', gSt.storyLevel === 0);
+
+    // 清空敌人 → 进入评分结算状态（storyclear）
+    for (const e of wSt.enemies) H.hitEnemy(e, 9999);
+    // hitEnemy 后敌人可能已死，但清场判定在 update 里跑；这里直接模拟清场后的状态检查
+    check('剧情清空后敌人全灭', wSt.enemies.every(e => !e.alive));
+    // 手动触发一次 update 以推进清场判定（H 无直接 update 导出，用 storyGrade 验证评分）
+    const grade = H.storyGrade ? H.storyGrade() : null;
+    check('剧情评分函数可用（grade=' + grade + '）', grade !== null);
+
+    // 挑战模式回归：仍走波次
+    H.startGame({ mode: 'challenge' });
+    check('挑战模式回归（mode=' + H.g.mode + '）', H.g.mode === 'challenge');
+    check('挑战模式有刷怪点（' + H.world.spawnPoints.length + '）', H.world.spawnPoints.length >= 4);
+
     report();
   }
 

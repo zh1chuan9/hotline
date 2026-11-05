@@ -273,6 +273,127 @@
   const BARREL_DMG = 110;        // 中心伤害（按距离衰减到 30%）
   const BARREL_DELAY = 0.16;     // 中弹到炸开的引信时间：留一帧让人看见"我打中了"
 
+  // ---------------------------------------------------------------- 剧情模式关卡
+  // 参照迈阿密热线：逐关推进，每关一张地图 + 预设敌人，全部清空即过关，打完进下一关。
+  // 每关记录击杀数/连击/受伤，通关后按迈阿密式评分（A+ ~ D）结算。
+  // enemy 布局：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
+  const STORY_LEVELS = [
+    {
+      title: '序章 · 空屋',
+      rows: [
+        '##############################',
+        '#............................#',
+        '#............................#',
+        '#..............o..............#',
+        '#............o...o............#',
+        '#..............o..............#',
+        '#............................#',
+        '#............................#',
+        '#..............P.............#',
+        '#............................#',
+        '#..............o..............#',
+        '#............................#',
+        '#............................#',
+        '#............................#',
+        '#............................#',
+        '##############################'
+      ],
+      enemies: [
+        { kind: 'melee', pos: [6, 3] },
+        { kind: 'melee', pos: [22, 3] },
+        { kind: 'melee', pos: [14, 11] }
+      ]
+    },
+    {
+      title: '第二章 · 猎犬',
+      rows: [
+        '##############################',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#.............o..............#',
+        '#....o........o.........o....#',
+        '#............................#',
+        '#..............P.............#',
+        '#............................#',
+        '#....o........o.........o....#',
+        '#.............o..............#',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#............................#',
+        '##############################'
+      ],
+      enemies: [
+        { kind: 'melee', pos: [6, 4] },
+        { kind: 'melee', pos: [22, 4] },
+        { kind: 'gun', pos: [14, 2] },
+        { kind: 'melee', pos: [14, 10] },
+        { kind: 'melee', pos: [6, 10] }
+      ]
+    },
+    {
+      title: '第三章 · 破晓',
+      rows: [
+        '##############################',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#............................#',
+        '#..........o....o............#',
+        '#............................#',
+        '#..............P.............#',
+        '#............................#',
+        '#..........o....o............#',
+        '#............................#',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#............................#',
+        '##############################'
+      ],
+      enemies: [
+        { kind: 'gun', pos: [6, 4] },
+        { kind: 'gun', pos: [22, 4] },
+        { kind: 'melee', pos: [14, 2] },
+        { kind: 'shotgun', pos: [14, 12] },
+        { kind: 'melee', pos: [6, 10] },
+        { kind: 'melee', pos: [22, 10] }
+      ]
+    },
+    {
+      title: '终章 · 炽线',
+      rows: [
+        '##############################',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#.............o..............#',
+        '#............................#',
+        '#............................#',
+        '#..............P.............#',
+        '#............................#',
+        '#............................#',
+        '#.............o..............#',
+        '#............................#',
+        '#....o..............o........#',
+        '#............................#',
+        '#............................#',
+        '##############################'
+      ],
+      enemies: [
+        { kind: 'shotgun', pos: [6, 4] },
+        { kind: 'shotgun', pos: [22, 4] },
+        { kind: 'gun', pos: [14, 2] },
+        { kind: 'gun', pos: [14, 12] },
+        { kind: 'melee', pos: [6, 10] },
+        { kind: 'melee', pos: [22, 10] },
+        { kind: 'gun', pos: [6, 12] },
+        { kind: 'gun', pos: [22, 12] }
+      ]
+    }
+  ];
+
   const ENEMY_KIND = {
     melee: {
       tex: 'enemy_melee', corpse: 'corpse_enemy_melee',
@@ -1131,13 +1252,13 @@
   let W = null;          // 当前关卡运行时
   let G = null;          // 全局游戏状态
 
-  function buildLevel(index) {
-    const data = ARENA;
-    const rows = data.rows;
+  function buildLevel(index, data) {
+    const src = data || ARENA;
+    const rows = src.rows;
     const h = rows.length, w = rows[0].length;
 
     const world = {
-      index: index || 0, title: data.title, rows, w, h,
+      index: index || 0, title: src.title, rows, w, h,
       pxW: w * TILE, pxH: h * TILE,
       walls: [],        // 合并后的墙矩形
       covers: [],       // 掩体（木箱），碰撞上算墙，渲染单独一层
@@ -2081,6 +2202,8 @@
     const p = G.player;
     if (!p.alive) return true;
     let remaining = dmg;
+    // 剧情模式评分统计：每次受击（掉了护甲或血）都记一次
+    if (G.mode === 'story' && remaining > 0) G.storyHits = (G.storyHits || 0) + 1;
     // 护甲先扣：每点护甲吸收对应伤害，护甲归零后再掉血
     if (p.armor > 0) {
       const absorbed = Math.min(p.armor, remaining);
@@ -2175,6 +2298,11 @@
       G.combo++;
       G.comboTimer = 2.5;
       if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+      // 剧情模式评分统计：击杀数 + 最佳连击
+      if (G.mode === 'story') {
+        G.storyKills = (G.storyKills || 0) + 1;
+        if (G.combo > (G.storyComboBest || 0)) G.storyComboBest = G.combo;
+      }
       let gained = Math.round((base + Math.round(base * (G.combo - 1) * 0.25)) * (G.doubleScore > 0 ? 2 : 1));
       if (headshot) gained = Math.round(gained * HEADSHOT_SCORE);
       G.score += gained;
@@ -3572,8 +3700,63 @@
   }
 
   function startGame(opts) {
-    // prep !== false 时先走 30 秒开局准备；测试/调试传 { prep: false } 直接开打
+    // opts.mode: 'challenge'（默认，无限波次生存）| 'story'（剧情模式，逐关推进）
+    // opts.prep: false 时跳过开局准备期（测试/调试用）
+    const mode = (opts && opts.mode) || 'challenge';
     const withPrep = !(opts && opts.prep === false);
+    G.mode = mode;
+    G.storyLevel = 0;
+    G.storyKills = 0;
+    G.storyComboBest = 0;
+    G.storyHits = 0;        // 受击次数（评分用）
+    G.storyStartT = performance.now();
+
+    if (mode === 'story') {
+      const lv = STORY_LEVELS[0];
+      W = buildLevel(0, lv);
+      G.levelIndex = 0;
+      G.player = makePlayer(W.spawn.x, W.spawn.y);
+      G.wave = 0;
+      G.cash = 0;
+      G.score = 0;
+      G.combo = 0;
+      G.bestCombo = 0;
+      G.shopSel = 0;
+      G.slotState = null;
+      G.slotPity = 0;
+      G.slotSpins = 0;
+      G.doubleScore = 0;
+      G.intermission = 0;
+      G.state = 'play';
+      G.centerText = '';
+      G.centerColor = '#fff';
+      G.deadTimer = 0;
+      G.upg = makeUpgrades();
+      G.upgUnlocked = false;
+      G.upgSel = { gun: 0, line: 0 };
+      G.toast = '';
+      G.toastTimer = 0;
+      G.timeScale = 1;
+      FX.reset();
+      G.grenades = [];
+      BLASTS.length = 0;
+      G.player.weapon = 'pistol';
+      G.player.ammo = WEAPONS.pistol.mag;
+      G.player.reserve = WEAPONS.pistol.reserveMax;
+      G.cam.x = clamp(G.player.x - VIEW_W / ZOOM / 2, 0, Math.max(0, W.pxW - VIEW_W / ZOOM));
+      G.cam.y = clamp(G.player.y - VIEW_H / ZOOM / 2, 0, Math.max(0, W.pxH - VIEW_H / ZOOM));
+      G.camV.x = 0;
+      G.camV.y = 0;
+      // 预设敌人：按关卡数据摆好，清空即过关
+      spawnStoryEnemies(0);
+      // 开场提示
+      G.centerText = lv.title;
+      G.centerColor = MIAMI.pink;
+      G.centerTimer = 2.2;
+      return;
+    }
+
+    // ---- 挑战模式（原波次生存）----
     W = buildLevel(0);
     G.player = makePlayer(W.spawn.x, W.spawn.y);
     G.levelIndex = 0;
@@ -3621,6 +3804,107 @@
     }
   }
 
+  /** 剧情模式：按关卡数据把预设敌人摆进世界（固定布局，不是随机刷）。 */
+  function spawnStoryEnemies(levelIdx) {
+    const lv = STORY_LEVELS[levelIdx];
+    W.enemies = [];
+    for (const en of lv.enemies) {
+      const cx = (en.pos[0] + 0.5) * TILE;
+      const cy = (en.pos[1] + 0.5) * TILE;
+      const e = makeEnemy(en.kind, cx, cy);
+      const K = ENEMY_KIND[en.kind];
+      e.maxHp = e.hp = K.hp;
+      e.speed = K.speed;
+      e.hunt = true;          // 剧情敌人一开始就知道玩家方位，主动猎杀
+      e.state = 'chase';
+      e.lastSeen.x = G.player.x;
+      e.lastSeen.y = G.player.y;
+      e.facing = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+      W.enemies.push(e);
+    }
+    W.cleared = false;
+  }
+
+  /** 剧情模式评分：迈阿密式等级（A+ 最高，D 最低），综合连击、受伤、用时。 */
+  function storyGrade() {
+    const kills = G.storyKills || 0;
+    const best = G.storyComboBest || 0;
+    const hits = G.storyHits || 0;
+    const t = (performance.now() - (G.storyStartT || 0)) / 1000;
+    // 评分维度：连击（权重高）、无伤、速度
+    let score = 0;
+    if (best >= 6) score += 3; else if (best >= 4) score += 2; else if (best >= 2) score += 1;
+    if (hits === 0) score += 2; else if (hits <= 2) score += 1;
+    if (kills > 0 && t < kills * 8 + 10) score += 1;
+    // 映射到等级
+    const grades = ['D', 'C', 'B', 'A', 'A', 'A+', 'A+', 'A+'];
+    return grades[Math.min(score, grades.length - 1)];
+  }
+
+  /** 剧情模式：进入下一关；最后一关通关则回到标题。 */
+  function nextStoryLevel() {
+    const next = G.storyLevel + 1;
+    if (next >= STORY_LEVELS.length) {
+      // 通关全部关卡：回标题
+      goTitle();
+      return;
+    }
+    G.storyLevel = next;
+    G.storyKills = 0;
+    G.storyComboBest = 0;
+    G.storyHits = 0;
+    G.storyStartT = performance.now();
+    const lv = STORY_LEVELS[next];
+    W = buildLevel(next, lv);
+    G.levelIndex = next;
+    G.player.x = W.spawn.x;
+    G.player.y = W.spawn.y;
+    G.player.alive = true;
+    G.player.hp = HP_MAX;
+    G.player.deadT = 0;
+    G.combo = 0;
+    G.comboTimer = 0;
+    G.state = 'play';
+    G.cam.x = clamp(G.player.x - VIEW_W / ZOOM / 2, 0, Math.max(0, W.pxW - VIEW_W / ZOOM));
+    G.cam.y = clamp(G.player.y - VIEW_H / ZOOM / 2, 0, Math.max(0, W.pxH - VIEW_H / ZOOM));
+    G.camV.x = 0;
+    G.camV.y = 0;
+    G.centerText = lv.title;
+    G.centerColor = MIAMI.pink;
+    G.centerTimer = 2.2;
+    spawnStoryEnemies(next);
+  }
+
+  /** 剧情模式：重开当前关（死亡或结算重试）。 */
+  function retryStoryLevel() {
+    const idx = G.storyLevel;
+    G.storyKills = 0;
+    G.storyComboBest = 0;
+    G.storyHits = 0;
+    G.storyStartT = performance.now();
+    const lv = STORY_LEVELS[idx];
+    W = buildLevel(idx, lv);
+    G.player.x = W.spawn.x;
+    G.player.y = W.spawn.y;
+    G.player.alive = true;
+    G.player.hp = HP_MAX;
+    G.player.deadT = 0;
+    G.player.weapon = 'pistol';
+    G.player.ammo = WEAPONS.pistol.mag;
+    G.player.reserve = WEAPONS.pistol.reserveMax;
+    G.combo = 0;
+    G.comboTimer = 0;
+    G.state = 'play';
+    G.cam.x = clamp(G.player.x - VIEW_W / ZOOM / 2, 0, Math.max(0, W.pxW - VIEW_W / ZOOM));
+    G.cam.y = clamp(G.player.y - VIEW_H / ZOOM / 2, 0, Math.max(0, W.pxH - VIEW_H / ZOOM));
+    G.camV.x = 0;
+    G.camV.y = 0;
+    G.centerText = lv.title;
+    G.centerColor = MIAMI.pink;
+    G.centerTimer = 2.2;
+    spawnStoryEnemies(idx);
+  }
+
   function onPointerDown(e) {
     Sfx.init();
     // 右键只负责瞄准，不拿来开局（免得抬手瞄一下就顺手把标题点掉了）
@@ -3628,8 +3912,14 @@
     // 命中检测：判断点击落在哪个按钮上
     const hit = (b) => b && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
     if (G.state === 'title') {
-      if (hit(TITLE_BTN.start)) startGame();
+      if (hit(TITLE_BTN.story)) startGame({ mode: 'story' });
+      else if (hit(TITLE_BTN.challenge)) startGame({ mode: 'challenge' });
       else if (hit(TITLE_BTN.settings)) openSettings('title');
+      return;
+    }
+    if (G.state === 'storyclear') {
+      if (hit(CLEAR_BTN.next)) { nextStoryLevel(); Sfx.play('hit'); }
+      else if (hit(CLEAR_BTN.retry)) { retryStoryLevel(); Sfx.play('hit'); }
       return;
     }
     if (G.state === 'settings') {
@@ -3844,22 +4134,29 @@
       updateGrenades(dt);
       for (const e of W.enemies) updateEnemy(e, dt);
       updatePickups(dt);
-      // 波次清场判定：所有敌人都死了 → 进入 30 秒整备时间，可跳过
+      // 清场判定
       if (!W.cleared) {
         let alive = 0;
         for (const e of W.enemies) if (e.alive) alive++;
         if (alive === 0) {
           W.cleared = true;
-          G.intermission = INTERMISSION_TIME;
-          G.centerText = '第 ' + G.wave + ' 波清空';
-          G.centerColor = '#a8f0b8';
-          G.centerTimer = 1.6;
-          // 第 5 波清完 → 武器升级站解锁（只解锁一次）
-          if (G.wave >= UP_UNLOCK_WAVE && !G.upgUnlocked) {
-            G.upgUnlocked = true;
-            G.toast = '武器升级站已开放（按 E）';
-            G.toastTimer = 2.6;
+          if (G.mode === 'story') {
+            // 剧情模式：清空即过关，进评分结算（无整备）
+            G.state = 'storyclear';
+            G.storyClearT = 0;
             Sfx.play('clear');
+          } else {
+            G.intermission = INTERMISSION_TIME;
+            G.centerText = '第 ' + G.wave + ' 波清空';
+            G.centerColor = '#a8f0b8';
+            G.centerTimer = 1.6;
+            // 第 5 波清完 → 武器升级站解锁（只解锁一次）
+            if (G.wave >= UP_UNLOCK_WAVE && !G.upgUnlocked) {
+              G.upgUnlocked = true;
+              G.toast = '武器升级站已开放（按 E）';
+              G.toastTimer = 2.6;
+              Sfx.play('clear');
+            }
           }
         }
       } else if (G.intermission > 0) {
@@ -3876,17 +4173,26 @@
         G.deadTimer = 0;
         G.timeScale = 0.35;
         G.slowTimer = 0.8;
-        G.centerText = '你死了\n撑到第 ' + G.wave + ' 波';
-        G.centerColor = '#ff7a7a';
+        if (G.mode === 'story') {
+          G.centerText = '你死了\n' + (STORY_LEVELS[G.storyLevel] ? STORY_LEVELS[G.storyLevel].title : '');
+          G.centerColor = '#ff5f8a';
+        } else {
+          G.centerText = '你死了\n撑到第 ' + G.wave + ' 波';
+          G.centerColor = '#ff7a7a';
+        }
         G.centerTimer = 0;
         Sfx.play('die');
       }
     } else if (G.state === 'dead') {
       G.deadTimer += dt;
-      // 没有手动重开了：躺 3 秒自动开下一局。
-      // 重开不再走 30 秒准备期 —— 那是给"第一次开局、要熟悉地图"用的，
-      // 而且重开时身上没钱，准备期也没东西可买。
-      if (G.deadTimer >= 3.2) startGame({ prep: false });
+      if (G.deadTimer >= 3.2) {
+        // 剧情模式死亡：重开当前关；挑战模式：重开整局
+        if (G.mode === 'story') startGame({ mode: 'story', prep: false });
+        else startGame({ prep: false });
+      }
+    } else if (G.state === 'storyclear') {
+      // 评分结算：等玩家点击/按键进入下一关或重开
+      G.storyClearT += dt;
     }
     FX.update(dt);
     // 冲击波：0.42 秒扩到半径再消失
@@ -4686,13 +4992,15 @@
     ctx.save();
     ctx.textBaseline = 'top';
 
-    // 左上：波次（准备期为 0 波，显示"准备中"）
+    // 左上：模式标签（剧情模式显示"关卡 X/Y"，挑战模式显示波次）
     ctx.font = 'bold 12px "Microsoft YaHei", monospace';
     ctx.textAlign = 'left';
-    const waveLabel = G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中';
+    const waveLabel = G.mode === 'story'
+      ? '关卡 ' + (G.storyLevel + 1) + ' / ' + STORY_LEVELS.length
+      : (G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中');
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillText(waveLabel, 11 + HUD_OFF.wave.x, 11 + HUD_OFF.wave.y);
-    ctx.fillStyle = '#cfc4d4';
+    ctx.fillStyle = G.mode === 'story' ? '#ff8fb8' : '#cfc4d4';
     ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
     // 右上：现金（击杀所得，商店货币）
@@ -5452,53 +5760,150 @@
 
   // 标题页按钮的命中区域（逻辑坐标，供 drawTitle 与 onPointerDown 共用）
   const TITLE_BTN = {
-    start: { x: VIEW_W / 2 - 80, y: 176, w: 160, h: 40 },
-    settings: { x: VIEW_W / 2 - 80, y: 226, w: 160, h: 40 }
+    story: { x: VIEW_W / 2 - 90, y: 168, w: 180, h: 40 },
+    challenge: { x: VIEW_W / 2 - 90, y: 216, w: 180, h: 40 },
+    settings: { x: VIEW_W / 2 - 90, y: 264, w: 180, h: 40 }
+  };
+
+  // 迈阿密霓虹配色（Hotline Miami 风格）
+  const MIAMI = {
+    bg: '#0c0a14', bg2: '#120d22',
+    pink: '#ff2d8a', pinkHot: '#ff5fa8',
+    purple: '#8b2df0', cyan: '#19e6e6', cyanHot: '#7cf2f2',
+    yellow: '#ffd23e', white: '#f5e9ff', dim: '#6f5a8a'
   };
 
   function drawTitle() {
     ctx.save();
-    ctx.fillStyle = 'rgba(8,6,10,0.82)';
+    // 迈阿密霓虹背景：深紫底 + 两道斜向渐变光带 + 扫描线
+    const bg = ctx.createLinearGradient(0, 0, VIEW_W, VIEW_H);
+    bg.addColorStop(0, '#1a0b2e');
+    bg.addColorStop(0.5, '#0c0a14');
+    bg.addColorStop(1, '#240a33');
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    // 斜向霓虹光带
+    ctx.save();
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = MIAMI.pink;
+    ctx.beginPath();
+    ctx.moveTo(-40, VIEW_H + 40); ctx.lineTo(VIEW_W * 0.55, -40); ctx.lineTo(VIEW_W * 0.72, -40); ctx.lineTo(VIEW_W * 0.15, VIEW_H + 40);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = MIAMI.cyan;
+    ctx.beginPath();
+    ctx.moveTo(VIEW_W * 0.35, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 8); ctx.lineTo(VIEW_W * 0.55, VIEW_H + 8);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 扫描线
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#000';
+    for (let y = 0; y < VIEW_H; y += 3) ctx.fillRect(0, y, VIEW_W, 1);
+    ctx.globalAlpha = 1;
+
     ctx.textAlign = 'center';
-    ctx.font = 'bold 34px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#e53935';
-    ctx.fillText('HOTLINE 2.5D', VIEW_W / 2, 110);
-    // 两个按钮：开始游戏 / 设置
-    drawMenuButton(TITLE_BTN.start, '开始游戏', '#e53935');
-    drawMenuButton(TITLE_BTN.settings, '设置', '#5aa7e0');
-    // 只留一行最必要的：其余键位靠 HUD 和手感学，不铺教程
-    ctx.fillStyle = '#6f6678';
+    // 主标题：霓虹像素感（双层发光）
+    ctx.font = 'bold 46px Consolas, "Microsoft YaHei", monospace';
+    ctx.fillStyle = 'rgba(255,45,138,0.35)';
+    ctx.fillText('HOTLINE', VIEW_W / 2 + 3, 93);
+    ctx.fillStyle = MIAMI.pink;
+    ctx.fillText('HOTLINE', VIEW_W / 2, 90);
+    ctx.font = 'bold 16px Consolas, "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.cyan;
+    ctx.fillText('2 . 5 D', VIEW_W / 2, 112);
+
+    // 三个按钮：剧情模式 / 挑战模式 / 设置
+    drawMenuButton(TITLE_BTN.story, '剧情模式', MIAMI.pink);
+    drawMenuButton(TITLE_BTN.challenge, '挑战模式', MIAMI.cyan);
+    drawMenuButton(TITLE_BTN.settings, '设置', MIAMI.purple);
+
+    // 只留一行最必要的键位提示
+    ctx.fillStyle = MIAMI.dim;
     ctx.font = '11px "Microsoft YaHei", monospace';
     ctx.fillText(inputMode === 'touch'
       ? '左摇杆移动 · 右摇杆瞄准 · 瞄准键抬枪 · 交互键交互'
-      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 300);
+      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 326);
     ctx.restore();
   }
 
-  /** 绘制一个菜单按钮（圆角描边 + 文字），hover 高亮。 */
+  /** 绘制一个菜单按钮（霓虹描边 + 文字），hover 发光高亮。 */
   function drawMenuButton(b, label, color) {
     const hover = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    // 底板
-    ctx.fillStyle = hover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-    ctx.strokeStyle = hover ? color : 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1.5;
+    // 底板：hover 时亮色填充，否则半透明深底
+    ctx.fillStyle = hover ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.42)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = hover ? 2.5 : 1.5;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = hover ? 18 : 6;
     if (ctx.roundRect) {
       ctx.beginPath();
-      ctx.roundRect(b.x, b.y, b.w, b.h, 6);
+      ctx.roundRect(b.x, b.y, b.w, b.h, 4);
     } else {
       ctx.beginPath();
       ctx.rect(b.x, b.y, b.w, b.h);
     }
     ctx.fill();
     ctx.stroke();
+    ctx.shadowBlur = 0;
     // 文字
     ctx.font = 'bold 16px "Microsoft YaHei", monospace';
-    ctx.fillStyle = hover ? '#ffffff' : '#cfc4d4';
+    ctx.fillStyle = hover ? '#ffffff' : color;
     ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // 剧情结算按钮区域
+  const CLEAR_BTN = {
+    next: { x: VIEW_W / 2 - 90, y: 250, w: 180, h: 38 },
+    retry: { x: VIEW_W / 2 - 90, y: 294, w: 180, h: 38 }
+  };
+
+  /** 剧情模式通关结算（迈阿密式评分卡片）。 */
+  function drawStoryClear() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,6,14,0.88)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.textAlign = 'center';
+
+    const grade = storyGrade();
+    const last = G.storyLevel >= STORY_LEVELS.length - 1;
+
+    // 关卡名
+    ctx.font = 'bold 18px Consolas, "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.cyan;
+    ctx.fillText(STORY_LEVELS[G.storyLevel].title, VIEW_W / 2, 60);
+    // "清空" 标语
+    ctx.font = 'bold 30px Consolas, "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.pink;
+    ctx.fillText('STAGE CLEAR', VIEW_W / 2, 102);
+
+    // 评分大字（迈阿密式霓虹发光）
+    const gradeColor = grade === 'A+' ? '#ffd23e' : (grade.startsWith('A') ? MIAMI.cyan : (grade === 'B' ? '#7cf2a8' : '#c98aff'));
+    ctx.font = 'bold 56px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText(grade, VIEW_W / 2 + 2, 172);
+    ctx.fillStyle = gradeColor;
+    ctx.shadowColor = gradeColor;
+    ctx.shadowBlur = 22;
+    ctx.fillText(grade, VIEW_W / 2, 170);
+    ctx.shadowBlur = 0;
+
+    // 统计明细
+    ctx.font = '13px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#cbb9dd';
+    ctx.fillText('击杀 ' + (G.storyKills || 0) + ' · 最佳连击 x' + (G.storyComboBest || 0) +
+      ' · 受击 ' + (G.storyHits || 0), VIEW_W / 2, 200);
+
+    // 按钮
+    if (last) {
+      drawMenuButton(CLEAR_BTN.next, '通关！返回标题', MIAMI.yellow);
+    } else {
+      drawMenuButton(CLEAR_BTN.next, '下一关', MIAMI.cyan);
+    }
+    drawMenuButton(CLEAR_BTN.retry, '重玩本关', MIAMI.purple);
+
+    ctx.restore();
   }
 
   // 设置页按钮区域
@@ -5748,6 +6153,7 @@
     if (G.state === 'settings') { drawSettings(); return; }
     if (G.state === 'layout') { drawLayout(); return; }
     if (G.state === 'title' || !W) { drawTitle(); return; }
+    if (G.state === 'storyclear') { drawStoryClear(); return; }
 
     // 相机 + 抖动
     let sx = 0, sy = 0;
@@ -6003,6 +6409,14 @@
         return;
       }
     }
+    // 剧情结算：回车/空格进入下一关（或重开）
+    if (G.state === 'storyclear') {
+      if (pressed['enter'] || pressed[' ']) {
+        nextStoryLevel();
+        pressed = Object.create(null);
+        return;
+      }
+    }
     // 补给点商店操作：上下选，回车/左键买，E 或 ESC 关闭
     if (G.state === 'shop') {
       // 老虎机是商店里的一个子界面：回车再摇一次，ESC / E 退回商品列表
@@ -6147,7 +6561,14 @@
 
     G = {
       state: 'title',
+      mode: 'challenge',    // 'challenge'（波次生存）| 'story'（剧情逐关）
       levelIndex: 0,
+      storyLevel: 0,
+      storyKills: 0,
+      storyComboBest: 0,
+      storyHits: 0,
+      storyClearT: 0,
+      storyStartT: 0,
       score: 0,
       cash: 0,
       wave: 0,
@@ -6191,8 +6612,19 @@
       // 鼠标按下时记录单击（用于半自动武器）
       canvas.addEventListener('mousedown', (e) => { if (e.button === 0) G.fireTap = true; });
       // ?autostart=1 直接进第一波，方便截图和自动化测试；?prep=1 保留开局 30 秒准备期
-      if (/[?&]autostart=1/.test(location.search)) {
+      // ?story=1 直接进剧情模式第一关（截图/调试用）
+      if (/[?&]story=1/.test(location.search)) {
+        startGame({ mode: 'story', prep: false });
+      } else if (/[?&]autostart=1/.test(location.search)) {
         startGame({ prep: /[?&]prep=1/.test(location.search) });
+      }
+      // ?storyclear=1 直接进入剧情结算界面（截图核对评分卡片用）
+      if (/[?&]storyclear=1/.test(location.search) && G.mode === 'story') {
+        G.storyKills = G.storyKills || 3;
+        G.storyComboBest = G.storyComboBest || 4;
+        G.storyHits = 1;
+        G.state = 'storyclear';
+        G.storyClearT = 0;
       }
       // ?settings=1 直接进设置页，用于截图核对（调试用）
       if (/[?&]settings=1/.test(location.search)) {
@@ -6474,6 +6906,11 @@
     ignite(b) { return igniteBarrel(b); },
     /** 直接对敌人造成伤害（测试用） */
     hitEnemy(e, dmg) { return damageEnemy(e, dmg || 999, 0, true, false); },
+    /** 剧情模式：评分 / 下一关 / 重开（测试用） */
+    storyGrade,
+    nextStoryLevel,
+    retryStoryLevel,
+    get storyLevels() { return STORY_LEVELS; },
     get barrels() { return W ? W.barrels : []; },
     get grenades() { return G ? G.grenades : []; },
     /** 数字键直达手持物：'main' | 'side' | 'medkit' | 'plate' */
