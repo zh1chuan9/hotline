@@ -292,7 +292,7 @@
         '#........##........##........#',
         '####D#########D#########D#####',
         '#............................#',
-        '#P............S..............#',
+        '#P............S.............E#',
         '#............................#',
         '#............................#',
         '####D#########D#########D#####',
@@ -323,7 +323,7 @@
         '#........##........##........#',
         '####D#########D#########D#####',
         '#............................#',
-        '#P.....o......S........o.....#',
+        '#P.....o......S........o....E#',
         '#............................#',
         '#............................#',
         '####D#########D#########D#####',
@@ -354,7 +354,7 @@
         '#........##........##........#',
         '####D#########D#########D#####',
         '#............................#',
-        '#P.....o......S........o.....#',
+        '#P.....o......S........o....E#',
         '#............o...............#',
         '#............................#',
         '####D#########D#########D#####',
@@ -385,7 +385,7 @@
         '#........##........##........#',
         '####D#########D#########D#####',
         '#............................#',
-        '#P.....o......S........o.....#',
+        '#P.....o......S........o....E#',
         '#............o...o...........#',
         '#............................#',
         '####D#########D#########D#####',
@@ -1337,6 +1337,7 @@
         else if (ch === '2') world.pickups.push(makePickup('shotgun', cx, cy));
         else if (ch === 'B') world.pickups.push(makePickup('bat', cx, cy));
         else if (ch === 'K') world.pickups.push(makePickup('knife', cx, cy));
+        else if (ch === 'E') world.exit = { x: cx, y: cy };
       }
     }
     // 默认补给点：取第一个 S，没有则用出生点附近
@@ -3962,6 +3963,7 @@
     if (G.state === 'storyclear') {
       if (hit(CLEAR_BTN.next)) { nextStoryLevel(); Sfx.play('hit'); }
       else if (hit(CLEAR_BTN.retry)) { retryStoryLevel(); Sfx.play('hit'); }
+      else if (hit(CLEAR_BTN.menu)) { goTitle(); Sfx.play('hit'); }
       return;
     }
     if (G.state === 'settings') {
@@ -4183,9 +4185,10 @@
         if (alive === 0) {
           W.cleared = true;
           if (G.mode === 'story') {
-            // 剧情模式：清空即过关，进评分结算（无整备）
-            G.state = 'storyclear';
-            G.storyClearT = 0;
+            // 剧情模式：清空敌人后激活终点，走到终点才过关结算
+            G.centerText = '已清场 · 前往出口';
+            G.centerColor = MIAMI.white;
+            G.centerTimer = 2.0;
             Sfx.play('clear');
           } else {
             G.intermission = INTERMISSION_TIME;
@@ -4208,6 +4211,15 @@
           // 双倍分 buff 逐波递减
           if (G.doubleScore > 0) G.doubleScore--;
           startWave();
+        }
+      }
+      // 剧情模式：清场后走到终点才过关结算
+      if (G.mode === 'story' && W.cleared && W.exit) {
+        const dx = G.player.x - W.exit.x, dy = G.player.y - W.exit.y;
+        if (dx * dx + dy * dy < TILE * TILE * 1.5) {
+          G.state = 'storyclear';
+          G.storyClearT = 0;
+          Sfx.play('clear');
         }
       }
       if (!G.player.alive) {
@@ -4467,6 +4479,34 @@
       }
       ctx.restore();
     }
+  }
+
+  // 剧情模式终点：清场前灰暗未激活，清场后红色脉动，走进即过关
+  function drawExit() {
+    if (!W.exit) return;
+    const t = performance.now() / 1000;
+    const active = (G.mode === 'story' && W.cleared);
+    ctx.save();
+    ctx.translate(W.exit.x, W.exit.y);
+    // 地面光圈
+    ctx.globalAlpha = active ? 0.32 + 0.2 * Math.sin(t * 3) : 0.22;
+    ctx.fillStyle = active ? MIAMI.red : '#6a6a72';
+    ctx.beginPath();
+    ctx.arc(0, 0, 14 + Math.sin(t * 2) * 1.5, 0, 6.283);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // 出口门形图标：一个向上的箭头 / 门框
+    ctx.strokeStyle = active ? MIAMI.white : '#9a9aa2';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-8, 8); ctx.lineTo(-8, -4); ctx.lineTo(0, -10); ctx.lineTo(8, -4); ctx.lineTo(8, 8);
+    ctx.stroke();
+    // 文字：清场后红色提示「出口」，清场前灰色「出口」+ 提示先清场
+    ctx.font = 'bold 9px "Microsoft YaHei", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = active ? MIAMI.white : '#9a9aa2';
+    ctx.fillText(active ? '出口' : '出口 · 清场后开放', 0, 22);
+    ctx.restore();
   }
 
   /** 红外激光：手里这把枪装了激光（laser > 0）就照一条红线，从枪口到准星。 */
@@ -5902,8 +5942,9 @@
 
   // 剧情结算按钮区域
   const CLEAR_BTN = {
-    next: { x: VIEW_W / 2 - 90, y: 250, w: 180, h: 38 },
-    retry: { x: VIEW_W / 2 - 90, y: 294, w: 180, h: 38 }
+    next: { x: VIEW_W / 2 - 90, y: 238, w: 180, h: 36 },
+    retry: { x: VIEW_W / 2 - 90, y: 280, w: 180, h: 36 },
+    menu: { x: VIEW_W / 2 - 90, y: 322, w: 180, h: 36 }
   };
 
   /** 剧情模式通关结算（红灰白黑评分卡片）。 */
@@ -5949,6 +5990,7 @@
       drawMenuButton(CLEAR_BTN.next, '下一关', MIAMI.white);
     }
     drawMenuButton(CLEAR_BTN.retry, '重玩本关', MIAMI.gray);
+    drawMenuButton(CLEAR_BTN.menu, '返回主菜单', MIAMI.gray);
 
     ctx.restore();
   }
@@ -6238,6 +6280,7 @@
     drawDoors();
     drawSupplies();
     drawStations();
+    drawExit();
 
     // 先画尸体（最底层活物）
     for (const e of W.enemies) {

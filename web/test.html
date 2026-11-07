@@ -1278,11 +1278,25 @@
       check('破门后门不再挡路（_solidDirty 置位）', wSt._solidDirty === true);
     }
 
-    // 清空敌人 → 进入评分结算状态（storyclear）
+    // 终点机制：剧情关卡有出口、清场后走到终点才结算
+    check('剧情第一关有出口（exit=' + (wSt.exit ? wSt.exit.x + ',' + wSt.exit.y : 'null') + '）', !!wSt.exit);
+
+    // 清空敌人 → 不应立即结算，而是进入「清场等出口」状态
     for (const e of wSt.enemies) H.hitEnemy(e, 9999);
-    // hitEnemy 后敌人可能已死，但清场判定在 update 里跑；这里直接模拟清场后的状态检查
+    H.step(1);  // 推进一帧触发清场判定
     check('剧情清空后敌人全灭', wSt.enemies.every(e => !e.alive));
-    // 手动触发一次 update 以推进清场判定（H 无直接 update 导出，用 storyGrade 验证评分）
+    check('清空后已清场标记（cleared=' + wSt.cleared + '）', wSt.cleared === true);
+    check('清空后未立即结算（state=' + gSt.state + '，应仍为 play）', gSt.state === 'play');
+
+    // 走到终点 → 进入评分结算
+    if (wSt.exit) {
+      gSt.player.x = wSt.exit.x;
+      gSt.player.y = wSt.exit.y;
+      H.step(1);
+      check('走到终点后结算（state=' + gSt.state + '，应为 storyclear）', gSt.state === 'storyclear');
+    }
+
+    // 评分函数可用
     const grade = H.storyGrade ? H.storyGrade() : null;
     check('剧情评分函数可用（grade=' + grade + '）', grade !== null);
 
