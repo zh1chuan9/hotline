@@ -1794,11 +1794,22 @@
     if (!W) return;
     for (const e of W.enemies) {
       if (!e.alive) continue;
-      if (dist2(x, y, e.x, e.y) <= radius * radius) {
-        if (e.state !== 'chase') {
+      const d = Math.hypot(x - e.x, y - e.y);
+      if (d <= radius) {
+        if (e.state === 'chase') continue;
+        // 警觉系统：噪声越近，反应越强。近距离（< 半径 1/3）直接惊动追击，
+        // 中远距离则先怀疑、走向声源查看（investigate），途中看到玩家才转追击。
+        const near = d <= radius * 0.32;
+        if (near) {
+          e.state = 'chase';
+          e.lastSeen.x = x; e.lastSeen.y = y;
+          e.seeTimer = 0;
+          FX.addText(e.x, e.y - 14, '!', '#ff5a5a');
+        } else if (e.state !== 'investigate') {
           e.state = 'investigate';
           e.target.x = x; e.target.y = y;
-          e.investigateTimer = 2.6;
+          e.investigateTimer = 3.2;
+          FX.addText(e.x, e.y - 14, '?', '#ffd76e');
         }
       }
     }
@@ -1952,6 +1963,8 @@
     FX.addParticles(x, y, 10, '#4a4038', 95, 0.85);
     BLASTS.push({ x, y, t: 0, r: radius });
     Sfx.play('boom');
+    // 爆炸是最响的动静，传得最远，惊动一大片敌人
+    emitNoise(x, y, 700);
 
     // 敌人：范围内按距离衰减，边缘只剩三成
     for (const e of W.enemies) {
@@ -3873,11 +3886,12 @@
       const K = ENEMY_KIND[en.kind];
       e.maxHp = e.hp = K.hp;
       e.speed = K.speed;
-      e.hunt = true;          // 剧情敌人一开始就知道玩家方位，主动猎杀
-      e.state = 'chase';
-      e.lastSeen.x = G.player.x;
-      e.lastSeen.y = G.player.y;
-      e.facing = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+      // 警觉系统：敌人开局处于放松站岗状态，不主动猎杀。只有当
+      // ①玩家进入其视线范围，或 ②玩家制造动静（开枪/破门/爆炸等）才会警觉。
+      // 初始朝向随机，背对/面对门都有可能，玩家破门突入能拿到"先手"或撞个正着。
+      e.state = 'idle';
+      e.facing = Math.random() * Math.PI * 2;
+      e.thinkTimer = 0.6 + Math.random() * 2.0;
       W.enemies.push(e);
     }
     W.cleared = false;
@@ -4891,6 +4905,21 @@
       dot(ex + Math.cos(ang) * 0.3, ey + Math.sin(ang) * 0.3, 1.05, '#1a141e');
       dot(ex - Math.cos(ang) * 0.7, ey - Math.sin(ang) * 0.7 - 0.4, 0.36, '#fcfaf4');
     }
+
+    // 警觉标记：敌人头顶常驻图标，一眼看出状态。
+    //   ?（黄）= 听到动静、正在怀疑/查看   !（红）= 已发现玩家、追击中
+    if (!isPlayer && a.alive && a.state === 'investigate') {
+      ctx.font = 'bold 11px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd76e';
+      ctx.fillText('?', 0, -17);
+    } else if (!isPlayer && a.alive && a.state === 'chase') {
+      ctx.font = 'bold 11px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5a5a';
+      ctx.fillText('!', 0, -17);
+    }
+
     ctx.restore();
   }
 

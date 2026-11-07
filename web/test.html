@@ -1267,6 +1267,13 @@
     check('剧情敌人全部 alive', wSt.enemies.every(e => e.alive));
     check('剧情模式 HUD 关卡进度（storyLevel=' + gSt.storyLevel + '）', gSt.storyLevel === 0);
 
+    // ============ 30.1 警觉系统 ============
+    // 敌人开局应是放松状态（idle/patrol），而不是一开始就追杀玩家
+    const storyEnemies = wSt.enemies;
+    check('剧情敌人开局未警觉（无 chase 状态）',
+      storyEnemies.every(e => e.state === 'idle' || e.state === 'patrol' || e.state === 'investigate'));
+    check('剧情敌人开局未设 hunt 标记', storyEnemies.every(e => !e.hunt));
+
     // 门机制：房间布局有门、门初始关闭、破门后打开
     const doors = wSt.doors || [];
     check('剧情第一关有门（' + doors.length + ' 扇）', doors.length >= 3);
@@ -1276,6 +1283,20 @@
       H.breakDoor(d0);
       check('破门后门打开', d0.open === true);
       check('破门后门不再挡路（_solidDirty 置位）', wSt._solidDirty === true);
+    }
+
+    // 制造近距离噪声 → 直接惊动追击（chase）
+    if (storyEnemies.length) {
+      const e0 = storyEnemies[0];
+      H.noise(e0.x, e0.y, 200);   // 声源就在敌人脚下，属近距离强噪声
+      check('近距离噪声直接惊动敌人（state=' + e0.state + '，应 chase）', e0.state === 'chase');
+    }
+    // 远距离噪声 → 只进入怀疑（investigate）
+    if (storyEnemies.length > 1) {
+      const e1 = storyEnemies[1];
+      e1.state = 'idle';                       // 重置回放松
+      H.noise(e1.x + 300, e1.y, 400);          // 声源在远处（300px，超出 0.32*400=128 的近距阈值）
+      check('远距离噪声让敌人怀疑（state=' + e1.state + '，应 investigate）', e1.state === 'investigate');
     }
 
     // 终点机制：剧情关卡有出口、清场后走到终点才结算
