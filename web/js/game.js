@@ -6743,8 +6743,12 @@
     loadImages().then(() => {
       const bootEl = document.getElementById('boot');
       if (bootEl) bootEl.remove();
-      // 鼠标按下时记录单击（用于半自动武器）
-      canvas.addEventListener('mousedown', (e) => { if (e.button === 0) G.fireTap = true; });
+      // 鼠标按下时记录单击（用于半自动武器）。只在战斗态设置，
+      // 否则标题/结算页点「开始游戏/下一关」按钮的 mousedown 会残留 fireTap，
+      // 进战斗后第一帧被消费而误开一枪。
+      canvas.addEventListener('mousedown', (e) => {
+        if (e.button === 0 && G.state === 'play') G.fireTap = true;
+      });
       // ?autostart=1 直接进第一波，方便截图和自动化测试；?prep=1 保留开局 30 秒准备期
       // ?story=1 直接进剧情模式第一关（截图/调试用）
       if (/[?&]story=1/.test(location.search)) {
