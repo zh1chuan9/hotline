@@ -1267,6 +1267,17 @@
     check('剧情敌人全部 alive', wSt.enemies.every(e => e.alive));
     check('剧情模式 HUD 关卡进度（storyLevel=' + gSt.storyLevel + '）', gSt.storyLevel === 0);
 
+    // 门机制：房间布局有门、门初始关闭、破门后打开
+    const doors = wSt.doors || [];
+    check('剧情第一关有门（' + doors.length + ' 扇）', doors.length >= 4);
+    check('门初始全部关闭', doors.every(d => !d.open));
+    if (doors.length) {
+      const d0 = doors[0];
+      H.breakDoor(d0);
+      check('破门后门打开', d0.open === true);
+      check('破门后门不再挡路（_solidDirty 置位）', wSt._solidDirty === true);
+    }
+
     // 清空敌人 → 进入评分结算状态（storyclear）
     for (const e of wSt.enemies) H.hitEnemy(e, 9999);
     // hitEnemy 后敌人可能已死，但清场判定在 update 里跑；这里直接模拟清场后的状态检查

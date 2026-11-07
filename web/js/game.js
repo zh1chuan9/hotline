@@ -42,11 +42,11 @@
   // 护甲 4 个等级：每级决定格数(slots) + 每格护甲值(per) + 外观颜色 + 满甲值。
   // 满甲值 50 → 150 → 150 → 150 递增，格数 1→3→2→1，越高级甲越"整块"、颜色越金。
   const ARMOR_TIERS = [
-    { slots: 1, per: 50,  name: '基础甲', color: '#5aa7e0', desc: '单格 50' },
-    { slots: 2, per: 50,  name: '进阶甲', color: '#5aa7e0', desc: '两格 · 每格 50' },
-    { slots: 3, per: 50,  name: '强化甲', color: '#5aa7e0', desc: '三格 · 每格 50' },
-    { slots: 2, per: 75,  name: '精英甲', color: '#b07ae8', desc: '两格紫甲 · 每格 75' },
-    { slots: 1, per: 150, name: '黄金甲', color: '#ffd76e', desc: '金甲 · 单格 150' }
+    { slots: 1, per: 50,  name: '基础甲', color: '#8a8a90', desc: '单格 50' },
+    { slots: 2, per: 50,  name: '进阶甲', color: '#8a8a90', desc: '两格 · 每格 50' },
+    { slots: 3, per: 50,  name: '强化甲', color: '#8a8a90', desc: '三格 · 每格 50' },
+    { slots: 2, per: 75,  name: '精英甲', color: '#c8c8d0', desc: '两格灰甲 · 每格 75' },
+    { slots: 1, per: 150, name: '黄金甲', color: '#f2f2f4', desc: '白甲 · 单格 150' }
   ];
   const ARMOR_UP_PRICE = [400, 600, 900, 1200];   // 护甲升级到 2/3/4/5 级的价格（1 级初始免费）
 
@@ -274,122 +274,137 @@
   const BARREL_DELAY = 0.16;     // 中弹到炸开的引信时间：留一帧让人看见"我打中了"
 
   // ---------------------------------------------------------------- 剧情模式关卡
-  // 参照迈阿密热线：逐关推进，每关一张地图 + 预设敌人，全部清空即过关，打完进下一关。
-  // 每关记录击杀数/连击/受伤，通关后按迈阿密式评分（A+ ~ D）结算。
-  // enemy 布局：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
+  // 参照迈阿密热线：逐关推进，每关一张"多房间 + 门 + 走廊"的地图，玩家从中央走廊逐个
+  // 破门突入房间清场，全部敌人清空即过关。每关记录击杀/连击/受伤，通关按迈阿密式评分结算。
+  // 地图 30×18：上排 3 房 + 中间走廊 + 下排 3 房，共 6 房、6 扇门（D）。门默认关闭，
+  // 玩家靠近/射击破门突入，敌人在房间内。
+  // enemy：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
+  // 房间格坐标：上排 (1-8,1-5) / (11-18,1-5) / (21-28,1-5)，下排 (1-8,12-16) / (11-18,12-16) / (21-28,12-16)。
   const STORY_LEVELS = [
     {
-      title: '序章 · 空屋',
+      title: '序章 · 破门',
       rows: [
         '##############################',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '####D#########D#########D#####',
+        '#............................#',
+        '#P............S..............#',
         '#............................#',
         '#............................#',
-        '#..............o..............#',
-        '#............o...o............#',
-        '#..............o..............#',
-        '#............................#',
-        '#............................#',
-        '#..............P.............#',
-        '#............................#',
-        '#..............o..............#',
-        '#............................#',
-        '#............................#',
-        '#............................#',
-        '#............................#',
+        '####D#########D#########D#####',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#........##........##........#',
         '##############################'
       ],
       enemies: [
-        { kind: 'melee', pos: [6, 3] },
-        { kind: 'melee', pos: [22, 3] },
-        { kind: 'melee', pos: [14, 11] }
+        { kind: 'melee', pos: [4, 3] },
+        { kind: 'melee', pos: [14, 3] },
+        { kind: 'melee', pos: [24, 3] },
+        { kind: 'melee', pos: [4, 14] },
+        { kind: 'melee', pos: [14, 14] },
+        { kind: 'melee', pos: [24, 14] }
       ]
     },
     {
       title: '第二章 · 猎犬',
       rows: [
         '##############################',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#...o....##...o....##...o....#',
+        '#........##........##........#',
+        '#........##........##........#',
+        '####D#########D#########D#####',
         '#............................#',
-        '#....o..............o........#',
-        '#............................#',
-        '#.............o..............#',
-        '#....o........o.........o....#',
-        '#............................#',
-        '#..............P.............#',
-        '#............................#',
-        '#....o........o.........o....#',
-        '#.............o..............#',
-        '#............................#',
-        '#....o..............o........#',
+        '#P.....o......S........o.....#',
         '#............................#',
         '#............................#',
+        '####D#########D#########D#####',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#...o....##...o....##...o....#',
+        '#........##........##........#',
+        '#........##........##........#',
         '##############################'
       ],
       enemies: [
-        { kind: 'melee', pos: [6, 4] },
-        { kind: 'melee', pos: [22, 4] },
+        { kind: 'melee', pos: [5, 3] },
         { kind: 'gun', pos: [14, 2] },
-        { kind: 'melee', pos: [14, 10] },
-        { kind: 'melee', pos: [6, 10] }
+        { kind: 'melee', pos: [24, 3] },
+        { kind: 'gun', pos: [4, 14] },
+        { kind: 'melee', pos: [14, 14] },
+        { kind: 'melee', pos: [24, 14] }
       ]
     },
     {
       title: '第三章 · 破晓',
       rows: [
         '##############################',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#..o.....##...Xo...##..o.....#',
+        '#.....o..##........##........#',
+        '#........##........##........#',
+        '####D#########D#########D#####',
         '#............................#',
-        '#....o..............o........#',
+        '#P.....o......S........o.....#',
+        '#............o...............#',
         '#............................#',
-        '#............................#',
-        '#..........o....o............#',
-        '#............................#',
-        '#..............P.............#',
-        '#............................#',
-        '#..........o....o............#',
-        '#............................#',
-        '#............................#',
-        '#....o..............o........#',
-        '#............................#',
-        '#............................#',
+        '####D#########D#########D#####',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#..o.....##...Xo...##..o.....#',
+        '#........##........##........#',
+        '#........##........##........#',
         '##############################'
       ],
       enemies: [
-        { kind: 'gun', pos: [6, 4] },
-        { kind: 'gun', pos: [22, 4] },
-        { kind: 'melee', pos: [14, 2] },
-        { kind: 'shotgun', pos: [14, 12] },
-        { kind: 'melee', pos: [6, 10] },
-        { kind: 'melee', pos: [22, 10] }
+        { kind: 'gun', pos: [4, 3] },
+        { kind: 'melee', pos: [14, 3] },
+        { kind: 'gun', pos: [24, 3] },
+        { kind: 'melee', pos: [4, 14] },
+        { kind: 'shotgun', pos: [14, 14] },
+        { kind: 'melee', pos: [24, 14] }
       ]
     },
     {
       title: '终章 · 炽线',
       rows: [
         '##############################',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#...o....##...Xo...##...o....#',
+        '#.....o..##........##........#',
+        '#........##........##........#',
+        '####D#########D#########D#####',
         '#............................#',
-        '#....o..............o........#',
+        '#P.....o......S........o.....#',
+        '#............o...o...........#',
         '#............................#',
-        '#.............o..............#',
-        '#............................#',
-        '#............................#',
-        '#..............P.............#',
-        '#............................#',
-        '#............................#',
-        '#.............o..............#',
-        '#............................#',
-        '#....o..............o........#',
-        '#............................#',
-        '#............................#',
+        '####D#########D#########D#####',
+        '#........##........##........#',
+        '#........##........##........#',
+        '#...o....##...Xo...##...o....#',
+        '#........##........##........#',
+        '#........##........##........#',
         '##############################'
       ],
       enemies: [
-        { kind: 'shotgun', pos: [6, 4] },
-        { kind: 'shotgun', pos: [22, 4] },
+        { kind: 'shotgun', pos: [4, 3] },
         { kind: 'gun', pos: [14, 2] },
-        { kind: 'gun', pos: [14, 12] },
-        { kind: 'melee', pos: [6, 10] },
-        { kind: 'melee', pos: [22, 10] },
-        { kind: 'gun', pos: [6, 12] },
-        { kind: 'gun', pos: [22, 12] }
+        { kind: 'shotgun', pos: [24, 3] },
+        { kind: 'gun', pos: [4, 14] },
+        { kind: 'shotgun', pos: [14, 14] },
+        { kind: 'gun', pos: [24, 14] },
+        { kind: 'melee', pos: [14, 8] },
+        { kind: 'melee', pos: [7, 8] }
       ]
     }
   ];
@@ -695,11 +710,11 @@
   /** 编辑界面绘制。 */
   function drawLayout() {
     ctx.save();
-    ctx.fillStyle = 'rgba(8,6,10,0.92)';
+    ctx.fillStyle = 'rgba(6,6,8,0.92)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#e8e0f0';
+    ctx.fillStyle = '#f2f2f4';
     ctx.fillText(layoutMode === 'ui' ? '自定义 HUD 位置' : '自定义按键位置', VIEW_W / 2, 40);
     ctx.font = '12px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
@@ -711,11 +726,11 @@
       const b = LAYOUT_BTN.toggle;
       const hov = hit(b);
       ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = hov ? '#5aa7e0' : 'rgba(255,255,255,0.25)';
+      ctx.strokeStyle = hov ? '#c8c8d0' : 'rgba(255,255,255,0.25)';
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
       else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle = hov ? '#fff' : '#cfc4d4';
+      ctx.fillStyle = hov ? '#fff' : '#c8c8d0';
       ctx.font = 'bold 14px "Microsoft YaHei", monospace';
       ctx.fillText('当前：' + (layoutMode === 'ui' ? '调节 UI（点击切换按键）' : '调节按键（点击切换 UI）'), b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
@@ -727,7 +742,7 @@
         const cx = it.x + HUD_OFF[it.id].x, cy = it.y + HUD_OFF[it.id].y;
         const dragging = layoutDrag === 'hud:' + it.id;
         ctx.globalAlpha = dragging ? 0.95 : 0.55;
-        ctx.fillStyle = dragging ? '#ffd76e' : '#8ab4e8';
+        ctx.fillStyle = dragging ? '#e02929' : '#c8c8d0';
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2);
@@ -741,7 +756,7 @@
       // ---- 按键模式：绘制每个可拖控件（高亮正在拖拽的那个）----
       for (const it of LAYOUT_ITEMS) {
         const dragging = layoutDrag === it.id;
-        const col = dragging ? '#ffd76e' : (it.kind === 'stick' ? '#dfe6f0' : '#8ab4e8');
+        const col = dragging ? '#e02929' : (it.kind === 'stick' ? '#c8c8d0' : '#c8c8d0');
         ctx.globalAlpha = dragging ? 0.95 : 0.55;
         ctx.fillStyle = col;
         ctx.strokeStyle = '#ffffff';
@@ -768,11 +783,11 @@
     for (const [key, b] of [['reset', LAYOUT_BTN.reset], ['done', LAYOUT_BTN.done]]) {
       const hov = hit(b);
       ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = hov ? (key === 'done' ? '#5aa7e0' : '#e5a13a') : 'rgba(255,255,255,0.25)';
+      ctx.strokeStyle = hov ? (key === 'done' ? '#c8c8d0' : '#e02929') : 'rgba(255,255,255,0.25)';
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
       else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle = hov ? '#fff' : '#cfc4d4';
+      ctx.fillStyle = hov ? '#fff' : '#c8c8d0';
       ctx.font = 'bold 15px "Microsoft YaHei", monospace';
       ctx.fillText(key === 'reset' ? '恢复默认' : '完成', b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
@@ -1374,7 +1389,7 @@
     if (!world._solidDirty) return world._solid;
     const out = world.walls.slice();
     for (const d of world.doors) {
-      if (!d.open) out.push({ x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE });
+      if (!d.open) out.push({ x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, door: d });
     }
     world._solid = out;
     world._solidDirty = false;
@@ -1594,6 +1609,23 @@
         Sfx.play('door');
       }
     }
+  }
+
+  /** 玩家射击破门：迈阿密式突入。门瞬间弹开（带一个摆动的开门动画）、飞出木屑、
+   *  并发出噪音惊动门后房间里的敌人——破门后敌人会涌向门口。 */
+  function breakDoor(d, hitPos) {
+    if (!d || d.open) return;
+    d.open = true;
+    d.t = 0;
+    W._solidDirty = true;
+    Sfx.play('door');
+    // 门后敌人被惊动：破门那一瞬间，门后房间里的敌人都知道玩家来了
+    emitNoise(d.x, d.y, 320);
+    // 木屑/碎门粒子
+    FX.addParticles(hitPos.x, hitPos.y, 10, '#a8a4a0', 180, 0.32);
+    FX.addParticles(hitPos.x, hitPos.y, 6, '#c8c8d0', 130, 0.26);
+    // 轻微镜头抖动，强化"破门"的冲击感
+    FX.kick(2.5, 0.12);
   }
 
   // ---------------------------------------------------------------- 特效
@@ -1956,7 +1988,7 @@
           FX.parts.push({
             x: b.x + (Math.random() - 0.5) * 10, y: b.y + (Math.random() - 0.5) * 10,
             vx: (Math.random() - 0.5) * 60, vy: -40 - Math.random() * 60,
-            life: 0.25, max: 0.25, color: '#ffb347', size: 1.3
+            life: 0.25, max: 0.25, color: '#e02929', size: 1.3
           });
         }
         if (b.fuse <= 0) blowBarrel(b);
@@ -2062,14 +2094,15 @@
 
   function castShot(origin, angle, range, shooter) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
-    let best = range, hitActor = null, hitBarrel = null;
+    let best = range, hitActor = null, hitBarrel = null, hitDoor = null;
     const rects = solidRects(W, true);
     for (let i = 0; i < rects.length; i++) {
       const t = rayRect(origin.x, origin.y, dx, dy, rects[i]);
       if (t !== null && t < best) {
         best = t; hitActor = null;
-        // 挡路的如果是油桶，记下来：墙是打不动的，桶是会炸的
+        // 挡路的如果是油桶/门，记下来：墙是打不动的，桶会炸、门会破
         hitBarrel = rects[i].barrel || null;
+        hitDoor = rects[i].door || null;
       }
     }
     const targets = [];
@@ -2116,15 +2149,22 @@
       }
       FX.hitstop = headshot ? 0.08 : 0.05;
       FX.kick(headshot ? 5.5 : 3.5, 0.14);
+    } else if (hitDoor) {
+      // 打在门上：玩家射击可破门突入（迈阿密式），敌人不主动破门（他们撞门会自动推开）
+      if (shooter === G.player) {
+        breakDoor(hitDoor, end);
+      } else {
+        FX.addParticles(end.x, end.y, 4, '#8a8a90', 90, 0.18);
+      }
     } else if (hitBarrel) {
       // 打在桶上：先扣耐久，打烂了走引信（不立刻炸，让玩家看见"我打中了"）
       const bdmg = shooter && shooter.weapon ? (WEAPONS[shooter.weapon].dmg || 30) : 25;
       hitBarrel.hp -= bdmg;
       hitBarrel.shake = 1;
-      FX.addParticles(end.x, end.y, 5, '#d8c070', 130, 0.22);
+      FX.addParticles(end.x, end.y, 5, '#c8c8d0', 130, 0.22);
       if (hitBarrel.hp <= 0) igniteBarrel(hitBarrel);
     } else {
-      FX.addParticles(end.x, end.y, 4, '#ffe6a8', 90, 0.18);
+      FX.addParticles(end.x, end.y, 4, '#ff5a5a', 90, 0.18);
       const dctx = W.decals.getContext('2d');
       dctx.fillStyle = 'rgba(20,16,20,0.75)';
       dctx.beginPath();
@@ -2258,7 +2298,7 @@
     if (headshot) {
       // 爆头：额外一团血雾 + 字
       FX.addBlood(e.x, e.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) }, 12, 1.15);
-      FX.addText(e.x, e.y - 18, '爆头', '#ff9a5a');
+      FX.addText(e.x, e.y - 18, '爆头', '#e02929');
     }
     if (e.hp <= 0) {
       e.alive = false;
@@ -2309,14 +2349,14 @@
       G.cash += gained;   // 积分即货币
       FX.addText(e.x, e.y - 12,
         (headshot ? '爆头 ' : '') + '+' + gained + (G.combo > 1 ? ' x' + G.combo : ''),
-        headshot ? '#ff9a5a' : (G.combo > 1 ? '#ffd76e' : '#ffffff'));
+        headshot ? '#e02929' : (G.combo > 1 ? '#e02929' : '#ffffff'));
       // 概率掉落：血包 / 子弹
       rollDrop(e);
       // 精英/BOSS：直接给稀有资源，掉在地上反而容易漏捡
       if (e.elite || e.boss) {
         killer.grenades = Math.min(GRENADE_MAX, killer.grenades + 1);
         killer.armorPlates = Math.min(ARMOR_PLATE_CAP, killer.armorPlates + 1);
-        FX.addText(e.x, e.y - 26, (e.boss ? 'BOSS' : '精英') + ' · +1 手雷 +1 护甲板', '#ffd76e');
+        FX.addText(e.x, e.y - 26, (e.boss ? 'BOSS' : '精英') + ' · +1 手雷 +1 护甲板', '#e02929');
         G.toast = (e.boss ? 'BOSS' : '精英') + '击杀';
         G.toastTimer = 2;
       }
@@ -2569,7 +2609,7 @@
             p.armorPlates--;                     // 消耗一块护甲板
             p.armor = Math.min(armorMax(p), p.armor + armorPerSlot(p));
             syncArmorSlots(p);
-            FX.addText(p.x, p.y - 14, '+护甲', '#5aa7e0');
+            FX.addText(p.x, p.y - 14, '+护甲', '#c8c8d0');
             Sfx.play('pickup');
           }
           startEquip(0.18, true);               // 用完切回枪：过渡动画 + 重置扳机
@@ -2808,7 +2848,7 @@
     slot.reserve = Math.min(def.reserveMax, have + add);
     const got = slot.reserve - have;
     W.pickups.splice(W.pickups.indexOf(pk), 1);
-    FX.addText(p.x, p.y - 12, '+' + got + ' 备弹', '#ffd76e');
+    FX.addText(p.x, p.y - 12, '+' + got + ' 备弹', '#e02929');
     Sfx.play('pickup');
     return true;
   }
@@ -2853,10 +2893,10 @@
       p.cooldown = 0;
       p.reload = 0;
       p.reloadTotal = 0;
-      FX.addText(p.x, p.y - 12, def.name, '#ffd76e');
+      FX.addText(p.x, p.y - 12, def.name, '#e02929');
     } else if (!p.side) {
       p.side = { weapon: best.def, ammo: ammo, reserve: reserve };
-      FX.addText(p.x, p.y - 12, '副武器 ' + def.name, '#ffd76e');
+      FX.addText(p.x, p.y - 12, '副武器 ' + def.name, '#e02929');
     } else {
       // 换掉背上的：旧枪原地掉回地上（子弹一起带走，不凭空消失）
       const oldPk = makePickup(p.side.weapon, p.x, p.y);
@@ -2864,7 +2904,7 @@
       oldPk.reserve = p.side.reserve;
       W.pickups.push(oldPk);
       p.side = { weapon: best.def, ammo: ammo, reserve: reserve };
-      FX.addText(p.x, p.y - 12, '换上副武器 ' + def.name, '#ffd76e');
+      FX.addText(p.x, p.y - 12, '换上副武器 ' + def.name, '#e02929');
     }
     W.pickups.splice(W.pickups.indexOf(best), 1);
     Sfx.play('pickup');
@@ -3003,7 +3043,7 @@
     const have = slot.reserve || 0;
     if (have >= def.reserveMax) return false;
     slot.reserve = Math.min(def.reserveMax, have + add);
-    FX.addText(p.x, p.y - 12, '+弹', '#ffd76e');
+    FX.addText(p.x, p.y - 12, '+弹', '#e02929');
     return true;
   }
 
@@ -3142,8 +3182,10 @@
           // 绕着墙去最后看到玩家的地方，路上顺手把门推开
           const st = steerTo(e, e.lastSeen.x, e.lastSeen.y, dt);
           if (st) { mx = st.x; my = st.y; }
-          pushDoor(e);
         }
+        // 猎杀型敌人（剧情模式）无论有没有视线，贴着门就推开——这样门后的敌人会主动破门追出，
+        // 玩家开一枪就能听见门被撞开的声音，形成"突入/反突入"的迈阿密式张力。
+        if (e.hunt) pushDoor(e);
         // 攻击
         if (sees && dToP <= K.attackRange && e.attackCd <= 0) {
           enemyAttack(e, K, angToP);
@@ -3438,7 +3480,7 @@
       G.cash -= price;
       p.armorTier = tier + 1;
       refillArmor(p);                                  // 升级当场补满到新等级
-      FX.addText(p.x, p.y - 18, '护甲升级 · ' + ARMOR_TIERS[p.armorTier].name, '#ffd76e');
+      FX.addText(p.x, p.y - 18, '护甲升级 · ' + ARMOR_TIERS[p.armorTier].name, '#e02929');
       G.toast = '护甲升级：' + ARMOR_TIERS[p.armorTier].name;
       G.toastTimer = 1.8;
       Sfx.play('clear');
@@ -3467,7 +3509,7 @@
         const after = gunStat(gunId, 'mag');
         p.ammo = Math.min(after, p.ammo + Math.max(0, after - before));
         p.reload = 0; p.reloadTotal = 0; p.cooldown = 0;
-        FX.addText(p.x, p.y - 18, '进化 · ' + (UP_EVO_NAME[gunId] || ''), '#ffd76e');
+        FX.addText(p.x, p.y - 18, '进化 · ' + (UP_EVO_NAME[gunId] || ''), '#e02929');
       }
       G.toast = WEAPONS[gunId].name + ' 进化：' + UP_EVO_NAME[gunId];
       G.toastTimer = 2;
@@ -3488,7 +3530,7 @@
       p.ammo = Math.min(afterShell, p.ammo + Math.max(0, afterShell - beforeShell));
     }
     if (def.id === 'dmg' && p && owned) {
-      FX.addText(p.x, p.y - 18, '伤害 ' + gunStat(gunId, 'dmg'), '#ffd76e');
+      FX.addText(p.x, p.y - 18, '伤害 ' + gunStat(gunId, 'dmg'), '#e02929');
     }
     return true;
   }
@@ -3580,14 +3622,14 @@
     if (skillId === 'double') {
       // 双倍分：一次性 buff，持续 3 波
       G.doubleScore = Math.max(G.doubleScore || 0, 3);
-      FX.addText(p.x, p.y - 14, '双倍积分 ×' + G.doubleScore + ' 波', '#ffd76e');
+      FX.addText(p.x, p.y - 14, '双倍积分 ×' + G.doubleScore + ' 波', '#e02929');
     } else if (skillId === 'armor') {
       // 铁甲：立即补满护甲
       refillArmor(p);
       FX.addText(p.x, p.y - 14, '获得 铁甲 · 护甲补满', '#8fd8ff');
     } else {
       p.perks[skillId] = (p.perks[skillId] || 0) + 1;
-      FX.addText(p.x, p.y - 14, '获得 ' + SLOT_NAMES[skillId], '#ffd76e');
+      FX.addText(p.x, p.y - 14, '获得 ' + SLOT_NAMES[skillId], '#e02929');
     }
     Sfx.play('clear');
   }
@@ -3629,7 +3671,7 @@
     }
     G.toast = '第 ' + G.wave + ' 波 · ' + n + ' 个敌人';
     G.toastTimer = 2.5;
-    FX.addText(G.player.x, G.player.y - 20, '第 ' + G.wave + ' 波', '#ffd76e');
+    FX.addText(G.player.x, G.player.y - 20, '第 ' + G.wave + ' 波', '#e02929');
 
     // 每 5 波来一个 BOSS：血厚、体型大、头顶独立血条、掉手雷和护甲板，
     // 让"第几波"这件事有记忆点，而不是只有数字在涨
@@ -4148,7 +4190,7 @@
           } else {
             G.intermission = INTERMISSION_TIME;
             G.centerText = '第 ' + G.wave + ' 波清空';
-            G.centerColor = '#a8f0b8';
+            G.centerColor = '#f2f2f4';
             G.centerTimer = 1.6;
             // 第 5 波清完 → 武器升级站解锁（只解锁一次）
             if (G.wave >= UP_UNLOCK_WAVE && !G.upgUnlocked) {
@@ -4323,7 +4365,7 @@
       ctx.lineWidth = 1;
       ctx.stroke();
       // 引信火花：普通时橙黄，危急时鲜红
-      ctx.fillStyle = urgent ? '#ff3a2a' : '#ffb347';
+      ctx.fillStyle = urgent ? '#ff3a2a' : '#e02929';
       ctx.beginPath(); ctx.arc(0, -3.1, 1.4, 0, 6.283); ctx.fill();
       ctx.restore();
     }
@@ -4401,7 +4443,7 @@
       ctx.save();
       ctx.translate(s.x, s.y);
       ctx.globalAlpha = 0.3;
-      ctx.fillStyle = unlocked ? '#ffb347' : '#5a5064';
+      ctx.fillStyle = unlocked ? '#e02929' : '#3a3a40';
       ctx.beginPath();
       ctx.arc(0, 0, 14 + Math.sin(t * 2) * 1.5, 0, 6.283);
       ctx.fill();
@@ -4409,7 +4451,7 @@
       // 工作台
       ctx.fillStyle = unlocked ? '#6a4a1a' : '#3a3440';
       ctx.fillRect(-8, -7, 16, 14);
-      ctx.fillStyle = unlocked ? '#c98a30' : '#5a5064';
+      ctx.fillStyle = unlocked ? '#e02929' : '#3a3a40';
       ctx.fillRect(-8, -7, 16, 3);
       // 台面上的枪托 + 枪管（一个向上的扳手/枪形图标）
       ctx.fillStyle = unlocked ? '#ffe1a0' : '#7a7088';
@@ -4527,11 +4569,12 @@
   // 只有三样东西：一个头、两只圆手。手绕着头转、眼睛看向朝向。
   // 俯视角下这三样就是全部信息量，多画躯干、肩膀、腿只会糊成一团色块；
   // 而且手能连续跟着鼠标走，不必为 8 个方向各画一张贴图。
+  // 红灰白黑主题：玩家 = 白（唯一的亮色，一眼认出）；敌人 = 不同深浅的灰；血 = 红（由血液贴图/特效承担）。
   const PALETTE = {
-    player:        { head: '#eae4d8', skin: '#e2b28e' },
-    enemy_melee:   { head: '#b09aca', skin: '#cea684' },
-    enemy_gun:     { head: '#acb2c0', skin: '#d6ac8a' },
-    enemy_shotgun: { head: '#c6a06a', skin: '#e0b490' }
+    player:        { head: '#f2f0ec', skin: '#d8d2c8' },
+    enemy_melee:   { head: '#8a8a90', skin: '#9a9690' },
+    enemy_gun:     { head: '#6e6e74', skin: '#8a857e' },
+    enemy_shotgun: { head: '#55555c', skin: '#77726c' }
   };
   const HEAD_R = 5.8, HAND_R = 2.15, HAND_REACH = 12.0, HAND_ARC = 0.58;
 
@@ -4600,7 +4643,7 @@
       ctx.fillRect(-1.2, -7.4, 2.4, 2.6);        // 引信座
       ctx.strokeStyle = '#c9b877';
       ctx.beginPath(); ctx.arc(0, -6.4, 1.8, -0.6, 3.7); ctx.stroke();   // 拉环
-      ctx.fillStyle = '#ffb347';
+      ctx.fillStyle = '#e02929';
       ctx.beginPath(); ctx.arc(0, -4.6, 1.0, 0, 6.283); ctx.fill();       // 引信火花
       return;
     }
@@ -4644,7 +4687,7 @@
     if ((a.elite || a.boss) && a.alive) {
       const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
       ctx.globalAlpha = 0.3 + pulse * 0.25;
-      ctx.strokeStyle = a.boss ? '#ffd76e' : '#e0402c';   // BOSS 金环、精英红环
+      ctx.strokeStyle = a.boss ? '#f2f2f4' : '#c8c8d0';   // BOSS 亮白环、精英浅灰环（红留给血）
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(0, 0, 12, 0, 6.283);
@@ -4889,7 +4932,7 @@
     // 摇杆头
     const mhx = L.moveBase.x + touch.moveX, mhy = L.moveBase.y + touch.moveY;
     ctx.globalAlpha = 0.55;
-    ctx.fillStyle = touch.moveActive ? '#dfe6f0' : '#aeb6c2';
+    ctx.fillStyle = touch.moveActive ? '#c8c8d0' : '#aeb6c2';
     ctx.beginPath(); ctx.arc(mhx, mhy, L.moveBase.r * 0.42, 0, Math.PI * 2); ctx.fill();
 
     // ---- 右摇杆（瞄准/开火）----
@@ -4932,7 +4975,7 @@
     for (const b of L.buttons) {
       const act = !!touchPressed[b.key];
       ctx.globalAlpha = act ? 0.55 : 0.30;
-      ctx.fillStyle = act ? '#8ab4e8' : '#3a4a5e';
+      ctx.fillStyle = act ? '#c8c8d0' : '#3a3a40';
       ctx.beginPath(); ctx.arc(b.x, b.y, L.btnR, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = '#fff';
@@ -4956,7 +4999,7 @@
     if (G.state === 'play' && W.cleared && G.intermission > 0) {
       const s = TOUCH_SKIP;
       ctx.globalAlpha = 0.85;
-      ctx.fillStyle = '#ffd76e';
+      ctx.fillStyle = '#e02929';
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, 8); ctx.fill(); }
       else ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       ctx.globalAlpha = 1;
@@ -5000,7 +5043,7 @@
       : (G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中');
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillText(waveLabel, 11 + HUD_OFF.wave.x, 11 + HUD_OFF.wave.y);
-    ctx.fillStyle = G.mode === 'story' ? '#ff8fb8' : '#cfc4d4';
+    ctx.fillStyle = G.mode === 'story' ? '#e02929' : '#c8c8d0';
     ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
     // 右上：现金（击杀所得，商店货币）
@@ -5008,7 +5051,7 @@
     ctx.font = 'bold 13px "Microsoft YaHei", monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
-    ctx.fillStyle = '#ffd76e';
+    ctx.fillStyle = '#e02929';
     ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
 
     // 左下：血量 + 护甲（只给条和格，不标数值）
@@ -5026,7 +5069,7 @@
       ctx.font = 'bold 14px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
       ctx.fillText('x' + G.combo, VIEW_W - 9 + HUD_OFF.combo.x, 29 + HUD_OFF.combo.y);
-      ctx.fillStyle = '#ffd76e';
+      ctx.fillStyle = '#e02929';
       ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 28 + HUD_OFF.combo.y);
     }
 
@@ -5061,7 +5104,7 @@
         ctx.font = 'bold 12px "Microsoft YaHei", monospace';
         ctx.fillStyle = 'rgba(0,0,0,0.7)';
         ctx.fillText(left + ' 秒后自动重来', VIEW_W / 2 + 1, VIEW_H / 2 + 41);
-        ctx.fillStyle = '#e8e0f0';
+        ctx.fillStyle = '#f2f2f4';
         ctx.fillText(left + ' 秒后自动重来', VIEW_W / 2, VIEW_H / 2 + 40);
       }
     }
@@ -5074,7 +5117,7 @@
       const txt = (G.wave === 0 ? '准备 ' : '下一波 ') + secs + ' 秒';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
       ctx.fillText(txt, VIEW_W / 2 + 1, VIEW_H / 2 + 61);
-      ctx.fillStyle = '#ffd76e';
+      ctx.fillStyle = '#e02929';
       ctx.fillText(txt, VIEW_W / 2, VIEW_H / 2 + 60);
       // 提示按空格跳过等待（触控模式有独立"跳过"按钮，不显示键盘提示）
       if (inputMode !== 'touch') {
@@ -5119,7 +5162,7 @@
         : clamp(p.plateCharge / PLATE_TIME, 0, 1);
       ctx.fillStyle = 'rgba(6,4,8,0.75)';
       ctx.fillRect(x0 - 1, hpY - 11, barW + 2, 7);
-      ctx.fillStyle = healing ? '#5ad08a' : '#5aa7e0';
+      ctx.fillStyle = healing ? '#e02929' : '#c8c8d0';
       ctx.fillRect(x0, hpY - 10, Math.round(barW * prog), 5);
     }
 
@@ -5127,17 +5170,18 @@
     ctx.fillStyle = 'rgba(6,4,8,0.75)';
     ctx.fillRect(x0 - 2, hpY - 2, barW + 4, hpH + 4);
     const hpRatio = clamp(p.hp / HP_MAX, 0, 1);
-    let hpCol = '#6fd68a';
-    if (hpRatio < 0.35) hpCol = '#e05a4a';
-    else if (hpRatio < 0.7) hpCol = '#e8c84a';
+    // 红灰白黑主题：血条用红色（血的颜色），血量越少越暗红，低血闪动警示
+    let hpCol = '#e02929';
+    if (hpRatio < 0.35) hpCol = '#a01212';
+    else if (hpRatio < 0.7) hpCol = '#c41f1f';
     if (hpRatio > 0) {
       ctx.fillStyle = hpCol;
       ctx.fillRect(x0, hpY, Math.round(barW * hpRatio), hpH);
     }
-    // 低血时描边闪红，看不见数字也知道该找血包了
+    // 低血时描边闪白，看不见数字也知道该找血包了
     if (hpRatio < 0.35) {
       const pulse = 0.45 + 0.35 * Math.sin(performance.now() * 0.009);
-      ctx.strokeStyle = 'rgba(224,90,74,' + pulse.toFixed(3) + ')';
+      ctx.strokeStyle = 'rgba(242,242,244,' + pulse.toFixed(3) + ')';
       ctx.lineWidth = 1;
       ctx.strokeRect(x0 - 1.5, hpY - 1.5, barW + 3, hpH + 3);
     }
@@ -5345,8 +5389,8 @@
     const colStep = 46;
     const items = [
       { kind: 'medkit', x: RX - colStep * 2 - 14, n: p.medkits, key: '3', col: '#7fdca0', busy: !!p.healing },
-      { kind: 'grenade', x: RX - colStep - 14, n: p.grenades, key: 'G', col: '#ffb347', busy: false },
-      { kind: 'plate', x: RX - 14, n: p.armorPlates, key: '4', col: '#5aa7e0', busy: !!p.plating }
+      { kind: 'grenade', x: RX - colStep - 14, n: p.grenades, key: 'G', col: '#e02929', busy: false },
+      { kind: 'plate', x: RX - 14, n: p.armorPlates, key: '4', col: '#c8c8d0', busy: !!p.plating }
     ];
     for (const it of items) {
       const has = it.n > 0;
@@ -5436,7 +5480,7 @@
     ctx.textAlign = 'center';
 
     ctx.font = 'bold 24px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#ffd76e';
+    ctx.fillStyle = '#e02929';
     ctx.fillText('补给点', VIEW_W / 2, 46);
 
     ctx.font = 'bold 14px "Microsoft YaHei", monospace';
@@ -5465,14 +5509,14 @@
       // 买不起灰掉
       const afford = G.cash >= item.price;
       const alreadyHave = item.kind === 'weapon' && G.player.weapon === item.id;
-      ctx.fillStyle = sel ? '#fff3d0' : (afford && !alreadyHave ? '#cfc4d4' : '#6f6678');
+      ctx.fillStyle = sel ? '#e02929' : (afford && !alreadyHave ? '#c8c8d0' : '#6f6f76');
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
       ctx.fillText(item.label + (alreadyHave ? '（已持有）' : ''), x, y);
       ctx.font = '11px "Microsoft YaHei", monospace';
       ctx.fillStyle = '#9c90a8';
       ctx.fillText(item.desc, x, y + 16);
       ctx.textAlign = 'right';
-      ctx.fillStyle = afford ? '#ffd76e' : '#8a5a4a';
+      ctx.fillStyle = afford ? '#e02929' : '#3a3a40';
       ctx.fillText('$' + item.price, x + colW - 44, y);
       ctx.textAlign = 'left';
     }
@@ -5483,12 +5527,12 @@
       const drawBtn = (b, label, kind) => {
         const hov = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
         ctx.fillStyle = hov ? 'rgba(255,215,110,0.20)' : 'rgba(255,255,255,0.06)';
-        ctx.strokeStyle = hov ? '#ffd76e' : 'rgba(255,255,255,0.28)';
+        ctx.strokeStyle = hov ? '#e02929' : 'rgba(255,255,255,0.28)';
         ctx.lineWidth = 1;
         if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); }
         else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
         ctx.fill(); ctx.stroke();
-        ctx.fillStyle = kind === 'buy' ? '#ffd76e' : '#cfc4d4';
+        ctx.fillStyle = kind === 'buy' ? '#e02929' : '#c8c8d0';
         ctx.font = 'bold 15px "Microsoft YaHei", monospace';
         ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
       };
@@ -5531,7 +5575,7 @@
     ctx.strokeRect(px0 + 0.5, py0 + 0.5, panelW - 1, panelH - 1);
     // 子页面标题 + 余额（全屏暗底盖掉了商店的抬头，这里补一份）
     ctx.font = 'bold 24px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#ffd76e';
+    ctx.fillStyle = '#e02929';
     ctx.fillText('老虎机', VIEW_W / 2, 92);
     ctx.font = 'bold 14px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e8dcc8';
@@ -5555,7 +5599,7 @@
       ctx.fillStyle = '#fff';
       ctx.fillText(SLOT_ICONS[sym], wx + wheelW / 2, cy + 8);
       ctx.font = 'bold 9px "Microsoft YaHei", monospace';
-      ctx.fillStyle = '#cfc4d4';
+      ctx.fillStyle = '#c8c8d0';
       ctx.fillText(SLOT_NAMES[sym], wx + wheelW / 2, cy + wheelH / 2 + 12);
     }
     // 结果
@@ -5588,7 +5632,7 @@
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
     ctx.font = 'bold 24px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#ffb347';
+    ctx.fillStyle = '#e02929';
     ctx.fillText('武器升级站', VIEW_W / 2, 44);
     ctx.font = 'bold 14px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#e8dcc8';
@@ -5612,7 +5656,7 @@
       ctx.fillRect(ux, 88, tabW, 30);
       if (isSel) { ctx.strokeStyle = 'rgba(255,179,71,0.7)'; ctx.lineWidth = 1; ctx.strokeRect(ux + 0.5, 88.5, tabW - 1, 29); }
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-      ctx.fillStyle = isSel ? '#ffdca0' : (have ? '#cfc4d4' : '#6f6678');
+      ctx.fillStyle = isSel ? '#e02929' : (have ? '#c8c8d0' : '#6f6f76');
       const evoTag = u.evo ? ' ★' : '';
       ctx.fillText(WEAPONS[id].name + (have ? '' : '（未持有）') + evoTag, ux + tabW / 2, 107);
     }
@@ -5637,11 +5681,11 @@
         if (isSel) { ctx.strokeStyle = 'rgba(120,180,255,0.7)'; ctx.strokeRect(40.5, y - 13.5, VIEW_W - 81, 29); }
         ctx.textAlign = 'left';
         ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-        ctx.fillStyle = isSel ? '#dceaff' : (maxed ? '#ffd76e' : '#cfc4d4');
+        ctx.fillStyle = isSel ? '#c8c8d0' : (maxed ? '#e02929' : '#c8c8d0');
         ctx.fillText('护甲等级', 54, y);
         // 等级点（5 级）
         for (let d = 0; d < ARMOR_TIERS.length; d++) {
-          ctx.fillStyle = d <= tier ? (d === ARMOR_TIERS.length - 1 ? '#ffd76e' : '#7fb7ff') : '#4a4450';
+          ctx.fillStyle = d <= tier ? (d === ARMOR_TIERS.length - 1 ? '#e02929' : '#c8c8d0') : '#3a3a40';
           ctx.beginPath(); ctx.arc(150 + d * 16, y - 4, 3.5, 0, 6.283); ctx.fill();
         }
         // 当前 → 下一级描述
@@ -5654,7 +5698,7 @@
         // 价格
         ctx.textAlign = 'right';
         ctx.font = 'bold 12px "Microsoft YaHei", monospace';
-        ctx.fillStyle = maxed ? '#5a5064' : (afford ? '#ffd76e' : '#8a5a4a');
+        ctx.fillStyle = maxed ? '#3a3a40' : (afford ? '#e02929' : '#3a3a40');
         ctx.fillText(maxed ? '满' : '$' + cost, VIEW_W - 54, y);
         ctx.textAlign = 'left';
         continue;
@@ -5668,7 +5712,7 @@
         if (isSel) { ctx.strokeStyle = 'rgba(255,120,80,0.7)'; ctx.strokeRect(40.5, y - 13.5, VIEW_W - 81, 29); }
         ctx.textAlign = 'left';
         ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-        ctx.fillStyle = evolved ? '#8f8' : (ready ? '#ff9a6a' : '#5a5064');
+        ctx.fillStyle = evolved ? '#f2f2f4' : (ready ? '#e02929' : '#3a3a40');
         ctx.fillText('进化 · ' + (UP_EVO_NAME[gunId] || '—') + (evolved ? '（已进化）' : ''), 54, y);
         ctx.font = '10px "Microsoft YaHei", monospace';
         ctx.fillStyle = '#9c90a8';
@@ -5677,7 +5721,7 @@
         if (!evolved) {
           const price = Math.round(UP_EVO_PRICE * (UP_PRICE_MUL[gunId] || 1));
           ctx.font = 'bold 12px "Microsoft YaHei", monospace';
-          ctx.fillStyle = ready ? (G.cash >= price ? '#ffd76e' : '#8a5a4a') : '#5a5064';
+          ctx.fillStyle = ready ? (G.cash >= price ? '#e02929' : '#3a3a40') : '#3a3a40';
           ctx.fillText(ready ? '$' + price : '锁', VIEW_W - 54, y);
         }
         ctx.textAlign = 'left';
@@ -5694,10 +5738,10 @@
       // 名称 + 等级点
       ctx.textAlign = 'left';
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-      ctx.fillStyle = isSel ? '#fff3d0' : '#cfc4d4';
+      ctx.fillStyle = isSel ? '#e02929' : '#c8c8d0';
       ctx.fillText(def.name, 54, y);
       for (let d = 0; d < def.max; d++) {
-        ctx.fillStyle = d < lv ? '#ffb347' : '#4a4450';
+        ctx.fillStyle = d < lv ? '#e02929' : '#3a3a40';
         ctx.beginPath(); ctx.arc(120 + d * 16, y - 4, 3.5, 0, 6.283); ctx.fill();
       }
       // 当前 → 下一级
@@ -5718,7 +5762,7 @@
       // 价格
       ctx.textAlign = 'right';
       ctx.font = 'bold 12px "Microsoft YaHei", monospace';
-      ctx.fillStyle = maxed ? '#5a5064' : (afford ? '#ffd76e' : '#8a5a4a');
+      ctx.fillStyle = maxed ? '#3a3a40' : (afford ? '#e02929' : '#3a3a40');
       ctx.fillText(maxed ? '满' : '$' + cost, VIEW_W - 54, y);
       ctx.textAlign = 'left';
     }
@@ -5729,12 +5773,12 @@
       const drawBtn = (b, label, kind) => {
         const hov = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
         ctx.fillStyle = hov ? 'rgba(255,179,71,0.20)' : 'rgba(255,255,255,0.06)';
-        ctx.strokeStyle = hov ? '#ffb347' : 'rgba(255,255,255,0.28)';
+        ctx.strokeStyle = hov ? '#e02929' : 'rgba(255,255,255,0.28)';
         ctx.lineWidth = 1;
         if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); }
         else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
         ctx.fill(); ctx.stroke();
-        ctx.fillStyle = kind === 'buy' ? '#ffb347' : '#cfc4d4';
+        ctx.fillStyle = kind === 'buy' ? '#e02929' : '#c8c8d0';
         ctx.font = 'bold 15px "Microsoft YaHei", monospace';
         ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
       };
@@ -5765,31 +5809,34 @@
     settings: { x: VIEW_W / 2 - 90, y: 264, w: 180, h: 40 }
   };
 
-  // 迈阿密霓虹配色（Hotline Miami 风格）
+  // 红灰白黑配色（Hotline Miami 经典：黑底 + 红高亮 + 灰白文字，红留给血与危险/强调）
   const MIAMI = {
-    bg: '#0c0a14', bg2: '#120d22',
-    pink: '#ff2d8a', pinkHot: '#ff5fa8',
-    purple: '#8b2df0', cyan: '#19e6e6', cyanHot: '#7cf2f2',
-    yellow: '#ffd23e', white: '#f5e9ff', dim: '#6f5a8a'
+    bg: '#0a0a0c', bg2: '#141416',
+    red: '#e02929', redHot: '#ff3b3b',    // 红：强调/危险/评分高亮（血也同属红色系）
+    gray: '#8a8a90', grayLight: '#c8c8d0', // 灰：次要元素/敌人
+    white: '#f2f2f4', dim: '#6f6f76'
   };
+  // 兼容旧字段名（避免到处改引用），把它们映射到红灰白黑
+  const _MIAMI_ALIAS = { pink: MIAMI.red, pinkHot: MIAMI.redHot, purple: MIAMI.gray, cyan: MIAMI.grayLight, cyanHot: MIAMI.white, yellow: MIAMI.red, white: MIAMI.white, dim: MIAMI.dim };
+  for (const k in _MIAMI_ALIAS) { if (!(k in MIAMI)) MIAMI[k] = _MIAMI_ALIAS[k]; }
 
   function drawTitle() {
     ctx.save();
-    // 迈阿密霓虹背景：深紫底 + 两道斜向渐变光带 + 扫描线
+    // 红灰白黑背景：纯黑底 + 红色斜向光带 + 扫描线
     const bg = ctx.createLinearGradient(0, 0, VIEW_W, VIEW_H);
-    bg.addColorStop(0, '#1a0b2e');
-    bg.addColorStop(0.5, '#0c0a14');
-    bg.addColorStop(1, '#240a33');
+    bg.addColorStop(0, '#120a0a');
+    bg.addColorStop(0.5, '#0a0a0c');
+    bg.addColorStop(1, '#160a0a');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    // 斜向霓虹光带
+    // 斜向红色光带
     ctx.save();
-    ctx.globalAlpha = 0.14;
-    ctx.fillStyle = MIAMI.pink;
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = MIAMI.red;
     ctx.beginPath();
     ctx.moveTo(-40, VIEW_H + 40); ctx.lineTo(VIEW_W * 0.55, -40); ctx.lineTo(VIEW_W * 0.72, -40); ctx.lineTo(VIEW_W * 0.15, VIEW_H + 40);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = MIAMI.cyan;
+    ctx.fillStyle = '#3a3a40';
     ctx.beginPath();
     ctx.moveTo(VIEW_W * 0.35, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 8); ctx.lineTo(VIEW_W * 0.55, VIEW_H + 8);
     ctx.closePath(); ctx.fill();
@@ -5801,20 +5848,20 @@
     ctx.globalAlpha = 1;
 
     ctx.textAlign = 'center';
-    // 主标题：霓虹像素感（双层发光）
+    // 主标题：红黑像素感（双层发光）
     ctx.font = 'bold 46px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = 'rgba(255,45,138,0.35)';
+    ctx.fillStyle = 'rgba(224,41,41,0.35)';
     ctx.fillText('HOTLINE', VIEW_W / 2 + 3, 93);
-    ctx.fillStyle = MIAMI.pink;
+    ctx.fillStyle = MIAMI.red;
     ctx.fillText('HOTLINE', VIEW_W / 2, 90);
     ctx.font = 'bold 16px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = MIAMI.cyan;
+    ctx.fillStyle = MIAMI.white;
     ctx.fillText('2 . 5 D', VIEW_W / 2, 112);
 
-    // 三个按钮：剧情模式 / 挑战模式 / 设置
-    drawMenuButton(TITLE_BTN.story, '剧情模式', MIAMI.pink);
-    drawMenuButton(TITLE_BTN.challenge, '挑战模式', MIAMI.cyan);
-    drawMenuButton(TITLE_BTN.settings, '设置', MIAMI.purple);
+    // 三个按钮：剧情模式（红）/ 挑战模式（白）/ 设置（灰）
+    drawMenuButton(TITLE_BTN.story, '剧情模式', MIAMI.red);
+    drawMenuButton(TITLE_BTN.challenge, '挑战模式', MIAMI.white);
+    drawMenuButton(TITLE_BTN.settings, '设置', MIAMI.gray);
 
     // 只留一行最必要的键位提示
     ctx.fillStyle = MIAMI.dim;
@@ -5859,10 +5906,10 @@
     retry: { x: VIEW_W / 2 - 90, y: 294, w: 180, h: 38 }
   };
 
-  /** 剧情模式通关结算（迈阿密式评分卡片）。 */
+  /** 剧情模式通关结算（红灰白黑评分卡片）。 */
   function drawStoryClear() {
     ctx.save();
-    ctx.fillStyle = 'rgba(8,6,14,0.88)';
+    ctx.fillStyle = 'rgba(6,6,8,0.9)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
 
@@ -5871,15 +5918,15 @@
 
     // 关卡名
     ctx.font = 'bold 18px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = MIAMI.cyan;
+    ctx.fillStyle = MIAMI.grayLight;
     ctx.fillText(STORY_LEVELS[G.storyLevel].title, VIEW_W / 2, 60);
     // "清空" 标语
     ctx.font = 'bold 30px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = MIAMI.pink;
+    ctx.fillStyle = MIAMI.red;
     ctx.fillText('STAGE CLEAR', VIEW_W / 2, 102);
 
-    // 评分大字（迈阿密式霓虹发光）
-    const gradeColor = grade === 'A+' ? '#ffd23e' : (grade.startsWith('A') ? MIAMI.cyan : (grade === 'B' ? '#7cf2a8' : '#c98aff'));
+    // 评分大字（红灰白黑：A+ 亮红发光，A 白，B 灰，C/D 暗灰）
+    const gradeColor = grade === 'A+' ? '#ff3b3b' : (grade.startsWith('A') ? '#f2f2f4' : (grade === 'B' ? '#c8c8d0' : '#8a8a90'));
     ctx.font = 'bold 56px Consolas, monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillText(grade, VIEW_W / 2 + 2, 172);
@@ -5891,17 +5938,17 @@
 
     // 统计明细
     ctx.font = '13px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#cbb9dd';
+    ctx.fillStyle = '#c8c8d0';
     ctx.fillText('击杀 ' + (G.storyKills || 0) + ' · 最佳连击 x' + (G.storyComboBest || 0) +
       ' · 受击 ' + (G.storyHits || 0), VIEW_W / 2, 200);
 
     // 按钮
     if (last) {
-      drawMenuButton(CLEAR_BTN.next, '通关！返回标题', MIAMI.yellow);
+      drawMenuButton(CLEAR_BTN.next, '通关！返回标题', MIAMI.red);
     } else {
-      drawMenuButton(CLEAR_BTN.next, '下一关', MIAMI.cyan);
+      drawMenuButton(CLEAR_BTN.next, '下一关', MIAMI.white);
     }
-    drawMenuButton(CLEAR_BTN.retry, '重玩本关', MIAMI.purple);
+    drawMenuButton(CLEAR_BTN.retry, '重玩本关', MIAMI.gray);
 
     ctx.restore();
   }
@@ -5917,25 +5964,25 @@
 
   function drawSettings() {
     ctx.save();
-    ctx.fillStyle = 'rgba(8,6,10,0.88)';
+    ctx.fillStyle = 'rgba(6,6,8,0.88)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
     ctx.font = 'bold 26px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#e8e0f0';
+    ctx.fillStyle = '#f2f2f4';
     ctx.fillText('设置', VIEW_W / 2, 96);
     // 音效开关
     const sb = SETTINGS_BTN.sound;
     const sHover = mouse.x >= sb.x && mouse.x <= sb.x + sb.w && mouse.y >= sb.y && mouse.y <= sb.y + sb.h;
     ctx.textBaseline = 'middle';
     ctx.fillStyle = sHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-    ctx.strokeStyle = sHover ? '#5aa7e0' : 'rgba(255,255,255,0.25)';
+    ctx.strokeStyle = sHover ? '#c8c8d0' : 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1.5;
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(sb.x, sb.y, sb.w, sb.h, 6); }
     else { ctx.beginPath(); ctx.rect(sb.x, sb.y, sb.w, sb.h); }
     ctx.fill();
     ctx.stroke();
     ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#cfc4d4';
+    ctx.fillStyle = '#c8c8d0';
     ctx.fillText('音效：' + (Sfx.muted ? '关' : '开'), sb.x + sb.w / 2, sb.y + sb.h / 2 + 1);
     ctx.textBaseline = 'alphabetic';
     // 操作方式：手机触控 / 电脑键鼠
@@ -5943,14 +5990,14 @@
     const cHover = mouse.x >= cb.x && mouse.x <= cb.x + cb.w && mouse.y >= cb.y && mouse.y <= cb.y + cb.h;
     ctx.textBaseline = 'middle';
     ctx.fillStyle = cHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-    ctx.strokeStyle = cHover ? '#e5a13a' : 'rgba(255,255,255,0.25)';
+    ctx.strokeStyle = cHover ? '#e02929' : 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1.5;
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cb.x, cb.y, cb.w, cb.h, 6); }
     else { ctx.beginPath(); ctx.rect(cb.x, cb.y, cb.w, cb.h); }
     ctx.fill();
     ctx.stroke();
     ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#e8d8b8';
+    ctx.fillStyle = '#f2f2f4';
     ctx.fillText('操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), cb.x + cb.w / 2, cb.y + cb.h / 2 + 1);
     ctx.textBaseline = 'alphabetic';
     // 开火方式 + 自定义按键（仅手机触控模式显示）
@@ -5960,14 +6007,14 @@
       const fHover = mouse.x >= fb.x && mouse.x <= fb.x + fb.w && mouse.y >= fb.y && mouse.y <= fb.y + fb.h;
       ctx.textBaseline = 'middle';
       ctx.fillStyle = fHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = fHover ? '#e5a13a' : 'rgba(255,255,255,0.25)';
+      ctx.strokeStyle = fHover ? '#e02929' : 'rgba(255,255,255,0.25)';
       ctx.lineWidth = 1.5;
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(fb.x, fb.y, fb.w, fb.h, 6); }
       else { ctx.beginPath(); ctx.rect(fb.x, fb.y, fb.w, fb.h); }
       ctx.fill();
       ctx.stroke();
       ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-      ctx.fillStyle = '#e8d8b8';
+      ctx.fillStyle = '#f2f2f4';
       ctx.fillText('开火方式：' + (fireMode === 'stick' ? '摇杆开火' : '按键开火'), fb.x + fb.w / 2, fb.y + fb.h / 2 + 1);
       ctx.textBaseline = 'alphabetic';
 
@@ -5987,7 +6034,7 @@
       ctx.textBaseline = 'alphabetic';
     }
     // 返回按钮
-    drawMenuButton(SETTINGS_BTN.back, '返回', '#5aa7e0');
+    drawMenuButton(SETTINGS_BTN.back, '返回', '#c8c8d0');
     ctx.restore();
   }
 
@@ -6041,9 +6088,9 @@
     // 治疗 / 装护甲 / 换弹：准心变空心圆，并按读条进度慢慢填满一圈
     if (p && (p.healing || p.plating || p.reload > 0)) {
       if (p.healing) {
-        drawRingCrosshair(x, y, p.healCharge / HEAL_TIME, '#5ad08a');
+        drawRingCrosshair(x, y, p.healCharge / HEAL_TIME, '#e02929');
       } else if (p.plating) {
-        drawRingCrosshair(x, y, p.plateCharge / PLATE_TIME, '#5aa7e0');
+        drawRingCrosshair(x, y, p.plateCharge / PLATE_TIME, '#c8c8d0');
       } else {
         // 换弹：进度按"还剩多少时间"反着算，打满即装好
         const total = p.reloadTotal > 0 ? p.reloadTotal : 1;
@@ -6061,7 +6108,7 @@
     const len = 4.5 - 1.0 * aimT;
     // 准心压在敌人头上 → 变色提示"这一枪是爆头"
     const hs = headshotTarget();
-    const col = hs ? '#ffb347' : 'rgba(255,74,74,0.98)';
+    const col = hs ? '#e02929' : 'rgba(255,74,74,0.98)';
 
     ctx.lineCap = 'round';
     // 黑底描边：地面花色多，单色细线在浅色地板上会看不见
@@ -6308,11 +6355,11 @@
 
   function drawPause() {
     ctx.save();
-    ctx.fillStyle = 'rgba(8,6,10,0.7)';
+    ctx.fillStyle = 'rgba(6,6,8,0.7)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#e8e0f0';
+    ctx.fillStyle = '#f2f2f4';
     ctx.fillText('暂停', VIEW_W / 2, VIEW_H / 2 - 34);
     // 三个选项：继续 / 设置 / 返回主菜单（鼠标悬停或键盘选中高亮）
     const sel = G.pauseSel || 0;
@@ -6328,14 +6375,14 @@
       const active = sel === i || hover;
       ctx.textBaseline = 'middle';
       ctx.fillStyle = active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)';
-      ctx.strokeStyle = active ? (i === 2 ? '#e53935' : '#5aa7e0') : 'rgba(255,255,255,0.18)';
+      ctx.strokeStyle = active ? (i === 2 ? '#e53935' : '#c8c8d0') : 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1.5;
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 5); }
       else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
       ctx.fill();
       ctx.stroke();
       ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-      ctx.fillStyle = active ? '#ffffff' : '#cfc4d4';
+      ctx.fillStyle = active ? '#ffffff' : '#c8c8d0';
       ctx.fillText(it.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
       ctx.textBaseline = 'alphabetic';
     }
@@ -6906,6 +6953,8 @@
     ignite(b) { return igniteBarrel(b); },
     /** 直接对敌人造成伤害（测试用） */
     hitEnemy(e, dmg) { return damageEnemy(e, dmg || 999, 0, true, false); },
+    /** 破门（测试用） */
+    breakDoor(d, hitPos) { return breakDoor(d, hitPos || { x: d.x, y: d.y }); },
     /** 剧情模式：评分 / 下一关 / 重开（测试用） */
     storyGrade,
     nextStoryLevel,
