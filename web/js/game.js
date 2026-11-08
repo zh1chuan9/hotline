@@ -1,5 +1,5 @@
 /* ============================================================
-   HOTLINE 2.5D — H5 版
+   HOTLINE — H5 版
    俯视角一击必杀：一击死、武器即资源、声音即情报。
    纯 Canvas 2D + WebAudio，无任何依赖，双击 index.html 即可玩。
    ============================================================ */
@@ -6066,22 +6066,17 @@
     ctx.textAlign = 'center';
     // 主标题：红黑像素感（双层发光 + 荧光辉光，像电子束打出来的）
     ctx.save();
-    ctx.font = 'bold 46px Consolas, "Microsoft YaHei", monospace';
+    ctx.font = 'bold 52px Consolas, "Microsoft YaHei", monospace';
     ctx.shadowColor = 'rgba(224,41,41,0.9)';
     ctx.shadowBlur = 26;
     ctx.fillStyle = 'rgba(224,41,41,0.35)';
-    ctx.fillText('HOTLINE', VIEW_W / 2 + 3, 93);
+    ctx.fillText('HOTLINE', VIEW_W / 2 + 3, 115);
     ctx.fillStyle = MIAMI.red;
-    ctx.fillText('HOTLINE', VIEW_W / 2, 90);
+    ctx.fillText('HOTLINE', VIEW_W / 2, 112);
     ctx.shadowBlur = 12;
     ctx.fillStyle = 'rgba(255,120,120,0.45)';
-    ctx.fillText('HOTLINE', VIEW_W / 2, 90);
+    ctx.fillText('HOTLINE', VIEW_W / 2, 112);
     ctx.restore();
-    ctx.font = 'bold 16px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = MIAMI.white;
-    ctx.shadowColor = 'rgba(242,242,244,0.6)';
-    ctx.shadowBlur = 8;
-    ctx.fillText('2 . 5 D', VIEW_W / 2, 112);
     ctx.shadowBlur = 0;
 
     // 三个按钮：剧情模式（红）/ 挑战模式（白）/ 设置（灰）
