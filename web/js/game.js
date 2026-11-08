@@ -6031,16 +6031,15 @@
         ctx.fillRect(-th / 2, sw > 0 ? 0 : -TILE, th, TILE);
         ctx.fillStyle = '#a56a2e';                                  // 受光面（亮棕）
         ctx.fillRect(-th / 2 + th * 0.5, sw > 0 ? 0 : -TILE, th * 0.5, TILE);
-        // 两把金色门把手：门板两端（铰链端 + 末端），圆形金块 + 高光，突出可见
-        const ky1 = sw > 0 ? TILE * 0.18 : -TILE + TILE * 0.18;
-        const ky2 = sw > 0 ? TILE * 0.68 : -TILE + TILE * 0.68;
-        for (const ky of [ky1, ky2]) {
+        // 两把金色门把手在门的两端侧面（短边），从侧面向外凸出
+        const y0 = sw > 0 ? 0 : -TILE;      // 门板在 y∈[y0, y0+TILE]
+        for (const [hy, dout] of [[y0, -1], [y0 + TILE, 1]]) {
           ctx.fillStyle = '#6b4e10';                                 // 暗金描边
-          ctx.beginPath(); ctx.arc(0, ky + 2, 3.2, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(0, hy + dout * 1.6, 3.6, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#e8b923';                                 // 金色
-          ctx.beginPath(); ctx.arc(0, ky + 2, 2.4, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(0, hy + dout * 1.6, 2.6, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#fff2b0';                                 // 高光
-          ctx.beginPath(); ctx.arc(-0.7, ky + 1.2, 1.0, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(-0.7, hy + dout * 1.6 - 0.8, 1.1, 0, 6.283); ctx.fill();
         }
       } else {
         // 横墙门：关闭时是横线。swing>0 铰链在左端、门朝下(+y)开；swing<0 铰链在右端、门朝上(-y)开。
@@ -6050,15 +6049,15 @@
         ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th);
         ctx.fillStyle = '#a56a2e';
         ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th * 0.5);
-        const kx1 = sw > 0 ? TILE * 0.18 : -TILE + TILE * 0.18;
-        const kx2 = sw > 0 ? TILE * 0.68 : -TILE + TILE * 0.68;
-        for (const kx of [kx1, kx2]) {
+        const x0 = sw > 0 ? 0 : -TILE;      // 门板在 x∈[x0, x0+TILE]
+        // 两把金色门把手在门的两端侧面（短边），从侧面向外凸出
+        for (const [hx, dout] of [[x0, -1], [x0 + TILE, 1]]) {
           ctx.fillStyle = '#6b4e10';
-          ctx.beginPath(); ctx.arc(kx + 2, 0, 3.2, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx + dout * 1.6, 0, 3.6, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#e8b923';
-          ctx.beginPath(); ctx.arc(kx + 2, 0, 2.4, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx + dout * 1.6, 0, 2.6, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#fff2b0';
-          ctx.beginPath(); ctx.arc(kx + 1.2, -0.7, 1.0, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx + dout * 1.6 - 0.7, -0.8, 1.1, 0, 6.283); ctx.fill();
         }
       }
       ctx.restore();
