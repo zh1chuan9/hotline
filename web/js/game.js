@@ -1563,6 +1563,273 @@
   // 这样玩家按下"开始游戏"后的第一枪就是真枪声。
   Sfx.init();
 
+  // ---------------------------------------------------------------- 背景音乐
+  // 迈阿密热线风格的狂躁合成器摇滚 / 电子乐：脉冲式低频贝斯、失真的锯齿/方波 riff、
+  // 鼓机（kick/snare/踩镲）叠起来的一股压迫感。全程 Web Audio 实时合成（不下载文件），
+  // 用一个 16 分音符步进器跑循环，每小节 4 拍、每拍 4 步。和音效一样，音符都由
+  // 振荡器 + 噪声即时生成，声部从不上限——音乐是持续不断的，跟"一次一枪"的音效不同。
+  const Music = {
+    ctx: null,            // 复用 Sfx 的 AudioContext，不另建（省得两个时钟打架）
+    master: null,         // 音乐总母线（接 destination，gain 就是"音量"）
+    on: false,            // 是否在播
+    muted: false,         // 用户单独关掉 BGM（音效开关不动它）
+    bpm: 142,             // 迈阿密热线原声多在 140~150，这里取 142 的狂躁中速
+    stepDur: 0,           // 每步时长 = 60/bpm/4
+    step: 0,              // 当前步（0..15，16 步循环）
+    bar: 0,               // 已走过的小节数（每 16 步 +1，用来轮转和声）
+    nextStepT: 0,         // 下一步的调度时刻（音频时钟）
+    intensity: 1,         // 战况强度 0..1，决定主旋律层进不进、鼓多密
+    targetIntensity: 1,   // intensity 平滑跟随目标
+    bassLine: null,       // 当前小节的低音走向（根音序号数组）
+    bassKey: 0,           // 当前根音（半音，A=0）
+    riffSeed: 0,          // 主旋律 riff 用的随机种子，换小节时重抽
+    schedTimer: null,     // 墙钟调度器句柄（requestAnimationFrame 或 setTimeout 兜底）
+
+    init() {
+      if (!Sfx.ac) { Sfx.init(); }
+      this.ctx = Sfx.ac;
+      if (!this.ctx) return;
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.muted ? 0 : 0.5;
+      this.master.connect(this.ctx.destination);
+      this.stepDur = 60 / this.bpm / 4;
+    },
+
+    /** 一个乐句的根音走向（半音，A=0）。Dorian 小调的味道，压迫又带点邪气。 */
+    BASS_PROG: [0, 0, 3, 3, 5, 5, 3, 7, 0, 0, 3, 3, 10, 10, 8, 7],
+
+    /** 把半音序号转成频率（A4 = 440）。root 0 = A2 附近，+12 = 高八度。 */
+    hz(semi, oct) { return 440 * Math.pow(2, (semi + (oct || 0) * 12 - 24) / 12); },
+
+    start() {
+      if (this.on) return;
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      this.on = true;
+      this.step = 0;
+      this.bar = 0;
+      this.nextStepT = this.ctx.currentTime + 0.06;
+      this.intensity = this.targetIntensity = 1;
+      this.bassKey = 0;
+      this.pickRiff();
+      this.scheduleTick();
+    },
+
+    stop() {
+      this.on = false;
+      if (this.schedTimer) { cancelAnimationFrame(this.schedTimer); this.schedTimer = null; }
+    },
+
+    setMuted(m) {
+      this.muted = !!m;
+      if (this.master) this.master.gain.value = m ? 0 : 0.5;
+    },
+
+    /** 暂停（游戏暂停菜单/死亡慢镜）：不打断调度，只把音量压下去，恢复时无缝接上。 */
+    setPaused(p) {
+      if (!this.master) return;
+      this.master.gain.value = p ? 0 : (this.muted ? 0 : 0.5);
+    },
+
+    /** 主旋律 riff 用的 16 步音高/休止随机种子（半音偏移，0=根音，null=休止）。 */
+    pickRiff() {
+      this.riffSeed = Math.floor(Math.random() * 100000);
+    },
+
+    /** 墙钟驱动：每帧看音频时钟到没到下一步，到了就排新音符。 */
+    scheduleTick() {
+      if (!this.on) return;
+      const self = this;
+      const tick = function () {
+        if (!self.on) return;
+        const ac = self.ctx;
+        if (!ac) { self.schedTimer = null; return; }
+        const horizon = ac.currentTime + 0.12;   // 提前 120ms 排好，覆盖调度抖动
+        while (self.nextStepT < horizon) {
+          self.playStep(self.step, self.nextStepT);
+          self.nextStepT += self.stepDur;
+          self.step = (self.step + 1) % 16;
+          if (self.step === 0) self.bar++;
+        }
+        // intensity 缓动，避免开打瞬间"砰"一下窜出来
+        self.intensity += (self.targetIntensity - self.intensity) * 0.06;
+        self.schedTimer = requestAnimationFrame(tick);
+      };
+      this.schedTimer = requestAnimationFrame(tick);
+    },
+
+    /** 每 16 步换一次低音走向与 riff；顺手推进小节根音。 */
+    advanceBar() {
+      // 根音按 BASS_PROG 轮转，形成 A -> C -> D -> ... 的和声骨架
+      this.bassKey = this.BASS_PROG[this.bar % this.BASS_PROG.length];
+      this.pickRiff();
+    },
+
+    // ---------------- 声部 ----------------
+
+    /** 低音：方波 + 一点锯齿，贴着 kick 走"蹬-蹬-蹬-蹬"，脉冲感就靠它。 */
+    bass(t, semi, len) {
+      const ac = this.ctx;
+      const o = ac.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = this.hz(semi, -1);       // 低八度，压在鼓下面
+      const lp = ac.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 520; lp.Q.value = 6;
+      const g = ac.createGain();
+      const peak = 0.30;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(lp).connect(g).connect(this.master);
+      o.start(t); o.stop(t + len + 0.02);
+      // 补一层 sub（正弦），让低频实打实"顶"起来
+      const s = ac.createOscillator();
+      s.type = 'sine'; s.frequency.value = this.hz(semi, -2);
+      const sg = ac.createGain();
+      sg.gain.setValueAtTime(0.0001, t);
+      sg.gain.exponentialRampToValueAtTime(0.22, t + 0.004);
+      sg.gain.exponentialRampToValueAtTime(0.0001, t + len * 0.9);
+      s.connect(sg).connect(this.master);
+      s.start(t); s.stop(t + len + 0.02);
+    },
+
+    /** kick：下扫正弦，一下"砰"，配低音就是迈阿密那股狠劲。 */
+    kick(t) {
+      const ac = this.ctx;
+      const o = ac.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(42, t + 0.09);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.exponentialRampToValueAtTime(0.9, t + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g).connect(this.master);
+      o.start(t); o.stop(t + 0.18);
+    },
+
+    /** snare：噪声 + 150Hz 桶，反拍"啪"，给律动加齿轮。 */
+    snare(t) {
+      const ac = this.ctx;
+      const n = ac.createBufferSource();
+      n.buffer = Sfx.noiseBuf; n.loop = true;
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.8;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.exponentialRampToValueAtTime(0.5, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      n.connect(bp).connect(g).connect(this.master);
+      n.start(t); n.stop(t + 0.16);
+      // 桶音（给 snare 一点"身体"）
+      const o = ac.createOscillator();
+      o.type = 'triangle'; o.frequency.value = 175;
+      const og = ac.createGain();
+      og.gain.setValueAtTime(0.28, t);
+      og.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      o.connect(og).connect(this.master);
+      o.start(t); o.stop(t + 0.10);
+    },
+
+    /** 踩镲：高频噪声，密时给"狂躁"填满缝隙。 */
+    hat(t, open) {
+      const ac = this.ctx;
+      const n = ac.createBufferSource();
+      n.buffer = Sfx.noiseBuf; n.loop = true;
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 6800; hp.Q.value = 0.5;
+      const g = ac.createGain();
+      const peak = open ? 0.16 : 0.09;
+      const dur = open ? 0.10 : 0.04;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.001);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      n.connect(hp).connect(g).connect(this.master);
+      n.start(t); n.stop(t + dur + 0.02);
+    },
+
+    /** 主旋律：失真的锯齿波 riff，只在战况拉满（或玩家开火）时进来，其余让低音+鼓垫着。 */
+    riff(t, semi, len) {
+      const ac = this.ctx;
+      const o = ac.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = this.hz(semi, 1);
+      const dist = ac.createWaveShaper();
+      // 简单软削波，锯齿波过一下更"脏"
+      const curve = new Float32Array(256);
+      for (let i = 0; i < 256; i++) {
+        const x = i / 128 - 1;
+        curve[i] = Math.tanh(x * 3);
+      }
+      dist.curve = curve;
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 1400; bp.Q.value = 1.2;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(dist).connect(bp).connect(g).connect(this.master);
+      o.start(t); o.stop(t + len + 0.02);
+    },
+
+    /** 排一步的所有音符。step 0..15，t 是这一拍的音频时刻。 */
+    playStep(step, t) {
+      const s = step & 15;
+      const dur = this.stepDur;
+      // 每小节开头换和声（bar 由 scheduleTick 在 step 回绕时自增）
+      if (step === 0) this.advanceBar();
+
+      // ---- 鼓 ----
+      // kick：四拍正拍（0/4/8/12），重音在 0 和 8
+      if (s % 4 === 0) this.kick(t);
+      // snare：反拍（4/12）——"哒-砰-哒-砰"的迈阿密律动
+      if (s === 4 || s === 12) this.snare(t);
+      // 踩镲：每拍两下（8 分音符），战况越紧越密（16 分全开）
+      const hatEvery = this.intensity > 0.75 ? 1 : 2;
+      if (s % hatEvery === 0) this.hat(t, s % 4 === 3);
+
+      // ---- 低音 ----
+      // 每拍一根音，走 BASS_PROG；步进的低音 + 正拍 kick 就是那股"蹬蹬蹬蹬"
+      if (s % 4 === 0) {
+        const b = this.bassKey;
+        this.bass(t, b, dur * 3.2);
+      } else if (s % 4 === 2) {
+        this.bass(t, this.bassKey + 7, dur * 1.4);   // 五度，让低音不单调
+      }
+
+      // ---- 主旋律 riff ----
+      // 战况强度上来了才进（也避免全程聒噪）；用 riffSeed 生成一条 16 步的旋律，
+      // 只在某些步上出声，其余留白给鼓和低音喘气。
+      if (this.intensity > 0.55) {
+        const rng = this.mulberry32(this.riffSeed + s);
+        const scale = [0, 3, 5, 7, 10, 12, 15, 17];   // 自然小调音阶
+        // 只在步进序列里"该响"的步上响：每拍后两格偶尔冒头
+        const hit = (s % 4 === 1 || s % 4 === 3) && rng() < 0.7;
+        if (hit) {
+          const deg = scale[Math.floor(rng() * scale.length)];
+          const oct = rng() < 0.18 ? 1 : 0;
+          this.riff(t, this.bassKey + deg + oct * 12, dur * 1.1);
+        }
+      }
+    },
+
+    /** 可复现伪随机（riff 需要每小节换新又不想真随机满天飞）。 */
+    mulberry32(a) {
+      return function () {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    },
+
+    /** 战况强度：由战斗节奏驱动（开火/发现敌人→拉满，脱战→回落）。 */
+    setIntensity(v) {
+      this.targetIntensity = clamp(v, 0, 1);
+    }
+  };
+
   // ---------------------------------------------------------------- 几何工具
   function rayRect(ox, oy, dx, dy, rc) {
     let tmin = 0, tmax = Infinity;
@@ -4838,6 +5105,8 @@
     G.storyComboBest = 0;
     G.storyHits = 0;        // 受击次数（评分用）
     G.storyStartT = performance.now();
+    // 开局就起 BGM：进入战斗的那一刻，狂躁的合成器摇滚压上来。
+    Music.start();
 
     if (mode === 'story') {
       const lv = STORY_LEVELS[lvl];
@@ -5067,6 +5336,7 @@
     }
     if (G.state === 'settings') {
       if (hit(SETTINGS_BTN.sound)) { Sfx.muted = !Sfx.muted; Sfx.play('hit'); }
+      else if (hit(SETTINGS_BTN.music)) { Music.setMuted(!Music.muted); Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.control)) { setInputMode(inputMode === 'touch' ? 'pc' : 'touch'); Sfx.play('hit'); }
       else if (inputMode === 'touch' && hit(SETTINGS_BTN.fire)) { setFireMode(fireMode === 'stick' ? 'button' : 'stick'); Sfx.play('hit'); }
       else if (inputMode === 'touch' && hit(SETTINGS_BTN.layout)) { openTouchLayout(); }
@@ -5291,6 +5561,14 @@
       updateBloodDecals(dt);
       for (const e of W.enemies) updateEnemy(e, dt);
       updatePickups(dt);
+      // BGM 战况强度：有敌人追过来（进入交火）就拉满，脱战/准备期回落。
+      // 主旋律 riff 只在强度高时进来，低音+鼓始终垫着，节奏感不丢。
+      {
+        let hot = 0;
+        for (const e of W.enemies) if (e.alive && e.state === 'chase') hot++;
+        const fighting = hot > 0;
+        Music.setIntensity(fighting ? 1 : (W.enemies.some(e => e.alive && e.state === 'investigate') ? 0.6 : 0.25));
+      }
       // 清场判定
       if (!W.cleared) {
         let alive = 0;
@@ -5341,6 +5619,7 @@
         G.deadTimer = 0;
         G.timeScale = 0.35;
         G.slowTimer = 0.8;
+        Music.setIntensity(0);   // 人倒了，音乐也塌下来
         if (G.mode === 'story') {
           G.centerText = '你死了\n' + (STORY_LEVELS[G.storyLevel] ? STORY_LEVELS[G.storyLevel].title : '');
           G.centerColor = '#ff5f8a';
@@ -7583,12 +7862,13 @@
 
   // 设置页按钮区域
   const SETTINGS_BTN = {
-    sound: { x: VIEW_W / 2 - 120, y: 120, w: 240, h: 34 },
-    control: { x: VIEW_W / 2 - 120, y: 162, w: 240, h: 34 },
-    fire: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },     // 仅触控模式
-    layout: { x: VIEW_W / 2 - 120, y: 246, w: 240, h: 34 },   // 仅触控模式
-    keys: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },     // 仅键鼠模式（与 fire 同一行，二者互斥）
-    back: { x: VIEW_W / 2 - 80, y: 292, w: 160, h: 40 }
+    sound: { x: VIEW_W / 2 - 120, y: 118, w: 240, h: 34 },
+    music: { x: VIEW_W / 2 - 120, y: 156, w: 240, h: 34 },    // BGM 开关（与音效独立）
+    control: { x: VIEW_W / 2 - 120, y: 194, w: 240, h: 34 },
+    fire: { x: VIEW_W / 2 - 120, y: 232, w: 240, h: 34 },     // 仅触控模式
+    layout: { x: VIEW_W / 2 - 120, y: 270, w: 240, h: 34 },   // 仅触控模式
+    keys: { x: VIEW_W / 2 - 120, y: 232, w: 240, h: 34 },     // 仅键鼠模式（与 fire 同一行，二者互斥）
+    back: { x: VIEW_W / 2 - 80, y: 306, w: 160, h: 40 }
   };
 
   /** 设置页的一行按钮：描边 + hover 高亮，文字居中。 */
@@ -7618,6 +7898,8 @@
     ctx.fillText('设置', VIEW_W / 2, 96);
     // 音效开关
     drawSettingRow(SETTINGS_BTN.sound, '音效：' + (Sfx.muted ? '关' : '开'), '#c8c8d0', '#c8c8d0');
+    // 背景音乐开关（与音效独立，可单独静音 BGM）
+    drawSettingRow(SETTINGS_BTN.music, '音乐：' + (Music.muted ? '关' : '开'), '#c8c8d0', '#c8c8d0');
     // 操作方式：手机触控 / 电脑键鼠
     drawSettingRow(SETTINGS_BTN.control, '操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), '#f2f2f4', '#e02929');
     // 触控模式：开火方式 + 自定义按键位置；键鼠模式：键位设置
@@ -8029,6 +8311,8 @@
     handleGlobalKeys(advanced);
     render();
     if (G && G.paused) drawPause();
+    // BGM 只在真正"打起来"时响：暂停/商店/升级/死亡/标题都静音（不打断调度，恢复无缝）。
+    Music.setPaused(!(G && G.state === 'play' && !G.paused));
     requestAnimationFrame(loop);
   }
 
@@ -8085,6 +8369,7 @@
     G.player = null;
     G.grenades = [];
     BLASTS.length = 0;
+    Music.stop();
   }
 
   /** 打开设置页，记录来源（标题 or 暂停），返回时据此决定去向。 */
@@ -8540,6 +8825,8 @@
     get slotSymbols() { return SLOT_SYMBOLS; },
     /** 音效系统（测试"枪声采样有没有解码成功"用） */
     get sfx() { return Sfx; },
+    /** 背景音乐引擎（测试 BGM 启停/静音/强度用） */
+    get music() { return Music; },
     /** 敌人数值表（前摇 / 精度等难度参数的测试断言用） */
     get enemyKind() { return ENEMY_KIND; },
     /** 枪手站位性格表（push 前压 / hold 架枪） */
@@ -8622,7 +8909,7 @@
     setKeyCapture(i) { keyCapture = (typeof i === 'number' ? i : -1); },
     get settingsBtn() {
       return {
-        sound: SETTINGS_BTN.sound, control: SETTINGS_BTN.control, fire: SETTINGS_BTN.fire,
+        sound: SETTINGS_BTN.sound, music: SETTINGS_BTN.music, control: SETTINGS_BTN.control, fire: SETTINGS_BTN.fire,
         layout: SETTINGS_BTN.layout, keys: SETTINGS_BTN.keys, back: SETTINGS_BTN.back
       };
     },

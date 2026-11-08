@@ -1580,6 +1580,49 @@
     }
     H.step(60);   // 让换弹走完，别把状态留给后面的用例
 
+    // ============ 29.7 背景音乐（迈阿密热线风合成器摇滚） ============
+    // BGM 是实时合成，无头环境音频时钟不前进，所以只断言状态机（启停/静音/强度/和弦轮转），
+    // 不断言"真的出声"（那要靠人耳）。
+    const zzM = H.music;
+    check('音乐引擎已挂上（ctx=' + !!zzM.ctx + '，bpm=' + zzM.bpm + '）', !!zzM.ctx && zzM.bpm > 0);
+    // 开局（startGame 里）就该自动起 BGM
+    H.startGame({ mode: 'challenge' });
+    check('开局自动起 BGM（on=' + zzM.on + '）', zzM.on === true);
+    // 强度：默认交战中=1，脱战会回落（这里直接验证 setIntensity 与 target 同步）
+    zzM.setIntensity(0.3);
+    check('强度可调（target=' + zzM.targetIntensity.toFixed(2) + '）', Math.abs(zzM.targetIntensity - 0.3) < 0.001);
+    // 静音：单独关 BGM 不碰音效开关
+    const zzSfxMutedBefore = H.sfx.muted;
+    zzM.setMuted(true);
+    check('BGM 可单独静音（muted=' + zzM.muted + '，音效开关不受影响=' + H.sfx.muted + '）',
+      zzM.muted === true && H.sfx.muted === zzSfxMutedBefore);
+    zzM.setMuted(false);
+    check('BGM 静音可恢复（muted=' + zzM.muted + '）', zzM.muted === false);
+    // 和弦轮转：advanceBar 每小节换一次根音，BASS_PROG 首项是 0（A），推两步后应到第 3 项
+    zzM.bar = 0; zzM.step = 0; zzM.advanceBar();
+    const zzKey0 = zzM.bassKey;
+    zzM.bar = 2; zzM.advanceBar();
+    const zzKey2 = zzM.bassKey;
+    check('和弦按 BASS_PROG 轮转（根音 ' + zzKey0 + ' → ' + zzKey2 + '）', zzKey0 === 0 && zzKey2 === zzM.BASS_PROG[2]);
+    // 声部冒烟：手动排 4 小节（64 步），kick/snare/hat/bass/riff 全走一遍不抛异常
+    let zzStepErr = '';
+    try {
+      const zzT0 = zzM.ctx ? zzM.ctx.currentTime + 0.1 : 0.1;
+      for (let i = 0; i < 64; i++) {
+        zzM.intensity = (i < 32 ? 1 : 0.2);   // 前半段拉满（riff 进），后半段回落到只剩鼓+低音
+        zzM.playStep(i % 16, zzT0 + i * zzM.stepDur);
+        if (i % 16 === 0) { zzM.bar = Math.floor(i / 16); zzM.advanceBar(); }
+      }
+    } catch (err) { zzStepErr = err.message; }
+    check('连排 4 小节所有声部都不报错' + (zzStepErr ? '（' + zzStepErr + '）' : ''), zzStepErr === '');
+    // 返回主菜单停 BGM
+    H.goTitle();
+    check('返回主菜单停 BGM（on=' + zzM.on + '）', zzM.on === false);
+    // 设置页多了一个"音乐"按钮（与音效并排独立）
+    const zzSB = H.settingsBtn;
+    check('设置页有独立的音乐开关（music 行 y=' + zzSB.music.y + '）',
+      !!zzSB.music && zzSB.music.y !== zzSB.sound.y);
+
     // ============ 30.4 地图：更小 / 房间更多 / 敌人更多 ============
     const lvls = H.storyLevels;
     let fitSize = true, rectOk = true, minDoors = 99, minEnemies = 99, totalDoors = 0;
