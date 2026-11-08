@@ -17,14 +17,11 @@
 
   // ---------------------------------------------------------------- 门
   // 门有四种被破坏的方式（迈阿密式突入）：
-  //   撞倒：玩家身体直接撞上门 → 门板脱离铰链、沿玩家方向飞出去，飞行途中撞到敌人会撞死
+  //   撞倒：玩家身体直接撞上门 → 门板脱铰链直接倒在地上（永久躺着），倒下那一下砸死门后敌人
   //   近战：挥砍命中 → 门被打碎（木屑）
-  //   子弹（手枪/冲锋枪）：命中 → 门弹开（绕铰链打开）
+  //   子弹（手枪/冲锋枪）：命中 → 门弹开（绕铰链打开，从推门者那一侧朝门后展开）
   //   霰弹：命中 → 门直接打碎
-  const DOOR_FLY_SPEED = 260;   // 撞倒的门板初速
-  const DOOR_FLY_DMG = 200;     // 门板撞人的伤害（普通敌人一击必杀）
-  const DOOR_FLY_RANGE = 150;   // 门板飞行距离（超出即落地）
-  const DOOR_FLY_LIFE = 0.6;    // 门板落地后残留时间（淡出）
+  const DOOR_SLAM_DMG = 200;    // 门板倒下砸人的伤害（普通敌人一击必杀）
 
   // ---------------------------------------------------------------- 瞄准（ADS）
   // 按住右键抬枪：散射收紧、准心收拢、**画面拉远**（视野反而比腰射大）+ 相机顺着
@@ -2332,8 +2329,9 @@
     emitNoise(d.x, d.y, 320);
   }
 
-  /** 门被撞倒：门板脱离铰链、沿撞击方向飞出去，飞行中撞到敌人就撞死。
-   *  dirX/dirY 是门板飞行的方向（玩家撞门时的移动方向）。 */
+  /** 门被撞倒：门板直接脱离铰链、"啪"一下倒在地上（不飞、不转、不消失，永久躺着）。
+   *  倒下的那一下会砸死门后（撞击方向前方）的敌人。
+   *  dirX/dirY 是撞击方向（玩家撞门时的移动方向），决定往哪个方向倒、砸哪边的人。 */
   function knockDoor(d, dirX, dirY) {
     if (!d || d.open || d.broken || d.flying) return;
     const dl = Math.hypot(dirX, dirY);
@@ -2342,14 +2340,21 @@
     d.open = true;
     d.t = 0;
     W._solidDirty = true;
-    W.flyingDoors.push({
-      door: d,
-      x: d.x, y: d.y,
-      sx: d.x, sy: d.y,
-      vx: nx * DOOR_FLY_SPEED, vy: ny * DOOR_FLY_SPEED,
-      rot: 0, rotV: (Math.random() < 0.5 ? -1 : 1) * (9 + Math.random() * 5),
-      dist: 0, life: DOOR_FLY_LIFE, hit: false
-    });
+    // 门板倒在原地：只记位置，不旋转、不移动、不过期
+    W.flyingDoors.push({ door: d, x: d.x, y: d.y });
+    // 倒下的那一下砸人：撞击方向前方、门板宽度内的敌人被砸死
+    for (const e of W.enemies) {
+      if (!e.alive) continue;
+      const ex = e.x - d.x, ey = e.y - d.y;
+      const along = ex * nx + ey * ny;                 // 沿撞击方向的距离（正 = 门后）
+      const perp = Math.abs(ex * -ny + ey * nx);       // 离门板中线的垂直偏移
+      if (along > -6 && along < TILE + 10 && perp < TILE * 0.5) {
+        const a = Math.atan2(ey, ex);
+        damageEnemy(e, DOOR_SLAM_DMG, a, true, false);
+        // 人被门板砸得朝倒向飞出去
+        e.deathVel = { x: nx * 210, y: ny * 210 };
+      }
+    }
     Sfx.play('door');
     FX.kick(5, 0.18);
     emitNoise(d.x, d.y, 320);
@@ -4398,44 +4403,7 @@
     for (const d of W.doors) {
       if (d.open) d.t += dt;
     }
-    // 撞飞的门板：飞行、撞敌人（撞死）、撞墙反弹、落地淡出
-    const rects = solidRects(W, false);   // 门已 open，不再挡路；只跟真墙碰撞
-    for (let i = W.flyingDoors.length - 1; i >= 0; i--) {
-      const f = W.flyingDoors[i];
-      f.x += f.vx * dt;
-      f.y += f.vy * dt;
-      f.dist += Math.hypot(f.vx, f.vy) * dt;
-      f.rot += f.rotV * dt;
-      // 撞墙：反弹减速（门板别穿墙飞出去）
-      if (pointSolid(W, f.x, f.y, 6)) {
-        f.x -= f.vx * dt; f.y -= f.vy * dt;
-        f.vx *= -0.45; f.vy *= -0.45;
-        f.rotV *= 0.6;
-      }
-      // 撞到敌人：门板把门后的敌人撞死（高伤害 + 击飞）
-      if (!f.hit) {
-        for (const e of W.enemies) {
-          if (!e.alive) continue;
-          if (dist2(f.x, f.y, e.x, e.y) < (ACTOR_R + 10) * (ACTOR_R + 10)) {
-            f.hit = true;
-            const a = Math.atan2(e.y - f.y, e.x - f.x);
-            damageEnemy(e, DOOR_FLY_DMG, a, true, false);
-            // 尸体沿门板飞行方向被带飞，视觉上"人被门撞飞出去"
-            e.deathVel = { x: f.vx * 0.8, y: f.vy * 0.8 };
-            // 撞到人就大幅减速，门板不再继续飞远
-            f.vx *= 0.25; f.vy *= 0.25;
-            break;
-          }
-        }
-      }
-      // 门板自己撞到敌人后也会把敌人往后带（击飞）
-      // 阻尼 + 落地：飞出射程或速度耗尽就停
-      const damp = Math.pow(0.02, dt);
-      f.vx *= damp; f.vy *= damp;
-      if (f.dist > DOOR_FLY_RANGE) f.vx *= 0.5, f.vy *= 0.5;
-      f.life -= dt;
-      if (f.life <= 0) W.flyingDoors.splice(i, 1);
-    }
+    // 撞倒的门板直接躺在原地：不飞、不转、不过期，逐帧无需更新。
   }
 
   // ---------------------------------------------------------------- 敌人更新
@@ -6025,8 +5993,9 @@
       const sw = d.swing > 0 ? 1 : -1;
       if (d.dir === 'v') {
         // 纵墙门：关闭时是竖线。swing>0 铰链在上端、门朝右(+x)开；swing<0 铰链在下端、门朝左(-x)开。
+        // 旋转恒为逆时针(-openA)：门板从铰链向 +y 或 -y 延伸，逆时针转 90° 正好摆到 +x 或 -x（门后那侧）。
         ctx.translate(0, sw > 0 ? -TILE / 2 : TILE / 2);
-        ctx.rotate(sw * openA);
+        ctx.rotate(-openA);
         ctx.fillStyle = '#8a5420';
         ctx.fillRect(-th / 2, sw > 0 ? 0 : -TILE, th, TILE);
         ctx.fillStyle = '#a56a2e';                                  // 受光面（亮棕）
@@ -6044,8 +6013,9 @@
         }
       } else {
         // 横墙门：关闭时是横线。swing>0 铰链在左端、门朝下(+y)开；swing<0 铰链在右端、门朝上(-y)开。
+        // 旋转恒为顺时针(+openA)：门板从铰链向 +x 或 -x 延伸，顺时针转 90° 正好摆到 +y 或 -y（门后那侧）。
         ctx.translate(sw > 0 ? -TILE / 2 : TILE / 2, 0);
-        ctx.rotate(sw * openA);
+        ctx.rotate(openA);
         ctx.fillStyle = '#8a5420';
         ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th);
         ctx.fillStyle = '#a56a2e';
@@ -6065,31 +6035,28 @@
       }
       ctx.restore();
     }
-    // 撞倒的门板：脱离铰链飞出去，是"方形门板"（带旋转翻滚），配色跟站立门一致
+    // 被撞倒的门板：直接躺在地上（不旋转、不淡出、永久保留），只有一把把手
     for (const f of W.flyingDoors) {
       ctx.save();
       ctx.translate(f.x, f.y);
-      ctx.rotate(f.rot);
-      ctx.globalAlpha = clamp(f.life / 0.5, 0, 1);
+      const s = TILE - 2;                 // 门板比格子略小一圈，露出地板边
       // 亮棕色方形门板
       ctx.fillStyle = '#8a5420';
-      ctx.fillRect(-TILE / 2, -TILE / 2, TILE, TILE);
+      ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.fillStyle = '#a56a2e';                       // 受光面（亮棕）
-      ctx.fillRect(-TILE / 2, -TILE / 2, TILE, TILE * 0.42);
-      // 两颗金色门把手（门板两端）
-      for (const sx of [-1, 1]) {
-        const hx = sx * (TILE / 2 - 3.2);
-        ctx.fillStyle = '#6b4e10';
-        ctx.beginPath(); ctx.arc(hx, 0, 3.4, 0, 6.283); ctx.fill();
-        ctx.fillStyle = '#e8b923';
-        ctx.beginPath(); ctx.arc(hx, 0, 2.5, 0, 6.283); ctx.fill();
-        ctx.fillStyle = '#fff2b0';
-        ctx.beginPath(); ctx.arc(hx - 0.7, -0.8, 1.0, 0, 6.283); ctx.fill();
-      }
-      // 暗棕描边，让门板有一点厚度
+      ctx.fillRect(-s / 2, -s / 2, s, s * 0.32);
+      // 一把金色门把手（躺在门板靠右端处）
+      const hx = s * 0.24, hy = 0;
+      ctx.fillStyle = '#6b4e10';
+      ctx.beginPath(); ctx.arc(hx, hy, 3.4, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#e8b923';
+      ctx.beginPath(); ctx.arc(hx, hy, 2.5, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#fff2b0';
+      ctx.beginPath(); ctx.arc(hx - 0.7, hy - 0.8, 1.0, 0, 6.283); ctx.fill();
+      // 暗棕描边
       ctx.strokeStyle = '#5c3611';
       ctx.lineWidth = 1;
-      ctx.strokeRect(-TILE / 2 + 0.5, -TILE / 2 + 0.5, TILE - 1, TILE - 1);
+      ctx.strokeRect(-s / 2 + 0.5, -s / 2 + 0.5, s - 1, s - 1);
       ctx.restore();
     }
   }
