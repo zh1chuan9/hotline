@@ -1391,6 +1391,83 @@
       check('前摇没走完玩家还活着（state=' + g4.state + '）', g4.state === 'play');
     }
 
+    // ============ 30.4 枪手站位性格（前压 / 后方架枪）+ 不打队友 ============
+    const zzGR = H.gunRole;
+    check('枪手分前压/架枪两种性格（push/hold 都在表里）', !!zzGR.push && !!zzGR.hold);
+    check('前压比架枪贴得更近（' + Math.round(118 * zzGR.push.keep) + 'px < '
+      + Math.round(118 * zzGR.hold.keep) + 'px）', zzGR.push.keep < zzGR.hold.keep);
+    check('架枪的瞄得更准（误差系数 ' + zzGR.hold.err + ' < ' + zzGR.push.err + '）', zzGR.hold.err < zzGR.push.err);
+    check('架枪到位会站定（settle=' + zzGR.hold.settle + '，前压不站定 settle=' + zzGR.push.settle + '）',
+      zzGR.hold.settle === 1 && !zzGR.push.settle);
+    const zzRoleBag = { push: 0, hold: 0, none: 0 };
+    for (let i = 0; i < 40; i++) {
+      const e = H.makeEnemy('gun', 0, 0);
+      if (e.role === 'push' || e.role === 'hold') zzRoleBag[e.role]++; else zzRoleBag.none++;
+    }
+    check('出生时真的会分到两种性格（push=' + zzRoleBag.push + ' hold=' + zzRoleBag.hold + '）',
+      zzRoleBag.push > 0 && zzRoleBag.hold > 0);
+    check('近战兵不参与站位性格（role=' + H.makeEnemy('melee', 0, 0).role + '）',
+      H.makeEnemy('melee', 0, 0).role === null);
+    check('实例甜点距离从 e.keep 起算（' + H.makeEnemy('gun', 0, 0).keep + '）',
+      H.makeEnemy('gun', 0, 0).keep === EK.gun.keep);
+    check('同样距离，架枪的误差小于前压的（' + H.enemyAimErr(EK.gun, 100, zzGR.hold.err).toFixed(1) + '° < '
+      + H.enemyAimErr(EK.gun, 100, zzGR.push.err).toFixed(1) + '°）',
+      H.enemyAimErr(EK.gun, 100, zzGR.hold.err) < H.enemyAimErr(EK.gun, 100, zzGR.push.err));
+    // 架枪位不能站到自己打不到的地方（霰弹兵 78×1.22=95 会超过它的 92 射程）
+    const zzHoldShot = H.makeEnemy('shotgun', 0, 0);
+    zzHoldShot.role = 'hold';
+    const zzHoldPush = H.makeEnemy('shotgun', 0, 0);
+    zzHoldPush.role = 'push';
+    check('架枪位被夹在射程内（霰弹 ' + H.gunKeepDist(zzHoldShot, EK.shotgun).toFixed(0) + 'px < 射程 '
+      + EK.shotgun.attackRange + 'px，前压 ' + H.gunKeepDist(zzHoldPush, EK.shotgun).toFixed(0) + 'px）',
+      H.gunKeepDist(zzHoldShot, EK.shotgun) < EK.shotgun.attackRange
+      && H.gunKeepDist(zzHoldPush, EK.shotgun) < H.gunKeepDist(zzHoldShot, EK.shotgun));
+
+    // 枪线判定：只在"队友在枪口前方、且比玩家更近、横向偏移在身体宽度内"时才算挡枪
+    const zzReal = H.world.enemies;
+    const zzFakeGun = { x: 0, y: 0, alive: true };
+    const zzFakeMate = { x: 50, y: 0, alive: true };
+    H.world.enemies = [zzFakeGun, zzFakeMate];
+    check('队友正挡在枪线上 → 判定挡枪', H.allyInLine(zzFakeGun, 0, 90, 15) === zzFakeMate);
+    zzFakeMate.y = 40;
+    check('队友横向让开 40px → 不再挡枪', H.allyInLine(zzFakeGun, 0, 90, 15) === null);
+    zzFakeMate.y = 0; zzFakeMate.x = -30;
+    check('队友在枪手身后 → 不算挡枪', H.allyInLine(zzFakeGun, 0, 90, 15) === null);
+    zzFakeMate.x = 120;
+    check('队友比玩家还远 → 不算挡枪（子弹先到玩家）', H.allyInLine(zzFakeGun, 0, 90, 15) === null);
+    zzFakeMate.x = 50; zzFakeMate.alive = false;
+    check('队友已经倒了 → 不算挡枪', H.allyInLine(zzFakeGun, 0, 90, 15) === null);
+    H.world.enemies = zzReal;
+
+    // 实际行为：队友堵在枪口前，枪手不端枪、不扣子弹，而是横移让开
+    H.startGame({ mode: 'challenge' });
+    const zzW = H.world, zzG = H.g;
+    const zzPX = zzG.player.x, zzPY = zzG.player.y;
+    zzW.enemies = [];
+    const zzAddGun = function (kind, x, y) {
+      const ee = H.makeEnemy(kind, x, y);
+      ee.state = 'chase'; ee.attackCd = 0; ee.wind = 0; ee.seeTimer = 1;
+      ee.lastSeen.x = zzPX; ee.lastSeen.y = zzPY;
+      ee.facing = Math.PI;
+      zzW.enemies.push(ee);
+      return ee;
+    };
+    const zzGunner = zzAddGun('gun', zzPX + 110, zzPY);
+    zzGunner.role = 'hold';
+    const zzMate = zzAddGun('melee', zzPX + 55, zzPY);
+    const zzAmmo0 = zzGunner.ammo;
+    H.step(20);                               // ≈0.33s
+    check('队友挡枪线时枪手不端枪（wind=' + zzGunner.wind.toFixed(2) + 's）', zzGunner.wind <= 0.02);
+    check('…也没白扣子弹（ammo ' + zzAmmo0 + ' → ' + zzGunner.ammo + '）', zzGunner.ammo === zzAmmo0);
+    check('…并且往侧面让开枪线（横向离开 ' + Math.abs(zzGunner.y - zzPY).toFixed(1) + 'px）',
+      Math.abs(zzGunner.y - zzPY) > 1.5);
+    // 队友倒下之后，枪线空了就该补枪
+    zzMate.alive = false;
+    zzGunner.wind = 0; zzGunner.attackCd = 0;
+    const zzAmmo1 = zzGunner.ammo;
+    H.step(45);                               // ≈0.75s > 枪手前摇 0.55s
+    check('枪线空了以后枪手会补枪（ammo ' + zzAmmo1 + ' → ' + zzGunner.ammo + '）', zzGunner.ammo !== zzAmmo1);
+
     // 敌人开门：剧情敌人不是 hunt 型，但也得会推门（否则全堵在门后）
     H.startGame({ mode: 'story' });
     const w5 = H.world;

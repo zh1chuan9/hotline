@@ -476,16 +476,26 @@
       tex: 'enemy_gun', corpse: 'corpse_enemy_gun',
       speed: 62, view: 156, attackRange: 150,
       keep: 118, interval: 0.62, aimErr: 13, weapon: 'pistol', reaction: 0.38,
-      windup: 0.55,
+      windup: 0.55, pushChance: 0.45,
       hp: 20, dmg: 9, score: 75
     },
     shotgun: {
       tex: 'enemy_shotgun', corpse: 'corpse_enemy_shotgun',
       speed: 68, view: 140, attackRange: 92,
       keep: 78, interval: 1.1, aimErr: 17, weapon: 'shotgun', reaction: 0.36,
-      windup: 0.7,
+      windup: 0.7, pushChance: 0.72,
       hp: 26, dmg: 8, score: 100
     }
+  };
+
+  // 枪手的"站位性格"：出生时随机定一个，之后就按它决定走位。
+  //   push（前压）：贴得更近、走得更快、一直小幅游走，逼玩家开火或后退
+  //   hold（架枪）：离得更远、几乎站定、瞄得更准，负责在后方压制
+  // 两样都有才不会一屋子人挤同一个距离：近的压、远的架，玩家得同时应付两个角度。
+  // keep 是 K.keep 的倍数；settle=1 表示"到位就收脚"（架枪的关键）；err 是瞄准误差倍数。
+  const GUN_ROLE = {
+    push: { keep: 0.72, speed: 1.14, strafe: 1.15, settle: 0, err: 1.15 },
+    hold: { keep: 1.22, speed: 0.92, strafe: 0.55, settle: 1, err: 0.78 }
   };
 
   // 爆头（参考塔科夫"瞄哪打哪"）：准心落在敌人头部范围里就算爆头
@@ -1674,7 +1684,14 @@
       dismember: false,
       // 侧移包抄：方向保持一段时间再翻，避免原地左右抖
       strafeDir: Math.random() < 0.5 ? -1 : 1,
-      strafeTimer: 0.7 + Math.random() * 1.3
+      strafeTimer: 0.7 + Math.random() * 1.3,
+      // 甜点距离：以前只读 K.keep，BOSS/精英设的 e.keep 根本没人看（白设了）。
+      // 现在存一份实例值，role 再乘系数，精英/BOSS 的"压得更近"才真正生效。
+      keep: K.keep,
+      // 站位性格（push 前压 / hold 架枪）：近战兵不需要，给 null 走老逻辑
+      role: K.pushChance ? (Math.random() < K.pushChance ? 'push' : 'hold') : null,
+      // 让枪线：队友挡在弹道上时往一侧横移剩余时间 / 方向（+1 右、-1 左）
+      yieldT: 0, yieldSide: 1
     };
   }
 
@@ -3943,6 +3960,7 @@
         break;
       }
       case 'chase': {
+        const role = GUN_ROLE[e.role] || GUN_ROLE.hold;
         if (sees) {
           e.path = null;                 // 看得见就直接扑，别绕远路
           if (e.kind === 'melee') {
@@ -3953,17 +3971,28 @@
               my = Math.sin(angToP) + Math.cos(angToP) * wob;
             }
           } else {
-            // 枪手：保持"甜点距离"（keep），太近后退、太远压上
-            if (dToP > K.keep * 1.06) { mx = Math.cos(angToP); my = Math.sin(angToP); }
-            else if (dToP < K.keep * 0.66) { mx = -Math.cos(angToP); my = -Math.sin(angToP); }
+            // 枪手：保持"甜点距离"，太近后退、太远压上。
+            // 甜点距离 = 实例 keep（精英/BOSS 会改）× 站位性格系数：
+            // push 压到 0.72 倍贴脸打，hold 拉到 1.22 倍在后方架枪。
+            const keepD = gunKeepDist(e, K);
+            if (dToP > keepD * 1.06) { mx = Math.cos(angToP); my = Math.sin(angToP); }
+            else if (dToP < keepD * 0.66) { mx = -Math.cos(angToP); my = -Math.sin(angToP); }
             // 侧移绕圈：方向保持 0.7~2 秒再翻，看起来像在找射击角度
             e.strafeTimer -= dt;
             if (e.strafeTimer <= 0) {
               e.strafeTimer = 0.7 + Math.random() * 1.3;
               e.strafeDir = -e.strafeDir;
             }
-            mx += Math.cos(angToP + Math.PI / 2) * 0.62 * e.strafeDir;
-            my += Math.sin(angToP + Math.PI / 2) * 0.62 * e.strafeDir;
+            let wob = 0.62 * role.strafe;
+            if (role.settle) {
+              // 架枪位：越接近甜点位横移越小（站定才准），只在明显偏离时才挪步；
+              // 正在举枪瞄准时几乎不动 —— 这是"在后方架枪"和"一直绕圈"的区别。
+              const off = Math.abs(dToP - keepD) / Math.max(1, keepD);
+              wob *= clamp(off * 2.4, 0.18, 1);
+              if (e.wind > 0) wob *= 0.35;
+            }
+            mx += Math.cos(angToP + Math.PI / 2) * wob * e.strafeDir;
+            my += Math.sin(angToP + Math.PI / 2) * wob * e.strafeDir;
           }
         } else if (e.lostTimer < 0.4) {
           // 刚脱离视线，先沿原方向扑一小段
@@ -3979,13 +4008,26 @@
         // 攻击：先举枪（windup 前摇），攒满才真的开火。前摇期间瞄点只以有限速度追玩家，
         // 玩家横移/后撤能把枪口甩在身后；中途丢了视线则前摇回落，不开这一枪。
         if (sees && dToP <= K.attackRange && e.attackCd <= 0) {
-          if (e.wind <= 0) { e.aimX = p.x; e.aimY = p.y; }
+          // 先看枪线：自己人挡在弹道上就别端枪。原来的做法是等前摇攒满、在 enemyAttack
+          // 里临时放弃，画面上就是"举枪半秒又收回去"，看着像卡住；而且原地干等会一直
+          // 卡到那个队友自己走开。现在改成当场横移让开枪线。
+          const block = allyInLine(e, angToP, dToP - 8, 15);
+          if (block) {
+            e.wind = Math.max(0, e.wind - dt * 5);
+            // 队友在枪线哪一侧，就往反侧让；让 0.45~0.9 秒再说
+            const cx2 = Math.cos(angToP), cy2 = Math.sin(angToP);
+            const lat = (block.y - e.y) * cx2 - (block.x - e.x) * cy2;
+            e.yieldSide = lat >= 0 ? -1 : 1;
+            e.yieldT = Math.max(e.yieldT, 0.45 + Math.random() * 0.45);
+            // 架枪的更沉得住气：宁可多等一会儿，也不从队友身边挤过去
+            e.attackCd = 0.15 + (role.settle ? 0.25 : 0);
+          } else if (e.wind <= 0) { e.aimX = p.x; e.aimY = p.y; e.wind += dt; }
           else {
             const track = Math.min(1, dt * 5.5);
             e.aimX += (p.x - e.aimX) * track;
             e.aimY += (p.y - e.aimY) * track;
+            e.wind += dt;
           }
-          e.wind += dt;
           if (e.wind >= enemyWindup(K)) {
             const aimAng = Math.atan2(e.aimY - e.y, e.aimX - e.x);
             e.wind = 0;
@@ -3997,6 +4039,14 @@
         break;
       }
       default: break;
+    }
+
+    // 让枪线：队友挡在弹道上时，这一帧的移动改成纯横移（往空档那侧）。
+    // 放在归一化之前，免得被"前压/后撤"分量带成斜线、挤着队友一起走。
+    if (e.state === 'chase' && sees && e.yieldT > 0) {
+      e.yieldT -= dt;
+      mx = -Math.sin(angToP) * e.yieldSide;
+      my = Math.cos(angToP) * e.yieldSide;
     }
 
     const ml = Math.hypot(mx, my);
@@ -4021,8 +4071,11 @@
         const nl = Math.hypot(mx, my) || 1;
         mx /= nl; my /= nl;
       }
-      e.vx = mx * e.speed;
-      e.vy = my * e.speed;
+      // 站位性格也管脚下：前压的走快一点，架枪的更慢更稳（也让"让枪线"那一下不至于拖泥带水）
+      const rl = GUN_ROLE[e.role];
+      const spd = e.speed * (rl ? rl.speed : 1);
+      e.vx = mx * spd;
+      e.vy = my * spd;
       e.facing = Math.atan2(my, mx);
     } else {
       e.vx *= 0.82; e.vy *= 0.82;
@@ -4046,10 +4099,42 @@
     return (K.windup || 0) * (G.mode === 'story' ? 1.25 : 1);
   }
 
-  /** 敌人射击误差（度）：基础值 × 剧情放宽 × 距离系数 —— 越远越飘，近身也别指望百发百中。 */
-  function enemyAimErr(K, d) {
+  /**
+   * 枪手想站的距离 = 实例 keep（精英/BOSS 会改）× 性格系数，再夹进自己射程内。
+   * 必须夹：霰弹兵 hold 位算出来是 78×1.22=95px，而它射程只有 92px ——
+   * 不夹的话它会稳稳站到自己打不到的地方，站着不动、永远不开枪。
+   */
+  function gunKeepDist(e, K) {
+    const role = GUN_ROLE[e.role] || GUN_ROLE.hold;
+    return clamp(Math.max(24, (e.keep || K.keep) * role.keep), 24, K.attackRange * 0.88);
+  }
+
+  /** 敌人射击误差（度）：基础值 × 剧情放宽 × 距离系数 × 站位性格 —— 越远越飘，架枪的比前压的准。 */  function enemyAimErr(K, d, roleMul) {
     const rr = K.attackRange > 1 ? clamp(d / K.attackRange, 0, 1) : 1;
-    return (K.aimErr || 0) * (G.mode === 'story' ? 1.35 : 1) * (0.75 + 0.55 * rr);
+    return (K.aimErr || 0) * (G.mode === 'story' ? 1.35 : 1) * (0.75 + 0.55 * rr)
+      * (roleMul || 1);
+  }
+
+  /**
+   * 枪线上有没有自己人，返回最近的那个（没有就 null）。
+   * 用"沿弹道方向的投影 + 垂直偏移"判断，而不是像老代码那样只看夹角：
+   * 夹角相同但站在身后、或者站在玩家背后很远的人，不该让枪手放弃射击。
+   * halfW 取人物半宽再多一点（默认 15px），擦身而过不算挡枪线。
+   */
+  function allyInLine(e, ang, maxDist, halfW) {
+    const cx = Math.cos(ang), cy = Math.sin(ang);
+    const hw = halfW || 15;
+    let hit = null, best = Infinity;
+    for (const o of W.enemies) {
+      if (o === e || !o.alive) continue;
+      const dx = o.x - e.x, dy = o.y - e.y;
+      const along = dx * cx + dy * cy;
+      if (along <= 6 || along > maxDist) continue;      // 在自己身后 / 已经越过目标
+      const lat = Math.abs(dy * cx - dx * cy);
+      if (lat >= hw) continue;
+      if (along < best) { best = along; hit = o; }
+    }
+    return hit;
   }
 
   function enemyAttack(e, K, angToP) {
@@ -4063,23 +4148,19 @@
       meleeSwing(e, def, false);
       return;
     }
-    // 别打到同伴：枪线上有自己人就先不开枪，压一下冷却换个位置再打
-    for (const o of W.enemies) {
-      if (o === e || !o.alive) continue;
-      const od = Math.hypot(o.x - e.x, o.y - e.y);
-      if (od > 110) continue;
-      const oa = Math.atan2(o.y - e.y, o.x - e.x);
-      if (Math.abs(angDiff(oa, angToP)) < 0.3) {
-        e.attackCd = 0.28;
-        return;
-      }
+    // 兜底：扣扳机这一刻再看一眼枪线（前摇期间队友可能刚走进来）。
+    // 有自己人挡着就整枪不放、也不扣子弹，冷却压到 0.15s，线一清就能立刻补上。
+    if (allyInLine(e, angToP, Math.hypot(G.player.x - e.x, G.player.y - e.y) - 8, 15)) {
+      e.attackCd = 0.15;
+      return;
     }
     e.attackCd = K.interval;
     if (e.ammo <= 0) { e.ammo = def.mag; }
     e.ammo--;
     Sfx.play(def.sound);
     emitNoise(e.x, e.y, 480);
-    const errDeg = enemyAimErr(K, Math.hypot(G.player.x - e.x, G.player.y - e.y));
+    const errDeg = enemyAimErr(K, Math.hypot(G.player.x - e.x, G.player.y - e.y),
+      (GUN_ROLE[e.role] || GUN_ROLE.hold).err);
     const err = (Math.random() - 0.5) * 2 * errDeg * Math.PI / 180;
     const base = angToP + err;
     for (let i = 0; i < def.pellets; i++) {
@@ -4547,6 +4628,7 @@
     e.maxHp = e.hp = Math.round(K.hp * hpScale * 6);
     e.speed = K.speed * spdScale * 0.92;
     e.keep = Math.round(K.keep * 0.8);       // 比普通枪手压得更近，逼玩家动起来
+    e.role = 'push';                          // BOSS 自己就是前压位，乱跑没威慑
     e.hunt = true;
     e.state = 'chase';
     e.lastSeen.x = G.player.x;
@@ -4569,6 +4651,7 @@
     e.maxHp = e.hp = Math.round(K.hp * hpScale * 4);
     e.speed = K.speed * spdScale * 0.95;
     e.keep = Math.round(K.keep * 0.85);       // 比普通枪手压得更近，逼玩家动起来
+    e.role = 'push';
     e.armor = 40;                              // 一小层护甲：打掉前子弹只碎甲不掉血
     e.maxArmor = 40;
     e.hunt = true;
@@ -8214,7 +8297,13 @@
     get sfx() { return Sfx; },
     /** 敌人数值表（前摇 / 精度等难度参数的测试断言用） */
     get enemyKind() { return ENEMY_KIND; },
-    enemyWindup, enemyAimErr,
+    /** 枪手站位性格表（push 前压 / hold 架枪） */
+    get gunRole() { return GUN_ROLE; },
+    enemyWindup, enemyAimErr, gunKeepDist,
+    /** 枪线上有没有自己人：返回挡枪的那个敌人，或 null（防误伤逻辑的测试用） */
+    allyInLine,
+    /** 造一只敌人（不塞进世界），测试要摆特定阵型时用 */
+    makeEnemy,
     /** 敌人推门 / 门口净空判断（测试用） */
     pushDoor, nearClosedDoor, nudgeFromDoor,
     /** 测试默认跳过开局准备期，直接进第一波；想测准备期传 { prep: true } */
