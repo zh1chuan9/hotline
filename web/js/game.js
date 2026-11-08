@@ -103,19 +103,24 @@
       name: '霰弹枪', melee: false, fireRate: 0.75, mag: 4, reserveMax: 24, pellets: 7,
       spread: 9.0, range: 170, auto: false, shake: 6.0, kick: 6, reload: 1.4, noise: 520,
       sound: 'shotgun', icon: 'w_shotgun', dmg: 9, price: 300, drawTime: 0.46,
-      blood: { pools: 7, spurts: 6, streaks: 5, scale: 1.15, spray: 34, speckles: 46 }
+      blood: { pools: 7, spurts: 6, streaks: 5, scale: 1.15, spray: 34, speckles: 46 },
+      // 断肢：霰弹枪贴脸轰就是一个大洞，越近越容易把人打散（见 gibChance）；
+      // gibHead 表示还可能把头整个打飞（这时就不画完整尸体了）
+      gib: 0.38, gibHead: true
     },
     bat: {
-      name: '棒球棍', melee: true, fireRate: 0.42, mag: Infinity,
+      name: '棒球棍', melee: true, fireRate: 0.32, mag: Infinity,
       reach: 34, arc: 130, shake: 3.0, sound: 'swing', icon: 'w_bat', dmg: 52, price: 100,
       drawTime: 0.26,
       blood: { pools: 3, spurts: 3, streaks: 2, scale: 0.95, spray: 18, speckles: 24 }
     },
     knife: {
-      name: '武士刀', melee: true, fireRate: 0.32, mag: Infinity,
+      name: '武士刀', melee: true, fireRate: 0.24, mag: Infinity,
       reach: 42, arc: 95, shake: 2.4, sound: 'swing', icon: 'w_knife', dmg: 48, price: 50,
       drawTime: 0.16,
-      blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.85, spray: 14, speckles: 18 }
+      blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.85, spray: 14, speckles: 18 },
+      // 断肢：砍中打死时有这么高的概率把对方的手/头削下来（剧情模式一击必杀，最直观的"刀快"）
+      gib: 0.5
     }
   };
   // 空手拳头：把枪扔出去后也不至于没辙 —— 贴脸才够得着（reach 24），但一拳能放倒一个人。
@@ -126,9 +131,13 @@
     blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.9, spray: 16, speckles: 20 }
   };
   const PUNCH_TIME = 0.2;   // 出拳的前伸动画时长（纯视觉）
-  // 近战挥砍动画：刀/棍整把武器从一侧扫到另一侧（纯视觉，判定仍是 fireRate 那一瞬间的扇形）
-  const SWING_TIME = { knife: 0.19, bat: 0.26 };
-  const SWING_DEFAULT = 0.2;
+  // 近战挥砍动画：刀/棍整把武器从一侧扫到另一侧（纯视觉，判定仍是 fireRate 那一瞬间的扇形）。
+  // 挥得比出手间隔（fireRate）短一截，刀才像"唰"地一下划过去，而不是慢吞吞地推。
+  const SWING_TIME = { knife: 0.11, bat: 0.16 };
+  const SWING_DEFAULT = 0.12;
+  // 剧情模式玩家移速倍率：没有血量、一击必杀的关卡里，走位就是唯一的容错手段，
+  // 默认 134 在"一堆小房间 + 密集敌人"的新地图里太憋屈，放到 1.22 倍（≈163）才能边跑边突入。
+  const STORY_MOVE_MUL = 1.22;
   // ---------------------------------------------------------------- 武器升级
   //
   // 地图上的升级站（字符 U）在**第 5 波清完之后**解锁。四条线各 3 级，越升越贵；
@@ -1798,7 +1807,7 @@
     clips: [],       // 换弹时甩出去的旧弹匣（要旋转，粒子那套圆点表达不了）
     shards: [],      // 护甲被打碎时飞出的甲片（旋转的方形碎片）
     sprays: [],      // 血液喷溅：空中的血珠/血雾，**落地那一刻**才在地上留下血点
-    slashes: [],     // 近战斩击弧光
+    gibs: [],        // 被砍飞/打散的肢体（飞一段后落到地上贴进贴花层，永久留着）
     shake: 0,
     shakeT: 0,
     hitstop: 0,
@@ -1886,13 +1895,33 @@
         });
       }
     },
-    /** 近战斩击弧光：沿挥击方向扫过的一条弧（带拖尾），越挥越长、末尾淡出。 */
-    addSlash(x, y, ang, reach, arc, dir, color, life) {
-      this.slashes.push({
-        x, y, ang, reach, arc, dir: dir || 1,
-        life: life || 0.16, max: life || 0.16,
-        color: color || 'rgba(255,255,255,0.9)'
-      });
+    /**
+     * 断肢：从尸体位置甩出几截"胳膊（袖子 + 圆手）"，霰弹枪贴脸时可以把头也打飞。
+     * 部件会转着飞一段、一路甩血，落地那一刻才贴进贴花层（跟血滴一样"先飞后落"）。
+     */
+    addGibs(x, y, ang, n, style, head) {
+      const st = style || {};
+      const sc = st.scale || 1;
+      for (let i = 0; i < n; i++) {
+        const isHead = head && i === 0;
+        const a = ang + (Math.random() - 0.5) * (isHead ? 0.7 : 1.6);
+        const sp = (110 + Math.random() * 150) * sc;
+        this.gibs.push({
+          type: isHead ? 'head' : 'arm',
+          x: x + (Math.random() - 0.5) * 5,
+          y: y + (Math.random() - 0.5) * 5,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          rot: Math.random() * 6.283,
+          rotV: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 10),
+          len: (9 + Math.random() * 5) * sc,
+          w: (3.1 + Math.random() * 1.1) * sc,
+          hand: (2.5 + Math.random() * 0.7) * sc,
+          cloth: st.cloth || '#6e6e74',
+          skin: st.skin || '#8a857e',
+          life: 0.36 + Math.random() * 0.24, max: 0.6,
+          drip: 0.02
+        });
+      }
     },
     addText(x, y, txt, color) {
       this.texts.push({ x, y, txt, color: color || '#fff', life: 0.9, max: 0.9 });
@@ -1963,9 +1992,32 @@
         s.life -= dt;
         if (s.life <= 0) this.shards.splice(i, 1);
       }
-      for (let i = this.slashes.length - 1; i >= 0; i--) {
-        this.slashes[i].life -= dt;
-        if (this.slashes[i].life <= 0) this.slashes.splice(i, 1);
+      for (let i = this.gibs.length - 1; i >= 0; i--) {
+        const g = this.gibs[i];
+        g.x += g.vx * dt; g.y += g.vy * dt;
+        // 阻尼按秒算，不然 60fps 下刚离体就钉住（同弹匣那条坑）
+        const damp = Math.pow(0.06, dt);
+        g.vx *= damp; g.vy *= damp;
+        g.rot += g.rotV * dt;
+        g.rotV *= Math.pow(0.35, dt);
+        g.life -= dt;
+        // 飞的时候一路滴血：这些血珠自己落地才留痕，正好给肢体拖出一条血线
+        g.drip -= dt;
+        if (g.drip <= 0 && g.life > 0) {
+          g.drip = 0.03 + Math.random() * 0.05;
+          const da = Math.atan2(g.vy, g.vx) + (Math.random() - 0.5) * 1.5;
+          const ds = 26 + Math.random() * 64;
+          this.sprays.push({
+            x: g.x, y: g.y,
+            vx: Math.cos(da) * ds, vy: Math.sin(da) * ds,
+            life: 0.16 + Math.random() * 0.22, max: 0.38,
+            size: 1.0 + Math.random() * 1.2,
+            color: Math.random() < 0.4 ? '#7d0e1c' : '#c2172a'
+          });
+        }
+        if (g.life > 0) continue;
+        bakeGib(g);
+        this.gibs.splice(i, 1);
       }
       if (this.shakeT > 0) {
         this.shakeT -= dt;
@@ -1980,7 +2032,7 @@
       this.clips.length = 0;
       this.shards.length = 0;
       this.sprays.length = 0;
-      this.slashes.length = 0;
+      this.gibs.length = 0;
       this.shake = 0; this.shakeT = 0; this.hitstop = 0; this.flash = 0;
     }
   };
@@ -2571,15 +2623,6 @@
       hitAny = true;
     }
     FX.kick(def.shake + (hitAny ? 2 : 0), 0.16);
-    // 斩击弧光：沿挥击方向扫出一道白弧（空手更淡、刀最亮最长）。
-    // 纯表现 —— 命中判定在上面已经按当时的扇形算完了，弧光只是让人看懂"这一刀扫过哪里"。
-    const bare = isPlayer && !actor.weapon;
-    // 弧光半径贴着刀刃走（刀身大概 20px），画太大就成了一条跟人对不上的白杠
-    const slashR = Math.min(Math.max(reach * 0.66, 16), 30);
-    FX.addSlash(origin.x, origin.y, facing, slashR,
-      halfArc * 0.92, isPlayer ? (actor.swingDir || 1) : 1,
-      bare ? 'rgba(226,232,240,0.62)' : 'rgba(255,255,255,0.92)',
-      isPlayer ? (actor.swingTotal || 0.18) * 0.95 : 0.14);
     emitNoise(actor.x, actor.y, 130);
   }
 
@@ -2695,6 +2738,9 @@
       // 爆头多喷一轮，画面更狠
       spillBlood(e.x, e.y, dir, { pools: 3, spurts: 4, streaks: 3, scale: 1.05, spray: 16, speckles: 18 }, false);
     }
+    // 断肢：霰弹枪 / 武士刀打死人时有概率把胳膊（霰弹还会连头）削下来。
+    // 只在玩家打死的场合做 —— 敌人互殴、油桶炸死都不该掉一地手脚。
+    if (byPlayer && wdef && wdef.gib && rollGib(wdef, e)) gibEnemy(e, wdef);
     Sfx.play('die');
     e.deadT = 0;
     // 掉枪：挑战模式近战武器不掉（匕首/球棍满地都是没意义，还会盖住血包和子弹）；
@@ -2742,6 +2788,39 @@
     }
   }
 
+  /**
+   * 这一次打死人要不要断肢。
+   * 基础概率写在武器表的 gib 上；霰弹枪额外按距离加权 —— 贴脸 1.7 倍、中距 1.15 倍、
+   * 远处只有 0.5 倍（隔着半个房间还能把腿打飞就不真实了）。
+   */
+  function rollGib(wdef, e) {
+    let chance = wdef.gib || 0;
+    if (wdef.pellets > 1) {
+      // 霰弹：越近越容易把人整个打散（隔着半个房间还能把腿打飞就不真实了）
+      const p = G.player;
+      const d = p ? Math.hypot(e.x - p.x, e.y - p.y) : 999;
+      chance *= d < 46 ? 1.7 : (d < 90 ? 1.15 : 0.5);
+    }
+    return Math.random() < Math.min(0.9, chance);
+  }
+
+  /** 把敌人的胳膊（霰弹还有可能带头）甩出去。 */
+  function gibEnemy(e, wdef) {
+    const pal = PALETTE['enemy_' + e.kind] || PALETTE.enemy_gun;
+    const style = { cloth: shade(pal.head, 0.78), skin: pal.skin, scale: e.scale || 1 };
+    const takeHead = !!wdef.gibHead && Math.random() < 0.55;
+    FX.addGibs(e.x, e.y, e.deathDir, takeHead ? 3 : 2, style, takeHead);
+    if (takeHead) {
+      // 头没了就别画整具尸体，留一地的肢体和血更像"轰碎"
+      e.gibbed = true;
+      FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 14, 1.15);
+    } else {
+      FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 8, 1.0);
+    }
+    Sfx.play('hit');
+    FX.kick(2.8, 0.16);
+  }
+
   /** 敌人死亡时概率掉落补给：血包（15%）/ 子弹（25%）。 */
   function rollDrop(e) {
     const r = Math.random();
@@ -2771,6 +2850,74 @@
     // 随机拉扁一点，不然每滩都是正圆，看着像贴纸
     dctx.scale(0.8 + Math.random() * 0.5, 0.8 + Math.random() * 0.5);
     dctx.drawImage(img, -s / 2, -s / 2, s, s);
+    dctx.restore();
+  }
+
+  // -------------------------------------------------------------- 断肢
+  /**
+   * 画一截断肢（局部坐标：原点在肢体中心，x 轴沿肢体长边）。
+   * 角色本来就是"一个头 + 两只圆手"，所以"胳膊"就是一截袖子加一只圆手，
+   * "头"就是那颗圆脑袋 —— 掉在地上的东西和站着的人形状对得上，才不像随机贴图。
+   */
+  function paintGib(c, g) {
+    c.save();
+    c.translate(g.x, g.y);
+    c.rotate(g.rot);
+    if (g.type === 'head') {
+      const r = 5.5 * (g.w / 3.4);
+      c.fillStyle = 'rgba(0,0,0,0.5)';
+      c.beginPath(); c.arc(0, 0, r + 0.9, 0, 6.283); c.fill();
+      c.fillStyle = g.cloth;                                     // 头发/帽
+      c.beginPath(); c.arc(0, 0, r, 0, 6.283); c.fill();
+      c.fillStyle = g.skin;                                      // 脸
+      c.beginPath(); c.arc(0, r * 0.26, r * 0.74, 0, 6.283); c.fill();
+      c.fillStyle = '#1a141e';                                   // 两只眼睛：一眼就认出这是"头"
+      c.beginPath(); c.arc(-r * 0.33, r * 0.2, 0.95, 0, 6.283); c.fill();
+      c.beginPath(); c.arc(r * 0.33, r * 0.2, 0.95, 0, 6.283); c.fill();
+      c.fillStyle = 'rgba(150,18,32,0.92)';                      // 脖子断口
+      c.beginPath(); c.ellipse(0, -r * 0.74, r * 0.6, r * 0.38, 0, 0, 6.283); c.fill();
+    } else {
+      // 袖子：先画粗一圈黑描边再压上布色，地板暗的时候才看得出轮廓
+      c.lineCap = 'round';
+      c.strokeStyle = 'rgba(0,0,0,0.5)';
+      c.lineWidth = g.w + 1.4;
+      c.beginPath();
+      c.moveTo(-g.len * 0.44, 0); c.lineTo(g.len * 0.3, 0);
+      c.stroke();
+      c.strokeStyle = g.cloth;
+      c.lineWidth = g.w;
+      c.beginPath();
+      c.moveTo(-g.len * 0.44, 0); c.lineTo(g.len * 0.3, 0);
+      c.stroke();
+      // 断口一圈暗红
+      c.fillStyle = 'rgba(150,18,32,0.9)';
+      c.beginPath(); c.ellipse(-g.len * 0.44, 0, 1.2, g.w * 0.5, 0, 0, 6.283); c.fill();
+      // 圆手
+      c.fillStyle = 'rgba(0,0,0,0.45)';
+      c.beginPath(); c.arc(g.len * 0.5, 0, g.hand + 0.7, 0, 6.283); c.fill();
+      c.fillStyle = g.skin;
+      c.beginPath(); c.arc(g.len * 0.5, 0, g.hand, 0, 6.283); c.fill();
+    }
+    c.restore();
+  }
+
+  /**
+   * 肢体落地：垫一小滩血，再把肢体本身画进贴花层（永久留着）。
+   * 和血滴一样走"先飞后落"—— 打死的瞬间地上是干净的，飞了 0.3~0.6s 才砸出痕迹。
+   */
+  function bakeGib(g) {
+    if (!W || !W.decals) return;
+    // 血泊受贴花总额度限制（满地都是的时候就不再铺），但肢体本身一定要落到地上，
+    // 否则飞到一半凭空消失，看着像 bug。
+    if (W.bloodCount <= BLOOD_CAP) {
+      W.bloodCount += 0.7;
+      bloodPool(g.x + (Math.random() - 0.5) * 4, g.y + (Math.random() - 0.5) * 4,
+        0.3 + Math.random() * 0.18);
+    }
+    const dctx = W.decals.getContext('2d');
+    dctx.save();
+    dctx.globalAlpha = 0.96;
+    paintGib(dctx, g);
     dctx.restore();
   }
 
@@ -2913,8 +3060,9 @@
       p.stun -= dt;
       p.vx *= 0.90; p.vy *= 0.90;
     } else {
-      // 移速 = 基础 × 疾跑倍率 × 瞄准减速（端枪时按 aimT 平滑压下来）
-      const spd = PLAYER_SPEED * speedMul(p) * (1 - p.aimT * (1 - AIM_MOVE_MUL));
+      // 移速 = 基础 × 疾跑倍率 × 瞄准减速（端枪时按 aimT 平滑压下来）× 剧情模式加成
+      const spd = PLAYER_SPEED * speedMul(p) * (1 - p.aimT * (1 - AIM_MOVE_MUL))
+        * (G.mode === 'story' ? STORY_MOVE_MUL : 1);
       p.vx = ix * spd;
       p.vy = iy * spd;
     }
@@ -5526,30 +5674,17 @@
       ctx.stroke();
       ctx.restore();
     }
-    // 斩击弧光：一条从起手侧扫向收势侧的弧，带一小段拖尾（画在角色之上，能看清刀扫过哪里）。
-    // 分几段画、越靠刀锋越亮 —— 不然整条弧一样白，看起来像根静止的白杠。
-    for (const sl of FX.slashes) {
-      const k = clamp(sl.life / sl.max, 0, 1);
-      const prog = 1 - k;
-      const a0 = sl.ang + sl.dir * sl.arc;
-      const a1 = sl.ang - sl.dir * sl.arc;
-      const t1 = Math.min(1, prog * 1.7);
-      const t0 = Math.max(0, prog * 1.7 - 0.62);
+    // 飞在空中的断肢：转着飞、带一圈投影，落地那一刻贴进贴花层
+    for (const g of FX.gibs) {
       ctx.save();
-      ctx.lineCap = 'round';
-      const N = 7;
-      for (let i = 0; i < N; i++) {
-        const f0 = t0 + (t1 - t0) * (i / N);
-        const f1 = t0 + (t1 - t0) * ((i + 1) / N);
-        const u = (i + 1) / N;
-        ctx.globalAlpha = k * 0.9 * (0.12 + 0.88 * u * u);
-        ctx.strokeStyle = sl.color;
-        ctx.lineWidth = 1.4 + 2.2 * u;
-        ctx.beginPath();
-        ctx.arc(sl.x, sl.y, sl.reach, a0 + (a1 - a0) * f0, a0 + (a1 - a0) * f1);
-        ctx.stroke();
-      }
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(g.x + 1.5, g.y + 2.5, g.len * 0.42, g.w * 0.7, g.rot, 0, 6.283);
+      ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.restore();
+      paintGib(ctx, g);
     }
     for (const p of FX.parts) {
       ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
@@ -7229,9 +7364,9 @@
     drawStations();
     drawExit();
 
-    // 先画尸体（最底层活物）
+    // 先画尸体（最底层活物）。被轰碎（头都没了）的那种不画整具尸体，只留地上的肢体
     for (const e of W.enemies) {
-      if (!e.alive) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+      if (!e.alive && !e.gibbed) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
     }
     // 拾取物压在尸体上面，避免血包/弹药被尸体盖住捡不到
     drawPickups();
@@ -7834,9 +7969,9 @@
     get g() { return G; },
     /** 换弹甩出的旧弹匣（测试断言"动画有没有真的触发"用） */
     get fxClips() { return FX.clips; },
-    /** 近战斩击弧光 / 空中血珠（测试"动画/喷溅有没有真的触发"用） */
-    get fxSlashes() { return FX.slashes; },
+    /** 空中血珠 / 飞出去的断肢（测试"喷溅、断肢有没有真的触发"用） */
     get fxSprays() { return FX.sprays; },
+    get fxGibs() { return FX.gibs; },
     /** 排队等着落地的血泊/血痕 */
     get bloodPending() { return (W && W.bloodPending) || []; },
     get arena() { return ARENA; },

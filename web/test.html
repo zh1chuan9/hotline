@@ -1535,7 +1535,6 @@
     H.attack();
     check('挥刀触发挥砍动画（swingT=' + g7s.player.swingT.toFixed(2) + '）', g7s.player.swingT > 0);
     check('挥砍方向左右交替（' + dir0 + ' → ' + g7s.player.swingDir + '）', g7s.player.swingDir === -dir0);
-    check('挥刀甩出斩击弧光（' + H.fxSlashes.length + ' 条）', H.fxSlashes.length > 0);
     const sw0 = g7s.player.swingT;
     H.step(3);
     check('挥砍动画在推进（' + sw0.toFixed(3) + ' → ' + g7s.player.swingT.toFixed(3) + '）',
@@ -1565,6 +1564,53 @@
     H.step(40);
     check('血滴落地后才出现血迹（' + pend0 + ' → ' + H.bloodPending.length + ' 项待落地，bloodCount=' + w8s.bloodCount.toFixed(1) + '）',
       H.bloodPending.length < pend0 && w8s.bloodCount > blood0);
+
+    // 断肢：霰弹枪 / 武士刀打死人有概率把胳膊（霰弹还会连头）削下来
+    H.startGame({ mode: 'story' });
+    const w11s = H.world, g11s = H.g;
+    g11s.player.weapon = 'shotgun';
+    g11s.player.ammo = 5;
+    const e11 = w11s.enemies[0];
+    e11.x = g11s.player.x + 30; e11.y = g11s.player.y;
+    let gibSeen = 0, headSeen = 0;
+    for (let i = 0; i < 40; i++) {
+      e11.alive = true; e11.gibbed = false; e11.hp = 10;
+      H.hitEnemy(e11, 9999, 0);
+      if (H.fxGibs.length > 0) gibSeen++;
+      if (e11.gibbed) headSeen++;
+      H.fxGibs.length = 0;
+    }
+    check('霰弹枪贴脸打死人会打断肢（40 次里 ' + gibSeen + ' 次）', gibSeen > 12);
+    check('霰弹枪有机会把头打飞（' + headSeen + ' 次）', headSeen > 0);
+
+    // 武士刀的断肢概率也要生效（同样多打几次）
+    H.startGame({ mode: 'story' });
+    const w12s = H.world, g12s = H.g;
+    g12s.player.weapon = 'knife';
+    const e12 = w12s.enemies[0];
+    e12.x = g12s.player.x + 22; e12.y = g12s.player.y;
+    let knifeGib = 0;
+    for (let i = 0; i < 40; i++) {
+      e12.alive = true; e12.gibbed = false; e12.hp = 10;
+      H.hitEnemy(e12, 9999, 0);
+      if (H.fxGibs.length > 0) knifeGib++;
+      H.fxGibs.length = 0;
+    }
+    check('武士刀砍死人有概率断肢（40 次里 ' + knifeGib + ' 次）', knifeGib > 10);
+
+    // 剧情模式玩家移速加成（对比同一帧输入下两种模式的水平速度）
+    H.startGame({ mode: 'story' });
+    const g13s = H.g;
+    H.key('d', true); H.step(2);
+    const vStory = Math.abs(g13s.player.vx);
+    H.key('d', false);
+    H.startGame({ mode: 'challenge' });
+    const g14s = H.g;
+    H.key('d', true); H.step(2);
+    const vChal = Math.abs(g14s.player.vx);
+    H.key('d', false);
+    check('剧情模式移速更快（' + vStory.toFixed(0) + ' vs ' + vChal.toFixed(0) + ' px/s）',
+      vStory > vChal * 1.15);
 
     // 扔枪砸人：把枪扔出去，飞一段距离后砸死目标
     H.startGame({ mode: 'story' });
