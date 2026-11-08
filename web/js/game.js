@@ -1166,13 +1166,16 @@
   });
 
   // ---------------------------------------------------------------- 音效
-  // 枪声 / 换弹声用真实录音（`js/sfx_samples.js` 里内嵌的 base64 MP3，用户提供），
-  // 其余音效仍是程序合成。每个采样单独描述"跳过开头多少静音 / 放多长 / 放大多少"，
-  // 这些数都是按录音实测出来的（tools/make_sfx.py 会打印时长和静音段），换录音要重新对。
+  // 换弹声用真实录音（`js/sfx_samples.js` 里内嵌的 base64 MP3，用户提供），其余仍是程序合成。
+  // 每个采样单独描述"跳过开头多少静音 / 放多长 / 放大多少"，这些数都是按录音实测出来的
+  // （tools/make_sfx.py 会打印时长和静音段），换录音要重新对一遍。
   const SAMPLES = {
-    // 手枪：1.70s，前 0.30s 纯静音，峰值在 0.47s（原始峰值只有 0.294，录音偏小），尾巴到 1.28s。
+    // 手枪枪声：**目前停用**（用户 2026-11-08 决定"先不用枪声，先存着"）。
+    // 采样本体还在 sfx_samples.js / tools/sfx_src/pistol.mp3 里，参数也照旧留着；
+    // 想启用就把 disabled 删掉（或改成 false），play('shoot') 会自动切回采样。
+    // 参数来历：1.70s，前 0.30s 纯静音，峰值在 0.47s（原始峰值 0.294，录音偏小），尾巴到 1.28s。
     // 0.15s 的射速下最多叠 4 个声部，再往上就糊成一团。
-    pistol: { trim: 0.30, len: 0.50, gain: 1.20, maxVoices: 4 },
+    pistol: { trim: 0.30, len: 0.50, gain: 1.20, maxVoices: 4, disabled: true },
     // 换弹：1.23s，前 0.19s 静音，0.19~0.55 是一串拔弹匣/摸弹匣的机械小响，
     // 0.71s 弹匣拍到位（最响，样本峰值 0.663），尾巴到 1.0s。整段放完正好盖住手枪 0.9s 的换弹时间。
     // steal：换弹声必须响（玩家按了 R 没声音会以为卡了），声部占满就抢掉最早那个，而不是哑火。
@@ -1247,7 +1250,7 @@
     sample(name, gain, rate) {
       const cfg = SAMPLES[name];
       const ac = this.ac;
-      if (!ac || !cfg || !this.sampleReady(name)) return false;
+      if (!ac || !cfg || cfg.disabled || !this.sampleReady(name)) return false;
       const t = ac.currentTime;
       const ends = this.voices[name] || (this.voices[name] = []);
       while (ends.length && ends[0] <= t) ends.shift();
@@ -1313,7 +1316,8 @@
       if (this.ac.state === 'suspended') this.ac.resume();
       switch (name) {
         case 'shoot':
-          // 真枪声采样 + 极短的合成爆点（补起手）；采样没准备好就退回纯合成音。
+          // 现在是纯合成枪声（采样停用，见 SAMPLES.pistol.disabled）。
+          // 采样一旦启用就走上面那条：真录音 + 极短合成爆点补起手。
           if (this.sample('pistol', 0.9, 0.96 + Math.random() * 0.08)) {
             this.noise(0.035, 3400, 0.9, 0.18, 0.05);
             this.tone(190, 62, 0.05, 0.08, 'square');
