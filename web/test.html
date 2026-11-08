@@ -1688,14 +1688,14 @@
     const lvls = H.storyLevels;
     let fitSize = true, rectOk = true, minDoors = 99, minEnemies = 99, totalDoors = 0;
     for (const lv of lvls) {
-      if (lv.rows.length > 16 || lv.rows[0].length > 24) fitSize = false;
+      if (lv.rows.length > 17 || lv.rows[0].length > 24) fitSize = false;
       for (const r of lv.rows) if (r.length !== 24) rectOk = false;
       const doors = lv.rows.join('').split('D').length - 1;
       totalDoors += doors;
       minDoors = Math.min(minDoors, doors);
       minEnemies = Math.min(minEnemies, lv.enemies.length);
     }
-    check('地图缩小到 ' + lvls[0].rows[0].length + '×' + lvls[0].rows.length + '（原 30×18）', fitSize);
+    check('地图 24×' + lvls[0].rows.length + '（原 30×18；序章走廊加高一行 16→17）', fitSize);
     check('每行都是 24 列（墙面严格对齐）', rectOk);
     check('每关至少 6 扇门/房间隔断（最少 ' + minDoors + ' 扇，四关共 ' + totalDoors + '）', minDoors >= 6);
     check('每关敌人更多（最少 ' + minEnemies + ' 人）', minEnemies >= 8);
