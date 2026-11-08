@@ -8378,27 +8378,36 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    // 击中敌人护甲：准心旁弹一个盾牌标志（蓝灰），提示"这枪只打掉了甲"
+    // 击中敌人护甲：准心旁弹一个小盾牌（蓝灰），提示"这枪只打掉了甲"
     if (G.armorHitT > 0) {
       const a = clamp(G.armorHitT / 0.18, 0, 1);
       ctx.save();
       ctx.globalAlpha = a;
-      ctx.strokeStyle = '#8fd0ff';
-      ctx.lineWidth = 2;
-      ctx.fillStyle = 'rgba(90,170,224,0.25)';
-      // 盾牌：上边一个小圆顶 + 下方收窄
-      ctx.beginPath();
-      ctx.moveTo(x + 16, y - 8);
-      ctx.quadraticCurveTo(x + 16, y - 14, x + 10, y - 14);
-      ctx.quadraticCurveTo(x + 7, y - 14, x + 7, y - 8);
-      ctx.lineTo(x + 7, y + 2);
-      ctx.lineTo(x + 4, y + 4);
-      ctx.lineTo(x + 4, y + 7);
-      ctx.lineTo(x + 19, y + 7);
-      ctx.lineTo(x + 19, y + 4);
-      ctx.lineTo(x + 16, y + 2);
-      ctx.closePath();
+      // 盾形：上边微微上拱、两侧竖直下到肩、再收拢到底部一个尖（骑士盾轮廓）。
+      // 左右严格对称 —— 之前那版左边圆顶、右下多出一个方角，加两个圆把手似的鼓包，
+      // 缩到 15px 读成了别的东西。
+      const cx = x + 16, cy = y - 11;
+      const drawShield = (sw, su, sl) => {
+        ctx.beginPath();
+        ctx.moveTo(cx - sw, cy - su + 2);
+        ctx.quadraticCurveTo(cx, cy - su - 1.6, cx + sw, cy - su + 2);   // 上边（微拱）
+        ctx.quadraticCurveTo(cx + sw, cy + sl * 0.35, cx, cy + sl);      // 右肩 → 底尖
+        ctx.quadraticCurveTo(cx - sw, cy + sl * 0.35, cx - sw, cy - su + 2); // 左肩回到起点
+        ctx.closePath();
+      };
+      ctx.lineJoin = 'round';
+      drawShield(6.5, 6.0, 8.0);
+      ctx.fillStyle = 'rgba(90,170,224,0.28)';
       ctx.fill();
+      ctx.strokeStyle = '#8fd0ff';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      // 中间一道竖棱：缩到 15px 也能看出是盾牌，而不是糊成一块色块
+      ctx.strokeStyle = 'rgba(207,232,255,0.75)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 4.6);
+      ctx.lineTo(cx, cy + 4.2);
       ctx.stroke();
       ctx.restore();
     }
