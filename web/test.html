@@ -769,13 +769,13 @@
     H.holdAim(false);
     p23.weapon = 'pistol'; p23.ammo = 12;
 
-    // 挑战模式不提供扔枪（只有剧情模式有，绑 F）
+    // 扔枪现在两种模式都能用（绑 F / 触屏"扔枪"），但别的键不该把枪扔出去
     const pk23 = H.world.pickups.length;
     H.key('x', true);
     for (let i = 0; i < 3; i++) { H.step(1); H.frameEnd(true); }
     H.key('x', false);
-    check('挑战模式按 X 不掉枪', p23.weapon === 'pistol' && H.world.pickups.length === pk23);
-    check('挑战模式直接调用扔枪被拒（throwWeapon 返回 false）', H.throwWeapon() === false);
+    check('按 X（非投掷键）不掉枪', p23.weapon === 'pistol' && H.world.pickups.length === pk23);
+    check('挑战模式也能扔枪（throwWeapon 返回 true）', H.throwWeapon() === true);
     H.clearPressed();
 
     // ============ 24. 老虎机保底 ============
@@ -1296,7 +1296,7 @@
     if (storyEnemies.length > 1) {
       const e1 = storyEnemies[1];
       e1.state = 'idle';                       // 重置回放松
-      H.noise(e1.x + 300, e1.y, 400);          // 声源在远处（300px，超出 0.32*400=128 的近距阈值）
+      H.noise(e1.x + 300, e1.y, 700);          // 声源在远处（300px：只进了传播半径，够不上"贴脸"阈值）
       check('远距离噪声让敌人怀疑（state=' + e1.state + '，应 investigate）', e1.state === 'investigate');
     }
 
@@ -1523,6 +1523,78 @@
     }
 
 
+
+    // ============ 30.6 近战挥舞 / 血液喷洒 / 扔枪砸人 ============
+    H.startGame({ mode: 'story' });
+    const w7s = H.world, g7s = H.g;
+    // 武士刀：挥击后应进入挥砍动画（swingT 倒数），方向左右交替
+    g7s.player.weapon = 'knife';
+    g7s.player.cooldown = 0;
+    g7s.player.facing = { x: 1, y: 0 };
+    const dir0 = g7s.player.swingDir;
+    H.attack();
+    check('挥刀触发挥砍动画（swingT=' + g7s.player.swingT.toFixed(2) + '）', g7s.player.swingT > 0);
+    check('挥砍方向左右交替（' + dir0 + ' → ' + g7s.player.swingDir + '）', g7s.player.swingDir === -dir0);
+    check('挥刀甩出斩击弧光（' + H.fxSlashes.length + ' 条）', H.fxSlashes.length > 0);
+    const sw0 = g7s.player.swingT;
+    H.step(3);
+    check('挥砍动画在推进（' + sw0.toFixed(3) + ' → ' + g7s.player.swingT.toFixed(3) + '）',
+      g7s.player.swingT < sw0);
+    H.step(20);
+    check('挥砍动画会自己收势（swingT=' + g7s.player.swingT.toFixed(2) + '）', g7s.player.swingT <= 0);
+
+    // 空手：出拳也要有挥拳动画（punchT），不是原地不动
+    g7s.player.weapon = null;
+    g7s.player.cooldown = 0;
+    H.attack();
+    check('空手出拳有挥拳动画（punchT=' + g7s.player.punchT.toFixed(2) + '）', g7s.player.punchT > 0);
+
+    // 血液喷洒：打死人那一瞬间只喷血珠，地面血迹延后出现
+    H.startGame({ mode: 'story' });
+    const w8s = H.world, g8s = H.g;
+    const e8 = w8s.enemies[0];
+    e8.alive = true;
+    e8.x = g8s.player.x + 26;
+    e8.y = g8s.player.y;
+    const blood0 = w8s.bloodCount;
+    H.hitEnemy(e8, 9999);
+    check('击杀瞬间喷出血珠/血雾（' + H.fxSprays.length + ' 颗）', H.fxSprays.length > 0);
+    check('血迹先排队、不直接贴地上（待落地 ' + H.bloodPending.length + ' 项，已画 ' + (w8s.bloodCount - blood0).toFixed(1) + '）',
+      H.bloodPending.length > 0 && w8s.bloodCount - blood0 < 0.5);
+    const pend0 = H.bloodPending.length;
+    H.step(40);
+    check('血滴落地后才出现血迹（' + pend0 + ' → ' + H.bloodPending.length + ' 项待落地，bloodCount=' + w8s.bloodCount.toFixed(1) + '）',
+      H.bloodPending.length < pend0 && w8s.bloodCount > blood0);
+
+    // 扔枪砸人：把枪扔出去，飞一段距离后砸死目标
+    H.startGame({ mode: 'story' });
+    const w9s = H.world, g9s = H.g;
+    g9s.player.weapon = 'pistol';
+    g9s.player.ammo = 6;
+    g9s.player.facing = { x: 1, y: 0 };
+    g9s.player.cooldown = 0;
+    const e9 = w9s.enemies[0];
+    e9.alive = true;
+    e9.x = g9s.player.x + 58;
+    e9.y = g9s.player.y;
+    e9.state = 'idle';
+    e9.thinkTimer = 99;
+    const threwOk = H.throwWeapon();
+    check('扔枪成功（thrown=' + H.thrown.length + '）', threwOk === true && H.thrown.length === 1);
+    check('扔出后手上空了（weapon=' + g9s.player.weapon + '）', !g9s.player.weapon);
+    H.step(24);
+    check('飞出的枪砸死目标（alive=' + e9.alive + '）', e9.alive === false);
+    check('砸中的枪落地变成可捡物', w9s.pickups.some(pk => pk.def === 'pistol'));
+
+    // 警觉范围收窄：视距与噪声半径都该比原来（190~215px / 520px）小一截
+    const Ks = [H.enemyKind.melee.view, H.enemyKind.gun.view, H.enemyKind.shotgun.view];
+    check('敌人视距收窄（' + Ks.join(' / ') + 'px，均 ≤ 160）', Ks.every(v => v <= 160));
+    H.startGame({ mode: 'story' });
+    const w10s = H.world;
+    const e10 = w10s.enemies[0];
+    e10.state = 'idle';
+    H.noise(e10.x + 340, e10.y, 520);    // 原逻辑里 520 半径会传到 340px 外
+    check('340px 外的枪声不再惊动敌人（state=' + e10.state + '）', e10.state === 'idle');
 
     // 挑战模式回归：仍走波次
     H.startGame({ mode: 'challenge' });

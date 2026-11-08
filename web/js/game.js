@@ -126,6 +126,9 @@
     blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.9, spray: 16, speckles: 20 }
   };
   const PUNCH_TIME = 0.2;   // 出拳的前伸动画时长（纯视觉）
+  // 近战挥砍动画：刀/棍整把武器从一侧扫到另一侧（纯视觉，判定仍是 fireRate 那一瞬间的扇形）
+  const SWING_TIME = { knife: 0.19, bat: 0.26 };
+  const SWING_DEFAULT = 0.2;
   // ---------------------------------------------------------------- 武器升级
   //
   // 地图上的升级站（字符 U）在**第 5 波清完之后**解锁。四条线各 3 级，越升越贵；
@@ -436,25 +439,33 @@
 
   ];
 
+  // 警觉范围的两道闸：
+  //   ALERT_CONE  视野半角（原 60° → 现在 44°，总视野 120° → 88°）
+  //   ALERT_NOISE 噪声半径总倍率（枪声 520 → 286），让"在另一头开一枪半张图的人都醒"消失
+  // 视距本身也一起收短了：原来 190~215px 差不多是两三个房间的距离，玩家刚进门就被远处的人盯上。
+  const ALERT_CONE = 44;
+  const ALERT_NOISE = 0.55;
+  const ALERT_NEAR = 0.30;        // 噪声半径内这一比例算"贴脸"，直接惊动追击
+
   const ENEMY_KIND = {
     melee: {
       tex: 'enemy_melee', corpse: 'corpse_enemy_melee',
-      speed: 76, view: 190, attackRange: 26,
-      keep: 0, interval: 0.62, aimErr: 0, weapon: 'knife', reaction: 0.3,
+      speed: 76, view: 132, attackRange: 26,
+      keep: 0, interval: 0.62, aimErr: 0, weapon: 'knife', reaction: 0.34,
       windup: 0.28,
       hp: 24, dmg: 10, score: 50
     },
     gun: {
       tex: 'enemy_gun', corpse: 'corpse_enemy_gun',
-      speed: 62, view: 215, attackRange: 170,
-      keep: 140, interval: 0.62, aimErr: 13, weapon: 'pistol', reaction: 0.34,
+      speed: 62, view: 156, attackRange: 150,
+      keep: 118, interval: 0.62, aimErr: 13, weapon: 'pistol', reaction: 0.38,
       windup: 0.55,
       hp: 20, dmg: 9, score: 75
     },
     shotgun: {
       tex: 'enemy_shotgun', corpse: 'corpse_enemy_shotgun',
-      speed: 68, view: 195, attackRange: 100,
-      keep: 84, interval: 1.1, aimErr: 17, weapon: 'shotgun', reaction: 0.32,
+      speed: 68, view: 140, attackRange: 92,
+      keep: 78, interval: 1.1, aimErr: 17, weapon: 'shotgun', reaction: 0.36,
       windup: 0.7,
       hp: 26, dmg: 8, score: 100
     }
@@ -1435,6 +1446,7 @@
       cleared: false,
       decals: document.createElement('canvas'),
       bloodCount: 0,
+      bloodPending: [],  // 排队等着"落地"的血泊/血痕（血是喷出来的，不是瞬间贴上去的）
       _solidDirty: true,
       _solid: null
     };
@@ -1785,6 +1797,8 @@
     texts: [],
     clips: [],       // 换弹时甩出去的旧弹匣（要旋转，粒子那套圆点表达不了）
     shards: [],      // 护甲被打碎时飞出的甲片（旋转的方形碎片）
+    sprays: [],      // 血液喷溅：空中的血珠/血雾，**落地那一刻**才在地上留下血点
+    slashes: [],     // 近战斩击弧光
     shake: 0,
     shakeT: 0,
     hitstop: 0,
@@ -1833,20 +1847,52 @@
         });
       }
     },
+    /**
+     * 血液喷洒：从创口朝受力方向喷出一股血珠 + 一层薄雾。
+     *
+     * 这里是"不许直接出现血"的关键：空中飞的只是**液滴**，地上什么都没有；
+     * 每颗血珠飞到速度耗尽 / 寿命到了的那一刻，才在自己的落点上点一小滴血痕。
+     * 所以打死人时先看到一条血线甩出去，0.2~0.5s 后地面才一点点脏起来，
+     * 而不是"砰"地贴上一大滩红图。
+     */
     addBlood(x, y, dir, n, scale) {
       const a = Math.atan2(dir.y, dir.x);
       const count = n || 10;
       const sc = scale || 1;
-      for (let i = 0; i < count; i++) {
-        const aa = a + (Math.random() - 0.5) * 2.0 * sc;
-        const s = (40 + Math.random() * 130) * (0.6 + sc * 0.6);
-        this.parts.push({
-          x, y, vx: Math.cos(aa) * s, vy: Math.sin(aa) * s,
-          life: 0.45 + Math.random() * 0.5, max: 0.95,
-          color: Math.random() < 0.35 ? '#8c0f1c' : (Math.random() < 0.2 ? '#e0243a' : '#c2172a'),
-          size: (1 + Math.random() * 2) * (0.8 + sc * 0.4)
+      // 血雾：几团扩散开的半透明红雾，压在血珠下面，给"喷"一个体积感
+      const mists = Math.max(1, Math.round(count * 0.22));
+      for (let i = 0; i < mists; i++) {
+        const ma = a + (Math.random() - 0.5) * 1.1 * sc;
+        const ms = (26 + Math.random() * 40) * (0.7 + sc * 0.5);
+        this.sprays.push({
+          mist: true,
+          x, y,
+          vx: Math.cos(ma) * ms, vy: Math.sin(ma) * ms,
+          life: 0.34 + Math.random() * 0.24, max: 0.58,
+          size: (3.2 + Math.random() * 3.4) * (0.75 + sc * 0.5),
+          color: Math.random() < 0.5 ? 'rgba(126,14,26,' : 'rgba(168,22,38,'
         });
       }
+      // 血珠：带速度甩出去，会飞、会减速、落地留痕
+      for (let i = 0; i < count; i++) {
+        const aa = a + (Math.random() - 0.5) * 1.9 * sc;
+        const s = (55 + Math.random() * 175) * (0.55 + sc * 0.55);
+        this.sprays.push({
+          x, y,
+          vx: Math.cos(aa) * s, vy: Math.sin(aa) * s,
+          life: 0.22 + Math.random() * 0.34, max: 0.56,
+          size: (0.9 + Math.random() * 1.9) * (0.8 + sc * 0.35),
+          color: Math.random() < 0.3 ? '#7d0e1c' : (Math.random() < 0.25 ? '#e0243a' : '#bf1527')
+        });
+      }
+    },
+    /** 近战斩击弧光：沿挥击方向扫过的一条弧（带拖尾），越挥越长、末尾淡出。 */
+    addSlash(x, y, ang, reach, arc, dir, color, life) {
+      this.slashes.push({
+        x, y, ang, reach, arc, dir: dir || 1,
+        life: life || 0.16, max: life || 0.16,
+        color: color || 'rgba(255,255,255,0.9)'
+      });
     },
     addText(x, y, txt, color) {
       this.texts.push({ x, y, txt, color: color || '#fff', life: 0.9, max: 0.9 });
@@ -1882,6 +1928,16 @@
         p.life -= dt;
         if (p.life <= 0) this.parts.splice(i, 1);
       }
+      // 血珠：飞到落点（寿命耗尽/速度停下来）才在地上点一滴 —— 血不是"直接出现"的
+      for (let i = this.sprays.length - 1; i >= 0; i--) {
+        const s = this.sprays[i];
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        s.vx *= Math.pow(0.06, dt); s.vy *= Math.pow(0.06, dt);
+        s.life -= dt;
+        if (s.life > 0) continue;
+        if (!s.mist) bloodDot(s.x, s.y, s.size * (0.85 + Math.random() * 0.7));
+        this.sprays.splice(i, 1);
+      }
       for (let i = this.clips.length - 1; i >= 0; i--) {
         const c = this.clips[i];
         c.x += c.vx * dt; c.y += c.vy * dt;
@@ -1907,6 +1963,10 @@
         s.life -= dt;
         if (s.life <= 0) this.shards.splice(i, 1);
       }
+      for (let i = this.slashes.length - 1; i >= 0; i--) {
+        this.slashes[i].life -= dt;
+        if (this.slashes[i].life <= 0) this.slashes.splice(i, 1);
+      }
       if (this.shakeT > 0) {
         this.shakeT -= dt;
         if (this.shakeT <= 0) this.shake = 0;
@@ -1919,6 +1979,8 @@
       this.texts.length = 0;
       this.clips.length = 0;
       this.shards.length = 0;
+      this.sprays.length = 0;
+      this.slashes.length = 0;
       this.shake = 0; this.shakeT = 0; this.hitstop = 0; this.flash = 0;
     }
   };
@@ -1926,14 +1988,16 @@
   // ---------------------------------------------------------------- 声音事件
   function emitNoise(x, y, radius) {
     if (!W) return;
+    // 噪声实际传播半径统一收一档（ALERT_NOISE），不然一把手枪就能叫醒整层楼
+    const R = radius * ALERT_NOISE;
     for (const e of W.enemies) {
       if (!e.alive) continue;
       const d = Math.hypot(x - e.x, y - e.y);
-      if (d <= radius) {
+      if (d <= R) {
         if (e.state === 'chase') continue;
-        // 警觉系统：噪声越近，反应越强。近距离（< 半径 1/3）直接惊动追击，
+        // 警觉系统：噪声越近，反应越强。近距离（< 半径 30%）直接惊动追击，
         // 中远距离则先怀疑、走向声源查看（investigate），途中看到玩家才转追击。
-        const near = d <= radius * 0.32;
+        const near = d <= R * ALERT_NEAR;
         if (near) {
           e.state = 'chase';
           e.lastSeen.x = x; e.lastSeen.y = y;
@@ -1942,7 +2006,7 @@
         } else if (e.state !== 'investigate') {
           e.state = 'investigate';
           e.target.x = x; e.target.y = y;
-          e.investigateTimer = 3.2;
+          e.investigateTimer = 2.4;
           FX.addText(e.x, e.y - 14, '?', '#ffd76e');
         }
       }
@@ -2000,6 +2064,10 @@
       armed: true,
       // 空手出拳的前伸动画计时（>0 时拳头往前探）
       punchT: 0,
+      // 近战挥砍动画：swingT 倒数到 0，swingDir 决定这一刀从左往右还是反向（左右交替）
+      swingT: 0,
+      swingTotal: 0,
+      swingDir: 1,
       // 散弹枪逐发装填：shellReload > 0 表示正在塞当前这一发
       shellReload: 0,
       shellTotal: 0,
@@ -2260,16 +2328,19 @@
   }
 
   /**
-   * 把手上这把家伙扔出去（剧情模式 F / 触屏"扔枪"）。
-   * 迈阿密热线式操作：子弹打光就把空枪砸出去 —— 砸中人直接砸死，枪落地还能再捡。
+   * 把手上这把家伙扔出去（F / 触屏"扔枪"）。
+   * 迈阿密热线式操作：子弹打光就把空枪砸出去 —— 砸中人当场放倒，枪落地还能再捡。
    * 扔出去后手上空了：背上有枪就自动掏出来，没有就空手（去捡敌人的枪）。
+   *
+   * 两种模式都能扔：挑战模式扔的是花钱买的枪，但落地还能捡回来，
+   * 只有真扔进墙缝里才会丢（跟"打光了砸出去"相比，这个风险玩家自己权衡）。
    */
   const THROW_SPEED = 560;
+  const THROW_DMG = 55;      // 挑战模式的钝击伤害（剧情模式仍然是一击必杀）
 
   function throwWeapon() {
     const p = G.player;
     if (!p || !p.alive || !W) return false;
-    if (G.mode !== 'story') return false;   // 挑战模式不给扔枪（会把商店买来的枪白扔了）
     if (!p.weapon) return false;
     if (p.reload > 0) return false;
     const def = WEAPONS[p.weapon];
@@ -2277,6 +2348,7 @@
     W.thrown.push({
       def: p.weapon,
       ammo: def.melee ? 0 : p.ammo,     // 枪里剩多少子弹就带着飞
+      reserve: def.melee ? 0 : (p.reserve || 0),
       x: p.x + p.facing.x * 10,
       y: p.y + p.facing.y * 10,
       vx: Math.cos(a) * THROW_SPEED,
@@ -2285,6 +2357,9 @@
       spin: 26 * (Math.random() < 0.5 ? -1 : 1),
       life: 1.1
     });
+    // 甩手：空手时用出拳那套前伸动画替一下（枪已经飞出去了，手要跟出去）
+    p.punchT = PUNCH_TIME * 0.9;
+    p.swingDir = 1;
     // 手上清空：先看背上有没有，有就顺手掏出来
     p.weapon = null;
     p.ammo = 0;
@@ -2314,33 +2389,46 @@
       t.rot += t.spin * dt;
       // 分两小步推进，避免一帧穿过薄墙
       let landed = false;
+      let hitActor = false;
       for (let s = 0; s < 2 && !landed; s++) {
         const nx = t.x + t.vx * dt * 0.5;
         const ny = t.y + t.vy * dt * 0.5;
-        // 砸到敌人：一击必杀，枪掉在他身上
+        // 砸到敌人：剧情一击必杀；挑战模式按钝击伤害算（砸头还有加成）
         for (const e of W.enemies) {
           if (!e.alive) continue;
           const r = ACTOR_R + 6 + (e.scale ? e.scale * 2 : 0);
           if (Math.hypot(nx - e.x, ny - e.y) <= r) {
-            damageEnemy(e, 9999, t.rot, true, false);
+            const dmg = G.mode === 'story' ? 9999 : THROW_DMG;
+            // 撞击点血雾：朝飞行方向喷一股，砸中的感觉才"实"
+            FX.addBlood(nx, ny, { x: Math.cos(t.rot) * 0.9, y: Math.sin(t.rot) * 0.9 }, 14, 1.0);
+            FX.kick(2.8, 0.12);
+            damageEnemy(e, dmg, t.rot, true, false);
             Sfx.play('hit');
             emitNoise(nx, ny, 260);
+            // 被砸中的敌人往受力方向倒
+            e.deathDir = t.rot;
             landed = true;
+            hitActor = true;
             break;
           }
         }
         if (landed) break;
-        // 撞墙/门/掩体
-        if (pointSolid(W, nx, ny, 2)) { landed = true; break; }
+        // 撞墙/门/掩体：崩一层灰
+        if (pointSolid(W, nx, ny, 2)) {
+          FX.addParticles(nx, ny, 7, '#b9b2a6', 90, 0.22);
+          FX.kick(1.6, 0.08);
+          landed = true;
+          break;
+        }
         t.x = nx; t.y = ny;
       }
       if (!landed && t.life > 0) continue;
       // 落地：变成地上的枪（带着剩下的子弹）
       const pk = makePickup(t.def, t.x, t.y);
       pk.ammo = t.ammo;
-      pk.reserve = 0;
+      pk.reserve = t.reserve || 0;
       W.pickups.push(pk);
-      Sfx.play('step');
+      if (!hitActor) Sfx.play('step');
       list.splice(i, 1);
     }
   }
@@ -2483,12 +2571,15 @@
       hitAny = true;
     }
     FX.kick(def.shake + (hitAny ? 2 : 0), 0.16);
-    // 挥击弧线
-    FX.parts.push({
-      x: origin.x + Math.cos(facing) * reach * 0.7,
-      y: origin.y + Math.sin(facing) * reach * 0.7,
-      vx: 0, vy: 0, life: 0.12, max: 0.12, color: 'rgba(255,255,255,0.35)', size: 3
-    });
+    // 斩击弧光：沿挥击方向扫出一道白弧（空手更淡、刀最亮最长）。
+    // 纯表现 —— 命中判定在上面已经按当时的扇形算完了，弧光只是让人看懂"这一刀扫过哪里"。
+    const bare = isPlayer && !actor.weapon;
+    // 弧光半径贴着刀刃走（刀身大概 20px），画太大就成了一条跟人对不上的白杠
+    const slashR = Math.min(Math.max(reach * 0.66, 16), 30);
+    FX.addSlash(origin.x, origin.y, facing, slashR,
+      halfArc * 0.92, isPlayer ? (actor.swingDir || 1) : 1,
+      bare ? 'rgba(226,232,240,0.62)' : 'rgba(255,255,255,0.92)',
+      isPlayer ? (actor.swingTotal || 0.18) * 0.95 : 0.14);
     emitNoise(actor.x, actor.y, 130);
   }
 
@@ -2683,6 +2774,25 @@
     dctx.restore();
   }
 
+  /**
+   * 单颗血珠落地留下的小血点。比血泊小得多，靠数量堆出"溅开"的感觉。
+   * 每颗血珠只算 0.2 个额度：一枪打死大约 40 颗，按 1:1 记账的话十来个人就到顶了。
+   */
+  function bloodDot(x, y, r) {
+    if (!W || !W.decals) return;
+    if (W.bloodCount > BLOOD_CAP) return;
+    W.bloodCount += 0.2;
+    const dctx = W.decals.getContext('2d');
+    dctx.save();
+    dctx.globalAlpha = 0.5 + Math.random() * 0.38;
+    dctx.fillStyle = Math.random() < 0.4 ? '#7c0c18' : '#a8121f';
+    dctx.beginPath();
+    dctx.ellipse(x, y, r * (0.7 + Math.random() * 0.8), r * (0.55 + Math.random() * 0.7),
+      Math.random() * 3.14, 0, 6.283);
+    dctx.fill();
+    dctx.restore();
+  }
+
   // 甩出去的血痕
   function bloodStreak(x, y, ang, scale) {
     if (W.bloodCount > BLOOD_CAP) return;
@@ -2714,28 +2824,57 @@
     }
   }
 
-  /** 一次死亡的全部血迹：空中血雾 + 血泊 + 拖拽血痕 + 地面飞沫。 */
+  /**
+   * 血迹的"延后落地"队列。
+   * 死亡那一帧只喷血（空中的珠子），血泊/血痕按 delay 排队，
+   * 0.1~0.5s 后才在地上出现 —— 看起来是"血慢慢淌开"，而不是"砰一下贴个红图"。
+   */
+  function queueBlood(kind, delay, x, y, a, s, n) {
+    if (!W) return;
+    if (!W.bloodPending) W.bloodPending = [];
+    if (W.bloodPending.length > 320) return;
+    W.bloodPending.push({ kind, t: delay, x, y, a: a || 0, s: s || 1, n: n || 0 });
+  }
+
+  function updateBloodDecals(dt) {
+    const q = W && W.bloodPending;
+    if (!q || !q.length) return;
+    for (let i = q.length - 1; i >= 0; i--) {
+      const b = q[i];
+      b.t -= dt;
+      if (b.t > 0) continue;
+      q.splice(i, 1);
+      if (b.kind === 'pool') bloodPool(b.x, b.y, b.s);
+      else if (b.kind === 'streak') bloodStreak(b.x, b.y, b.a, b.s);
+      else bloodSpeckle(b.x, b.y, b.a, b.n);
+    }
+  }
+
+  /** 一次死亡的全部血迹：先喷血雾/血珠，落地与血泊按节奏延后出现。 */
   function spillBlood(x, y, dir, B, isPlayer) {
     const ang = Math.atan2(dir.y, dir.x);
     const sc = B.scale * (isPlayer ? 1.25 : 1);
-    // 空中血雾：朝子弹方向喷一个扇面
+    // 1) 喷：朝子弹方向一股主血线，背后再溅一层反冲的细雾
     FX.addBlood(x, y, dir, B.spray, sc);
-    FX.addBlood(x, y, { x: -dir.x * 0.6, y: -dir.y * 0.6 }, Math.round(B.spray * 0.35), sc * 0.7);
-    // 脚下一大滩
-    bloodPool(x + (Math.random() - 0.5) * 5, y + (Math.random() - 0.5) * 5, 0.92 * sc);
-    // 溅开的血泊，越强的武器飞得越远；单滩小一点，靠数量堆出血腥
+    FX.addBlood(x, y, { x: -dir.x * 0.6, y: -dir.y * 0.6 }, Math.round(B.spray * 0.4), sc * 0.7);
+    // 2) 落地：脚下一滩最早出现（人倒下先积血），溅开的血泊再晚一点
+    queueBlood('pool', 0.10 + Math.random() * 0.08,
+      x + (Math.random() - 0.5) * 5, y + (Math.random() - 0.5) * 5, 0, 0.92 * sc);
     for (let i = 0; i < B.pools; i++) {
       const a = ang + (Math.random() - 0.5) * 2.6;
       const r = (6 + Math.random() * 34) * sc;
-      bloodPool(x + Math.cos(a) * r, y + Math.sin(a) * r, (0.16 + Math.random() * 0.26) * sc);
+      queueBlood('pool', 0.20 + Math.random() * 0.34,
+        x + Math.cos(a) * r, y + Math.sin(a) * r, 0, (0.16 + Math.random() * 0.26) * sc);
     }
-    // 拖拽血痕，顺着受力方向甩出去
+    // 3) 拖拽血痕：顺着受力方向甩出去，比血泊再晚一拍
     for (let i = 0; i < B.streaks; i++) {
       const a = ang + (Math.random() - 0.5) * 1.3;
       const r = (8 + Math.random() * 22) * sc;
-      bloodStreak(x + Math.cos(a) * r, y + Math.sin(a) * r, a, 0.85 + Math.random() * 0.7 * sc);
+      queueBlood('streak', 0.16 + Math.random() * 0.3,
+        x + Math.cos(a) * r, y + Math.sin(a) * r, a, 0.85 + Math.random() * 0.7 * sc, 0);
     }
-    bloodSpeckle(x, y, ang, Math.round(B.speckles * sc));
+    // 4) 碎血点最后落（飞得最远、最晚着地）
+    queueBlood('speckle', 0.34 + Math.random() * 0.26, x, y, ang, 0, Math.round(B.speckles * sc));
   }
 
   // ---------------------------------------------------------------- 玩家更新
@@ -2803,6 +2942,7 @@
     if (p.cooldown > 0) p.cooldown -= dt;
     if (p.throwCd > 0) p.throwCd -= dt;
     if (p.punchT > 0) p.punchT -= dt;   // 空手出拳的前伸动画
+    if (p.swingT > 0) p.swingT -= dt;   // 近战挥砍动画（刀/棍）
     // 换枪动画：倒计时，走完才恢复持枪状态
     if (p.swapT > 0) {
       p.swapT -= dt;
@@ -2867,8 +3007,8 @@
     // 手雷（G）：切换手持手雷，切出后左键丢、右键瞄准
     if (pressed['g']) toggleGrenade();
 
-    // 扔枪（F）：剧情模式把手上这把砸出去（砸中人直接死，落地还能捡回来）
-    if (pressed['f'] && G.mode === 'story') throwWeapon();
+    // 扔枪（F）：把手上这把砸出去（砸中人当场放倒，落地还能捡回来）
+    if (pressed['f']) throwWeapon();
 
     // 攻击（按住/单击）
     const fireHeld = mouse.down || keys['j'];
@@ -3278,7 +3418,10 @@
     if (def.melee) {
       p.cooldown = def.fireRate;
       Sfx.play(def.sound);
-      if (!p.weapon) p.punchT = PUNCH_TIME;   // 只做出拳前伸动画
+      // 挥砍动画：每一刀左右交替，避免连续挥击像在"抖"
+      p.swingTotal = p.swingT = (SWING_TIME[p.weapon] || SWING_DEFAULT);
+      p.swingDir = -(p.swingDir || 1);
+      if (!p.weapon) p.punchT = PUNCH_TIME;   // 空手：拳头走另一套前伸动作
       meleeSwing(p, def, true);
       return;
     }
@@ -3430,13 +3573,14 @@
       return;
     }
     if (e.attackCd > 0) e.attackCd -= dt;
+    if (e.swingT > 0) e.swingT -= dt;      // 近战挥砍动画
 
     const dToP = Math.hypot(p.x - e.x, p.y - e.y);
     const angToP = Math.atan2(p.y - e.y, p.x - e.x);
     let sees = false;
     if (p.alive && dToP <= K.view) {
       const facingAngle = e.kind === 'melee' ? e.facing : e.facing;
-      if (Math.abs(angDiff(angToP, facingAngle)) <= 60 * Math.PI / 180) {
+      if (Math.abs(angDiff(angToP, facingAngle)) <= ALERT_CONE * Math.PI / 180) {
         if (lineClear(e.x, e.y, p.x, p.y)) sees = true;
       }
     }
@@ -3459,7 +3603,7 @@
         } else if (e.lostTimer > 1.6) {
           e.state = 'investigate';
           e.target.x = e.lastSeen.x; e.target.y = e.lastSeen.y;
-          e.investigateTimer = 3.0;
+          e.investigateTimer = 2.2;
         }
       }
     }
@@ -3619,6 +3763,9 @@
     if (def.melee) {
       e.attackCd = K.interval;
       Sfx.play(def.sound);
+      // 敌人挥刀也有挥砍动画（跟玩家同一套），不然近战兵看起来是"贴着人不动却掉血"
+      e.swingTotal = e.swingT = SWING_TIME[e.weapon] || SWING_DEFAULT;
+      e.swingDir = -(e.swingDir || 1);
       meleeSwing(e, def, false);
       return;
     }
@@ -4604,6 +4751,7 @@
       updateBarrels(dt);
       updateGrenades(dt);
       updateThrown(dt);
+      updateBloodDecals(dt);
       for (const e of W.enemies) updateEnemy(e, dt);
       updatePickups(dt);
       // 清场判定
@@ -5227,6 +5375,18 @@
     }
     const angG = ang + tilt;                         // 枪和手用这个角度
 
+    // 近战挥舞：整把武器绕身侧扫过一段角度（swingA），同时往前送一点（swingR）。
+    // 角度用 (2·prog-1)·sin(π·prog)：起手/收势都是 0，中段扫到最大 —— 动画收尾不会"跳一下"。
+    let swingA = 0, swingR = 0;
+    const meleeDef = (!holding && held && WEAPONS[held] && WEAPONS[held].melee)
+      ? WEAPONS[held] : null;
+    if (meleeDef && a.swingT > 0 && a.swingTotal > 0) {
+      const prog = clamp(1 - a.swingT / a.swingTotal, 0, 1);
+      const wave = Math.sin(prog * Math.PI);
+      swingA = (a.swingDir || 1) * (2 * prog - 1) * wave * 2.4;
+      swingR = wave * 5.5;
+    }
+
     // 双持（手枪/冲锋枪进化后）：左右手各一把，**镜像对称、枪口都对准心**。
     // 两把枪沿枪身法线方向左右错开（dualOff），但都不偏转角度 —— 枪口平行地朝 facing（准心）。
     // 左手枪沿枪管轴上下翻转（scale 1,-1），握把从「枪身下方」翻到「枪身上方」，
@@ -5242,8 +5402,8 @@
         // 加到 translate 的 y 上（±dualOff）即可 —— 绝不能再用世界坐标系法向量 (nxG,nyG)
         // 混进局部坐标，否则一转身错位方向就歪，枪会从手上「滑出去」。
         ctx.save();
-        ctx.rotate(angG);
-        ctx.translate(11.6 + gunShift - kick - pull,
+        ctx.rotate(angG + (isDual ? 0 : swingA));
+        ctx.translate(11.6 + gunShift - kick - pull + (isDual ? 0 : swingR),
                       2 + pullY + s * dualOff);
         ctx.scale(0.72, 0.72 * (isDual && s < 0 ? -1 : 1));   // 左手枪沿枪管轴上下镜像
         ctx.drawImage(wimg, -wimg.width / 2, -wimg.height / 2);
@@ -5256,11 +5416,6 @@
     // 只盖住握把/护木，不糊住枪管 —— 手一旦扣在枪管上，整把枪就看不见了。
     const hands = [];
     const grip = (!holding && held) ? GRIP[held] : null;
-    // 空手出拳：两只手一起往前探（sin 曲线 —— 起手收、中段最远、收势回原位）
-    let punchOut = 0;
-    if (isPlayer && !held && a.punchT > 0) {
-      punchOut = Math.sin(clamp(1 - a.punchT / PUNCH_TIME, 0, 1) * Math.PI) * 7;
-    }
     if (grip) {
       // 后坐时手跟着枪一起往回缩，不然会看到"枪缩了、手还伸着"；换弹内收同理
       const back = gunShift - kick * 0.5 - pull;
@@ -5276,16 +5431,34 @@
       }
     } else {
       const arc = holding ? HAND_ARC * 0.62 : HAND_ARC;
-      const reach = (holding ? HAND_REACH * 1.12 : HAND_REACH) + punchOut;
+      const reach = (holding ? HAND_REACH * 1.12 : HAND_REACH) + swingR;
       const hr = holding ? HAND_R * 0.9 : HAND_R;
-      for (const s of [-1, 1]) {
-        hands.push({ x: Math.cos(s * arc) * reach, y: Math.sin(s * arc) * reach, r: hr, da: 0 });
+      // 空手勾拳：右拳从身侧扫到身前（角度扫过约 2.4rad、半径中段最长），
+      // 左拳同时往回收半格 —— 两只手一进一退才像出拳，两只手一起往前伸像"推门"。
+      let punchP = -1;
+      if (isPlayer && !held && !holding && a.punchT > 0) {
+        punchP = clamp(1 - a.punchT / PUNCH_TIME, 0, 1);
+      }
+      if (punchP >= 0) {
+        const out = Math.sin(punchP * Math.PI);
+        const dir = a.swingDir || 1;
+        const ra = dir * (arc * 1.7 - 2.4 * punchP);
+        hands.push({ x: Math.cos(ra) * (reach + out * 10), y: Math.sin(ra) * (reach + out * 10), r: hr, da: 0 });
+        const la = -dir * arc * 1.05;
+        const lr = reach - out * 2.6;
+        hands.push({ x: Math.cos(la) * lr, y: Math.sin(la) * lr, r: hr * 0.92, da: 0 });
+      } else {
+        for (const s of [-1, 1]) {
+          hands.push({ x: Math.cos(s * arc) * reach, y: Math.sin(s * arc) * reach, r: hr, da: 0 });
+        }
       }
     }
+    // 近战挥舞时，握持的手要跟着武器一起扫（否则会出现"刀飞出去、手留在原地"）
+    if (meleeDef) for (const h of hands) h.x += swingR;
     for (const h of hands) {
       // 局部（枪身坐标系）→ 世界：跟着朝向旋转（双持时每只手再叠自己那把枪的偏转角，
-      // 换弹时再叠一点侧倾，手才不会留在枪外面）
-      const ha = angG + (h.da || 0);
+      // 换弹时再叠一点侧倾，手才不会留在枪外面；近战挥砍时叠挥砍角）
+      const ha = angG + (h.da || 0) + (meleeDef ? swingA : 0);
       const hx = Math.cos(ha) * h.x - Math.sin(ha) * h.y;
       const hy = Math.sin(ha) * h.x + Math.cos(ha) * h.y;
       dot(hx, hy, h.r + 0.9, rim);
@@ -5353,10 +5526,65 @@
       ctx.stroke();
       ctx.restore();
     }
+    // 斩击弧光：一条从起手侧扫向收势侧的弧，带一小段拖尾（画在角色之上，能看清刀扫过哪里）。
+    // 分几段画、越靠刀锋越亮 —— 不然整条弧一样白，看起来像根静止的白杠。
+    for (const sl of FX.slashes) {
+      const k = clamp(sl.life / sl.max, 0, 1);
+      const prog = 1 - k;
+      const a0 = sl.ang + sl.dir * sl.arc;
+      const a1 = sl.ang - sl.dir * sl.arc;
+      const t1 = Math.min(1, prog * 1.7);
+      const t0 = Math.max(0, prog * 1.7 - 0.62);
+      ctx.save();
+      ctx.lineCap = 'round';
+      const N = 7;
+      for (let i = 0; i < N; i++) {
+        const f0 = t0 + (t1 - t0) * (i / N);
+        const f1 = t0 + (t1 - t0) * ((i + 1) / N);
+        const u = (i + 1) / N;
+        ctx.globalAlpha = k * 0.9 * (0.12 + 0.88 * u * u);
+        ctx.strokeStyle = sl.color;
+        ctx.lineWidth = 1.4 + 2.2 * u;
+        ctx.beginPath();
+        ctx.arc(sl.x, sl.y, sl.reach, a0 + (a1 - a0) * f0, a0 + (a1 - a0) * f1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     for (const p of FX.parts) {
       ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
       ctx.fillStyle = p.color;
       ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    // 血液喷溅：血雾先铺一层半透明的红，血珠沿速度方向拉成短条（看得出在飞）
+    for (const s of FX.sprays) {
+      const k = clamp(s.life / s.max, 0, 1);
+      if (s.mist) {
+        const r = s.size * (1.1 + (1 - k) * 2.8);
+        const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+        g.addColorStop(0, s.color + '0.9)');
+        g.addColorStop(0.55, s.color + '0.35)');
+        g.addColorStop(1, s.color + '0)');
+        ctx.globalAlpha = k * 0.55;
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 6.283); ctx.fill();
+        continue;
+      }
+      ctx.globalAlpha = clamp(k * 1.35, 0, 1);
+      ctx.fillStyle = s.color;
+      const sp = Math.hypot(s.vx, s.vy);
+      if (sp > 46) {
+        const len = Math.min(7.5, s.size + sp * 0.024);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(Math.atan2(s.vy, s.vx));
+        ctx.beginPath();
+        ctx.ellipse(0, 0, len, s.size * 0.66, 0, 0, 6.283);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.size * 0.72, 0, 6.283); ctx.fill();
+      }
     }
     // 碎甲片：旋转的方形，边转边淡出
     for (const s of FX.shards) {
@@ -5475,8 +5703,7 @@
 
     // ---- 动作按钮 ----
     for (const b of L.buttons) {
-      // 「扔枪」只有剧情模式有；「换弹」只有挑战模式有（剧情没有备弹）
-      if (b.key === 'f' && G.mode !== 'story') continue;
+      // 「换弹」只有挑战模式有（剧情没有备弹）；「扔枪」两种模式都能用
       if (b.key === 'r' && G.mode === 'story') continue;
       const act = !!touchPressed[b.key];
       ctx.globalAlpha = act ? 0.55 : 0.30;
@@ -7607,6 +7834,11 @@
     get g() { return G; },
     /** 换弹甩出的旧弹匣（测试断言"动画有没有真的触发"用） */
     get fxClips() { return FX.clips; },
+    /** 近战斩击弧光 / 空中血珠（测试"动画/喷溅有没有真的触发"用） */
+    get fxSlashes() { return FX.slashes; },
+    get fxSprays() { return FX.sprays; },
+    /** 排队等着落地的血泊/血痕 */
+    get bloodPending() { return (W && W.bloodPending) || []; },
     get arena() { return ARENA; },
     get shop() { return SHOP; },
     get slotSymbols() { return SLOT_SYMBOLS; },
