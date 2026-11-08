@@ -22,10 +22,11 @@
   //   子弹（手枪/冲锋枪）：命中 → 门弹开（绕铰链打开，从推门者那一侧朝门后展开）
   //   霰弹：命中 → 门直接打碎
   const DOOR_SLAM_DMG = 200;    // 门板倒下砸人的伤害（普通敌人一击必杀）
-  // 门板尺寸：比墙（WALL_THICK=12）更细、比格子（TILE=24）更短，一眼看得出是"一扇门"而不是一段墙。
-  const DOOR_THICK = 9;         // 门板厚度（横墙门是竖向厚度、纵墙门是横向厚度）
-  const DOOR_LEAF = TILE - 4;   // 门板长度（沿墙方向）：两端各留 2px 门框，短一格才像门
-  const DOOR_HIT_THICK = 7;     // 门碰撞盒厚度：比视觉再收一圈，贴门时不"粘手"
+  // 门板尺寸：扁而长 —— 厚度比墙（WALL_THICK=12）细一半，长度顶满整个门洞（两端直接贴住墙头，
+  // 中间不留缝），俯视角下读起来就是"嵌在墙线里的一扇门"。
+  const DOOR_THICK = 7;         // 门板厚度（横墙门是竖向厚度、纵墙门是横向厚度）
+  const DOOR_LEAF = TILE;       // 门板长度（沿墙方向）：顶满门洞，两端正好接到两侧墙
+  const DOOR_HIT_THICK = 6;     // 门碰撞盒厚度：比视觉再收一圈，贴门时不"粘手"
   const DOOR_HIT_LEAF = DOOR_LEAF;  // 碰撞盒长度跟门板一致（再短两端就漏缝了）
   // 撞倒后门板朝撞击方向前移多少才算"往前倒"：门板半边 + 墙半边，
   // 正好让躺下的门板整体落在门框外那一格里（不会一半压在墙上）。
@@ -5998,20 +5999,25 @@
 
   function drawDoors() {
     const th = DOOR_THICK;             // 门板厚度（细）
-    const L = DOOR_LEAF;               // 门板长度（沿墙，比格子短一点）
+    const L = DOOR_LEAF;               // 门板长度（沿墙，顶满门洞）
     const HL = L / 2;                  // 半长：铰链/自由端到门中心的距离
+    // 门转开时顺着开向平移一小段：门板是 7px 的厚板，绕墙心线转 90° 会有一半扎进墙里、
+    // 看着像"门糊在砖上"。挪出 (墙厚+门厚)/2 之后，全开时门板内侧面正好贴着墙外面。
+    const OPEN_LIFT = (WALL_THICK + DOOR_THICK) / 2;
     for (const d of W.doors) {
       if (d.broken || d.flying) continue;
       ctx.save();
       ctx.translate(d.x, d.y);
       // 门 = 一条亮棕色的细线，自由端正反两面各一把小金把手。关闭时平贴在墙里；
       // 打开时绕铰链转到 90°（与墙垂直），摆向由 d.swing 决定（从哪边推就从哪边开）。
-      const openA = d.open ? clamp(d.t * 6, 0, 1) * (Math.PI / 2) : 0;
+      const prog = d.open ? clamp(d.t * 6, 0, 1) : 0;
+      const openA = prog * (Math.PI / 2);
       const sw = d.swing > 0 ? 1 : -1;
+      const lift = sw * prog * OPEN_LIFT;   // 开向那一侧的外移量
       if (d.dir === 'v') {
         // 纵墙门：关闭时是竖线。swing>0 铰链在上端、门朝右(+x)开；swing<0 铰链在下端、门朝左(-x)开。
         // 旋转恒为逆时针(-openA)：门板从铰链向 +y 或 -y 延伸，逆时针转 90° 正好摆到 +x 或 -x（门后那侧）。
-        ctx.translate(0, sw > 0 ? -HL : HL);
+        ctx.translate(lift, sw > 0 ? -HL : HL);
         ctx.rotate(-openA);
         ctx.fillStyle = '#8a5420';
         ctx.fillRect(-th / 2, sw > 0 ? 0 : -L, th, L);
@@ -6020,18 +6026,18 @@
         // 两把小金把手：都在自由端，一把从左侧边凸出、一把从右侧边凸出（正反面各一把）
         const hy = sw * L * 0.72;           // 自由端附近（铰链端在 y=0）
         for (const dout of [-1, 1]) {
-          const hx = dout * (th / 2 + 0.9);
+          const hx = dout * (th / 2 + 0.7);
           ctx.fillStyle = '#6b4e10';                                  // 暗金描边
-          ctx.beginPath(); ctx.arc(hx, hy, 2.1, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 1.7, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#e8b923';                                  // 金色
-          ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 1.3, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#fff2b0';                                  // 高光
-          ctx.beginPath(); ctx.arc(hx - 0.5, hy - 0.5, 0.6, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx - 0.4, hy - 0.4, 0.5, 0, 6.283); ctx.fill();
         }
       } else {
         // 横墙门：关闭时是横线。swing>0 铰链在左端、门朝下(+y)开；swing<0 铰链在右端、门朝上(-y)开。
         // 旋转恒为顺时针(+openA)：门板从铰链向 +x 或 -x 延伸，顺时针转 90° 正好摆到 +y 或 -y（门后那侧）。
-        ctx.translate(sw > 0 ? -HL : HL, 0);
+        ctx.translate(sw > 0 ? -HL : HL, lift);
         ctx.rotate(openA);
         ctx.fillStyle = '#8a5420';
         ctx.fillRect(sw > 0 ? 0 : -L, -th / 2, L, th);
@@ -6040,13 +6046,13 @@
         // 两把小金把手：都在自由端（远离铰链那端），一把从上侧边凸出、一把从下侧边凸出
         const hx = sw * L * 0.72;           // 自由端附近（铰链端在 x=0）
         for (const dout of [-1, 1]) {       // -1 = 上侧边向外凸，+1 = 下侧边向外凸
-          const hy = dout * (th / 2 + 0.9);
+          const hy = dout * (th / 2 + 0.7);
           ctx.fillStyle = '#6b4e10';
-          ctx.beginPath(); ctx.arc(hx, hy, 2.1, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 1.7, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#e8b923';
-          ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 1.3, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#fff2b0';
-          ctx.beginPath(); ctx.arc(hx - 0.5, hy - 0.5, 0.6, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx - 0.4, hy - 0.4, 0.5, 0, 6.283); ctx.fill();
         }
       }
       ctx.restore();
