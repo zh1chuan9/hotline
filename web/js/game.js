@@ -4405,8 +4405,9 @@
           W.cleared = true;
           if (G.mode === 'story') {
             // 剧情模式：清空敌人后门口亮起（终点 = 出生点），走回去才结算。
-            // HUD 只允许数字，这里不给文字提示，靠门口那圈红光引导。
+            // 中央弹出 GO BACK，从 0 开始计时（弹入动画 → 常驻呼吸，直到走进终点）。
             G.centerText = '';
+            G.goBack = 0.0001;
             Sfx.play('clear');
           } else {
             G.intermission = INTERMISSION_TIME;
@@ -4433,6 +4434,7 @@
       }
       // 剧情模式：清场后走到终点才过关结算
       if (G.mode === 'story' && W.cleared && W.exit) {
+        if (G.goBack > 0) G.goBack += dt;   // GO BACK 提示的存活时间（只用于动画相位）
         const dx = G.player.x - W.exit.x, dy = G.player.y - W.exit.y;
         if (dx * dx + dy * dy < TILE * TILE * 1.5) {
           G.state = 'storyclear';
@@ -5690,6 +5692,58 @@
     ctx.textBaseline = 'top';
   }
 
+  // 清场提示：人杀完了就该往回走了（终点就是进门那个出生点）。
+  // 弹入 0.22s 从大砸到原尺寸，之后常驻轻微呼吸，走进终点（state 变 storyclear）才消失。
+  function drawGoBackPrompt() {
+    if (G.mode !== 'story' || !W || !W.cleared) return;
+    if (G.state !== 'play' || !G.goBack) return;
+
+    const t = G.goBack;
+    const k = Math.min(1, t / 0.22);
+    const ease = 1 - Math.pow(1 - k, 3);
+    const alpha = ease * (0.82 + 0.18 * Math.sin(t * 5.5));
+    const scale = 1 + (1 - ease) * 0.45;                  // 1.45 → 1.0 砸落
+    const cy = VIEW_H * 0.29 + Math.sin(t * 2.6) * 1.2;   // 一点浮动，别像贴图
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.translate(VIEW_W / 2, cy);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+
+    // 逐字画：Consolas 没有原生字距，自己累加宽度
+    const txt = 'GO BACK';
+    ctx.font = 'bold 34px Consolas, monospace';
+    const sp = 6;
+    let total = -sp;
+    for (const ch of txt) total += ctx.measureText(ch).width + sp;
+    let x = -total / 2;
+    ctx.lineJoin = 'round';
+    for (const ch of txt) {
+      const w = ctx.measureText(ch).width;
+      const gx = x + w / 2;
+      // 黑描边压住背景，红字在上面
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.88)';
+      ctx.strokeText(ch, gx, 0);
+      ctx.fillStyle = MIAMI.redHot;
+      ctx.fillText(ch, gx, 0);
+      x += w + sp;
+    }
+
+    // 上下两条细红线：警示条味道
+    ctx.globalAlpha = alpha * 0.55;
+    ctx.strokeStyle = MIAMI.red;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-total / 2 - 12, -21); ctx.lineTo(total / 2 + 12, -21);
+    ctx.moveTo(-total / 2 - 12, 21); ctx.lineTo(total / 2 + 12, 21);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
   function drawReloadHint() {
     if (G.state !== 'play') return;             // 死了 / 结算 / 商店里别催
     const p = G.player;
@@ -6770,6 +6824,7 @@
     // 也不会被边缘暗角/受击闪白糊掉（之前被压暗成一坨暗红，看着像没画）
     drawCrosshair();
     drawHUD();
+    drawGoBackPrompt();
     drawTouchUI();
     if (G.state === 'shop') drawShop();
     if (G.state === 'upgrade') drawUpgrade();
@@ -7104,6 +7159,7 @@
       storyHits: 0,
       storyClearT: 0,
       storyStartT: 0,
+      goBack: 0,           // 剧情清场后 GO BACK 提示的计时（0 = 未触发）
       score: 0,
       cash: 0,
       wave: 0,
