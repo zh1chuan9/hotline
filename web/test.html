@@ -1628,7 +1628,8 @@
     check('剧情模式移速更快（' + vStory.toFixed(0) + ' vs ' + vChal.toFixed(0) + ' px/s）',
       vStory > vChal * 1.15);
 
-    // 剧情模式：按 Q 把枪背到背上（空手）再去捡另一把，背上那把必须掉回地上 —— 之前被直接清空
+    // 剧情模式：按 Q 把枪背到背上（空手 = 拳头）再去捡另一把 —— 副武器要留在背上，
+    // 不能因为"换了一把手上的枪"就把背着的枪扔到地上。
     H.startGame({ mode: 'story' });
     const gPk = H.g, pPk = gPk.player, wPk = H.world;
     gPk.centerText = ''; gPk.centerTimer = 0;
@@ -1636,14 +1637,16 @@
     H.swap();
     H.step(20);
     const backedOk = pPk.weapon === null && !!pPk.side && pPk.side.weapon === 'pistol';
+    const sideAmmoBefore = pPk.side ? pPk.side.ammo : -1;
     H.dropGun('shotgun', pPk.x, pPk.y);
     H.step(2);
     const groundGuns = wPk.pickups.map(pk => pk.def);
-    check('剧情模式空手（Q 背枪）捡新枪：背上的手枪不凭空消失（地上 ' + (groundGuns.join(',') || '空') + '）',
-      backedOk && pPk.weapon === 'shotgun' && groundGuns.indexOf('pistol') >= 0);
-    const backPk = wPk.pickups.find(pk => pk.def === 'pistol');
-    check('掉回地上的那把还带着原来的子弹（ammo=' + (backPk ? backPk.ammo : '-') + '）',
-      !!backPk && backPk.ammo === 8);
+    check('剧情模式拳头（Q 背枪）捡新枪：副武器留在背上不扔地上（手上 ' + pPk.weapon +
+      '，背上 ' + (pPk.side ? pPk.side.weapon : '空') + '，地上 ' + (groundGuns.join(',') || '空') + '）',
+      backedOk && pPk.weapon === 'shotgun' && groundGuns.indexOf('pistol') < 0 &&
+      !!pPk.side && pPk.side.weapon === 'pistol');
+    check('背上的副武器子弹没丢（' + sideAmmoBefore + '→' + (pPk.side ? pPk.side.ammo : '-') + '）',
+      sideAmmoBefore > 0 && !!pPk.side && pPk.side.ammo === sideAmmoBefore);
 
     // 扔枪砸人：把枪扔出去，飞一段距离后砸死目标
     H.startGame({ mode: 'story' });
@@ -1701,6 +1704,50 @@
     check('点「挑战模式」不会自动开一枪（mode=' + gTc.mode + '，ammo ' + ammoTc + '→' + pTc.ammo + '）',
       gTc.mode === 'challenge' && pTc.ammo === ammoTc);
     H.holdFire(false);
+
+    // ---- 键位设置（设置页 → 按键设置）----
+    H.resetKeyBinds();
+    H.setInputMode('pc');
+    H.goTitle();
+    H.tap(320, 284);                                  // 标题页「设置」按钮中心
+    check('标题页「设置」能打开（state=' + H.g.state + '）', H.g.state === 'settings');
+    const stb = H.settingsBtn;
+    H.tap(stb.keys.x + stb.keys.w / 2, stb.keys.y + stb.keys.h / 2);
+    check('设置页「按键设置」能打开键位页（state=' + H.g.state + '）', H.g.state === 'keys');
+
+    // 点「上移」那一行 → 按 X → W 应该被改绑到 X
+    const rowUp = H.keyActions.findIndex(a => a.id === 'w');
+    const rr = H.keyRowRect(rowUp);
+    H.tap(rr.x + rr.w / 2, rr.y + rr.h / 2);
+    check('点一行进入「按下新键」状态（capture=' + H.keyCapture + '）', H.keyCapture === rowUp);
+    H.clearPressed();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+    check('按下 X 后「上移」改绑为 X（' + H.keyBinds.w + '）', H.keyBinds.w === 'x');
+    check('改绑那一下不漏进游戏输入（pending=' + (H.pendingKeys.join(',') || '空') + '）',
+      H.pendingKeys.length === 0);
+    check('旧键 W 不再触发上移（logicalKey(w)=' + H.logicalKeyOf('w') + '）', H.logicalKeyOf('w') === null);
+    check('新键 X 触发上移（logicalKey(x)=' + H.logicalKeyOf('x') + '）', H.logicalKeyOf('x') === 'w');
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
+
+    // 撞键互换：把「换弹」改成 E，原来占 E 的「交互」应该拿到 R
+    H.bindKey('r', 'e');
+    check('撞键自动互换（换弹=' + H.keyBinds.r + ' 交互=' + H.keyBinds.e + '）',
+      H.keyBinds.r === 'e' && H.keyBinds.e === 'r');
+    check('HUD 提示跟着改绑（换弹提示：按 ' + H.keyLabelOf('r') + ' 换弹）', H.keyLabelOf('r') === 'E');
+
+    // 持久化：改完要能存进 localStorage，重开页面照旧
+    let savedRaw = '';
+    try { savedRaw = localStorage.getItem('hotline.keybind') || ''; } catch (err) { savedRaw = ''; }
+    check('键位改动已写入 localStorage', savedRaw.indexOf('"r":"e"') >= 0);
+
+    // 恢复默认 + 返回设置页
+    const kb = H.keyBtn;
+    H.tap(kb.reset.x + kb.reset.w / 2, kb.reset.y + kb.reset.h / 2);
+    check('「恢复默认」把 W / R 都还回去（' + H.keyBinds.w + ' / ' + H.keyBinds.r + '）',
+      H.keyBinds.w === 'w' && H.keyBinds.r === 'r');
+    H.tap(kb.back.x + kb.back.w / 2, kb.back.y + kb.back.h / 2);
+    check('键位页「返回」回到设置页（state=' + H.g.state + '）', H.g.state === 'settings');
+    H.resetKeyBinds();
 
     report();
   }

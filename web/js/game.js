@@ -523,6 +523,87 @@
   let inputMode = 'pc';
   // fireMode: 'button'（点击开火按钮射击）| 'stick'（拖动摇杆持续射击）。二者二选一，持久化。
   let fireMode = 'button';
+
+  // ---- 键位设置（电脑键鼠模式）----
+  // KEY_ACTIONS 的 id 就是"逻辑键"：游戏逻辑里读的是 pressed['w'] / keys['e'] 这一套，
+  // 改绑只动 keyBind（逻辑键 → 物理键），逻辑层一行都不用改，默认原样同名。
+  const KEY_ACTIONS = [
+    { id: 'w', label: '上移', def: 'w' },
+    { id: 's', label: '下移', def: 's' },
+    { id: 'a', label: '左移', def: 'a' },
+    { id: 'd', label: '右移', def: 'd' },
+    { id: 'j', label: '开火（备用键）', def: 'j' },
+    { id: 'e', label: '交互 / 拾取', def: 'e' },
+    { id: 'q', label: '换主副武器', def: 'q' },
+    { id: 'r', label: '换弹', def: 'r' },
+    { id: 'g', label: '手雷', def: 'g' },
+    { id: 'f', label: '扔枪', def: 'f' },
+    { id: '1', label: '主武器', def: '1' },
+    { id: '2', label: '副武器', def: '2' },
+    { id: '3', label: '血包', def: '3' },
+    { id: '4', label: '护甲板', def: '4' }
+  ];
+  const keyBind = Object.create(null);   // 逻辑键 → 物理键
+  let keyReverse = Object.create(null);  // 物理键 → 逻辑键（每帧 keydown 查这张表）
+  const heldKeys = Object.create(null);  // 物理键 → 当时按下的逻辑键（keyup 用，改绑中途松开也不丢）
+  let keyCapture = -1;                   // 键位页正在等"按下新键"的行号（-1 = 没在改）
+
+  function rebuildKeyMap() {
+    keyReverse = Object.create(null);
+    for (const a of KEY_ACTIONS) if (keyBind[a.id]) keyReverse[keyBind[a.id]] = a.id;
+  }
+  function loadKeyBinds() {
+    for (const a of KEY_ACTIONS) keyBind[a.id] = a.def;
+    try {
+      const raw = localStorage.getItem('hotline.keybind');
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved) {
+        for (const a of KEY_ACTIONS) {
+          if (typeof saved[a.id] === 'string' && saved[a.id]) keyBind[a.id] = saved[a.id];
+        }
+      }
+    } catch (err) { /* 隐私模式 / 坏数据：退回默认 */ }
+    rebuildKeyMap();
+  }
+  function saveKeyBinds() {
+    try { localStorage.setItem('hotline.keybind', JSON.stringify(keyBind)); } catch (err) { /* 忽略 */ }
+  }
+  function resetKeyBinds() {
+    for (const a of KEY_ACTIONS) keyBind[a.id] = a.def;
+    rebuildKeyMap();
+    saveKeyBinds();
+  }
+  /** 改绑一个动作。新键已被别的动作占用时两边互换，谁都不会变成"没键可用"。 */
+  function bindKey(id, phys) {
+    const prev = keyBind[id];
+    const other = KEY_ACTIONS.find(a => a.id !== id && keyBind[a.id] === phys);
+    if (other) keyBind[other.id] = prev;
+    keyBind[id] = phys;
+    rebuildKeyMap();
+    saveKeyBinds();
+  }
+  /**
+   * 物理键 → 逻辑键。
+   * 已经被改绑走的旧动作键返回 null：否则把"上移"改成 ↑ 之后，按 W 仍然能走，
+   * 等于两个键都生效，改绑就白改了。
+   */
+  function logicalKey(phys) {
+    if (keyReverse[phys]) return keyReverse[phys];
+    for (const a of KEY_ACTIONS) if (a.id === phys) return null;
+    return phys;      // 菜单键（ESC / 回车 / 空格 / 方向键）原样透传
+  }
+  /** 键名显示（HUD 与键位页共用）：单字符大写，特殊键给符号。 */
+  function keyLabel(id) {
+    const k = keyBind[id];
+    if (!k) return '—';
+    const SPECIAL = {
+      ' ': '空格', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→',
+      escape: 'ESC', enter: '回车', shift: 'Shift', control: 'Ctrl', alt: 'Alt', tab: 'Tab'
+    };
+    if (SPECIAL[k]) return SPECIAL[k];
+    return k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1);
+  }
+  loadKeyBinds();
   const touch = {
     // 左摇杆：移动方向（单位向量），active 表示正在拖动
     moveActive: false, moveId: -1, moveOrigin: null, moveX: 0, moveY: 0,
@@ -1032,15 +1113,35 @@
   }
 
   window.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
+    const phys = e.key.toLowerCase();
+    // 键位页正在等"按下新键"：这一下只用来改绑，绝不能漏给游戏（否则会顺手走一步/开一枪）
+    if (G && G.state === 'keys' && keyCapture >= 0) {
+      e.preventDefault();
+      if (phys !== 'escape') {                       // ESC = 取消，不改
+        bindKey(KEY_ACTIONS[keyCapture].id, phys);
+        Sfx.play('hit');
+      }
+      keyCapture = -1;
+      return;
+    }
+    const k = logicalKey(phys);
+    if (k === null) return;                          // 这个键已经改绑给别的动作了
     if (!keys[k]) pressed[k] = true;
     keys[k] = true;
+    heldKeys[phys] = k;
     if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
     if (k === 'f11') e.preventDefault();
   });
-  window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+  window.addEventListener('keyup', (e) => {
+    const phys = e.key.toLowerCase();
+    // 按下去时记下了逻辑键就用它：改绑发生在按住期间也不会留下"卡住的键"
+    const k = heldKeys[phys] || logicalKey(phys);
+    if (k) keys[k] = false;
+    delete heldKeys[phys];
+  });
   window.addEventListener('blur', () => {
     for (const k in keys) keys[k] = false;
+    for (const k in heldKeys) delete heldKeys[k];
     mouse.down = false;
     mouse.right = false;      // 切走窗口时别让"瞄准"卡在按下状态
   });
@@ -3518,26 +3619,20 @@
       if (p.weapon && !explicit) return;
       const magS = gunStat(best.def, 'mag');
       const ammoS = best.ammo !== undefined ? best.ammo : magS;
-      const spot = dropSpot(p);          // 旧枪掉在身后一点，别和新捡的那把叠成一堆
+      // 手上那把掉到身后（别和新捡的那把叠成一堆）。
+      // 背上那把（按 Q 背起来的副武器）**留在背上**：空手（拳头）状态捡枪时，
+      // 副武器本来就该继续背着走，扔到地上等于白丢一把枪 —— 这里只换手，不动背。
       if (p.weapon) {
+        const spot = dropSpot(p);
         const oldPk = makePickup(p.weapon, spot.x, spot.y);
         oldPk.ammo = p.ammo;
         oldPk.reserve = 0;
         W.pickups.push(oldPk);
       }
-      // 背上那把（按 Q 背起来的）也要掉回地上 —— 剧情模式捡起新枪时 p.side 会被清空，
-      // 不在这儿补一把，背着的枪就凭空消失了（空手捡枪 = 白丢一把枪）。
-      if (p.side) {
-        const sidePk = makePickup(p.side.weapon, spot.x, spot.y);
-        sidePk.ammo = p.side.ammo;
-        sidePk.reserve = 0;
-        W.pickups.push(sidePk);
-      }
       p.weapon = best.def;
       p.ammo = ammoS;
       p.reserve = 0;
-      p.side = null;
-      p.curSlot = 'main';
+      p.curSlot = 'main';           // 新枪永远进"手上"这一格，背上的槽位原样不动
       p.reload = 0;
       p.reloadTotal = 0;
       p.cooldown = 0;
@@ -4739,9 +4834,21 @@
     if (G.state === 'settings') {
       if (hit(SETTINGS_BTN.sound)) { Sfx.muted = !Sfx.muted; Sfx.play('hit'); }
       else if (hit(SETTINGS_BTN.control)) { setInputMode(inputMode === 'touch' ? 'pc' : 'touch'); Sfx.play('hit'); }
-      else if (hit(SETTINGS_BTN.fire)) { setFireMode(fireMode === 'stick' ? 'button' : 'stick'); Sfx.play('hit'); }
-      else if (hit(SETTINGS_BTN.layout)) { if (inputMode === 'touch') openTouchLayout(); }
+      else if (inputMode === 'touch' && hit(SETTINGS_BTN.fire)) { setFireMode(fireMode === 'stick' ? 'button' : 'stick'); Sfx.play('hit'); }
+      else if (inputMode === 'touch' && hit(SETTINGS_BTN.layout)) { openTouchLayout(); }
+      else if (inputMode !== 'touch' && hit(SETTINGS_BTN.keys)) { openKeySettings(); }
       else if (hit(SETTINGS_BTN.back)) { closeSettings(); }
+      return;
+    }
+    if (G.state === 'keys') {
+      if (hit(KEY_BTN.reset)) { resetKeyBinds(); keyCapture = -1; Sfx.play('hit'); return; }
+      if (hit(KEY_BTN.back)) { closeKeySettings(); Sfx.play('hit'); return; }
+      // 点某一行 → 进入"按下新键"；点空白处等于取消
+      keyCapture = -1;
+      for (let i = 0; i < KEY_ACTIONS.length; i++) {
+        const r = keyRowRect(i);
+        if (hit(r)) { keyCapture = i; Sfx.play('hit'); return; }
+      }
       return;
     }
     if (G.state === 'shop') {
@@ -6402,7 +6509,7 @@
     if (frac > RELOAD_HINT_WARN) return;        // 还够用，不显示
 
     const crit = frac <= RELOAD_HINT_CRIT;
-    const txt = inputMode === 'touch' ? '按 换弹' : '按 R 换弹';
+    const txt = inputMode === 'touch' ? '按 换弹' : '按 ' + keyLabel('r') + ' 换弹';
     const y = VIEW_H - 26 + HUD_OFF.reload.y;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -6435,9 +6542,9 @@
     const cy2 = BOT - 62;
     const colStep = 46;
     const items = [
-      { kind: 'medkit', x: RX - colStep * 2 - 14, n: p.medkits, key: '3', col: '#7fdca0', busy: !!p.healing },
-      { kind: 'grenade', x: RX - colStep - 14, n: p.grenades, key: 'G', col: '#e02929', busy: false },
-      { kind: 'plate', x: RX - 14, n: p.armorPlates, key: '4', col: '#c8c8d0', busy: !!p.plating }
+      { kind: 'medkit', x: RX - colStep * 2 - 14, n: p.medkits, key: keyLabel('3'), col: '#7fdca0', busy: !!p.healing },
+      { kind: 'grenade', x: RX - colStep - 14, n: p.grenades, key: keyLabel('g'), col: '#e02929', busy: false },
+      { kind: 'plate', x: RX - 14, n: p.armorPlates, key: keyLabel('4'), col: '#c8c8d0', busy: !!p.plating }
     ];
     for (const it of items) {
       const has = it.n > 0;
@@ -6475,14 +6582,14 @@
     if (mainDef) {
       // 空弹不压暗图标的亮度：数字已经变红了，图标再暗下去就看不清手上是什么枪
       drawWeaponSprite(mainDef.icon, bigCx, bigCy, bigW, bigH, 1);
-      drawSlotKey(bigCx, BOT - 5, onSide ? '2' : '1', 'rgba(226,218,236,0.72)');
+      drawSlotKey(bigCx, BOT - 5, keyLabel(onSide ? '2' : '1'), 'rgba(226,218,236,0.72)');
     }
 
     if (sideDef) {
       const smallW = 46, smallH = 22;
       const smallCx = bigCx - bigW / 2 - 10 - smallW / 2;
       drawWeaponSprite(sideDef.icon, smallCx, bigCy, smallW, smallH, 0.55);
-      drawSlotKey(smallCx, BOT - 5, onSide ? '1' : '2', 'rgba(150,142,162,0.5)');
+      drawSlotKey(smallCx, BOT - 5, keyLabel(onSide ? '1' : '2'), 'rgba(150,142,162,0.5)');
     }
 
     // 大号弹匣内子弹
@@ -7041,12 +7148,7 @@
     drawMenuButton(TITLE_BTN.challenge, '挑战模式', MIAMI.white);
     drawMenuButton(TITLE_BTN.settings, '设置', MIAMI.gray);
 
-    // 只留一行最必要的键位提示
-    ctx.fillStyle = MIAMI.dim;
-    ctx.font = '11px "Microsoft YaHei", monospace';
-    ctx.fillText(inputMode === 'touch'
-      ? '左摇杆移动 · 右摇杆瞄准 · 瞄准键抬枪 · 交互键交互'
-      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取 · F 扔枪', VIEW_W / 2, 326);
+    // 主页面不再堆键位提示：操作按键统一收进「设置 → 按键设置」，支持改绑。
     ctx.restore();
 
     // 整页套一层 CRT 电视效果（圆角管面 / 暗角 / 扫描线 / 荧光 / 闪烁）
@@ -7140,10 +7242,28 @@
   const SETTINGS_BTN = {
     sound: { x: VIEW_W / 2 - 120, y: 120, w: 240, h: 34 },
     control: { x: VIEW_W / 2 - 120, y: 162, w: 240, h: 34 },
-    fire: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },
-    layout: { x: VIEW_W / 2 - 120, y: 246, w: 240, h: 34 },
+    fire: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },     // 仅触控模式
+    layout: { x: VIEW_W / 2 - 120, y: 246, w: 240, h: 34 },   // 仅触控模式
+    keys: { x: VIEW_W / 2 - 120, y: 204, w: 240, h: 34 },     // 仅键鼠模式（与 fire 同一行，二者互斥）
     back: { x: VIEW_W / 2 - 80, y: 292, w: 160, h: 40 }
   };
+
+  /** 设置页的一行按钮：描边 + hover 高亮，文字居中。 */
+  function drawSettingRow(b, label, color, hoverBorder) {
+    const hov = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = hov ? (hoverBorder || '#c8c8d0') : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
+    else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 15px "Microsoft YaHei", monospace';
+    ctx.fillStyle = color;
+    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+  }
 
   function drawSettings() {
     ctx.save();
@@ -7154,73 +7274,99 @@
     ctx.fillStyle = '#f2f2f4';
     ctx.fillText('设置', VIEW_W / 2, 96);
     // 音效开关
-    const sb = SETTINGS_BTN.sound;
-    const sHover = mouse.x >= sb.x && mouse.x <= sb.x + sb.w && mouse.y >= sb.y && mouse.y <= sb.y + sb.h;
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = sHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-    ctx.strokeStyle = sHover ? '#c8c8d0' : 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1.5;
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(sb.x, sb.y, sb.w, sb.h, 6); }
-    else { ctx.beginPath(); ctx.rect(sb.x, sb.y, sb.w, sb.h); }
-    ctx.fill();
-    ctx.stroke();
-    ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#c8c8d0';
-    ctx.fillText('音效：' + (Sfx.muted ? '关' : '开'), sb.x + sb.w / 2, sb.y + sb.h / 2 + 1);
-    ctx.textBaseline = 'alphabetic';
+    drawSettingRow(SETTINGS_BTN.sound, '音效：' + (Sfx.muted ? '关' : '开'), '#c8c8d0', '#c8c8d0');
     // 操作方式：手机触控 / 电脑键鼠
-    const cb = SETTINGS_BTN.control;
-    const cHover = mouse.x >= cb.x && mouse.x <= cb.x + cb.w && mouse.y >= cb.y && mouse.y <= cb.y + cb.h;
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = cHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-    ctx.strokeStyle = cHover ? '#e02929' : 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1.5;
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cb.x, cb.y, cb.w, cb.h, 6); }
-    else { ctx.beginPath(); ctx.rect(cb.x, cb.y, cb.w, cb.h); }
-    ctx.fill();
-    ctx.stroke();
-    ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-    ctx.fillStyle = '#f2f2f4';
-    ctx.fillText('操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), cb.x + cb.w / 2, cb.y + cb.h / 2 + 1);
-    ctx.textBaseline = 'alphabetic';
-    // 开火方式 + 自定义按键（仅手机触控模式显示）
+    drawSettingRow(SETTINGS_BTN.control, '操作方式：' + (inputMode === 'touch' ? '手机触控' : '电脑键鼠'), '#f2f2f4', '#e02929');
+    // 触控模式：开火方式 + 自定义按键位置；键鼠模式：键位设置
     if (inputMode === 'touch') {
-      // 开火方式：按键开火 / 摇杆开火（二选一）
-      const fb = SETTINGS_BTN.fire;
-      const fHover = mouse.x >= fb.x && mouse.x <= fb.x + fb.w && mouse.y >= fb.y && mouse.y <= fb.y + fb.h;
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = fHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = fHover ? '#e02929' : 'rgba(255,255,255,0.25)';
-      ctx.lineWidth = 1.5;
-      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(fb.x, fb.y, fb.w, fb.h, 6); }
-      else { ctx.beginPath(); ctx.rect(fb.x, fb.y, fb.w, fb.h); }
-      ctx.fill();
-      ctx.stroke();
-      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-      ctx.fillStyle = '#f2f2f4';
-      ctx.fillText('开火方式：' + (fireMode === 'stick' ? '摇杆开火' : '按键开火'), fb.x + fb.w / 2, fb.y + fb.h / 2 + 1);
-      ctx.textBaseline = 'alphabetic';
-
-      const lb = SETTINGS_BTN.layout;
-      const lHover = mouse.x >= lb.x && mouse.x <= lb.x + lb.w && mouse.y >= lb.y && mouse.y <= lb.y + lb.h;
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = lHover ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = lHover ? '#7fdca0' : 'rgba(255,255,255,0.25)';
-      ctx.lineWidth = 1.5;
-      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(lb.x, lb.y, lb.w, lb.h, 6); }
-      else { ctx.beginPath(); ctx.rect(lb.x, lb.y, lb.w, lb.h); }
-      ctx.fill();
-      ctx.stroke();
-      ctx.font = 'bold 15px "Microsoft YaHei", monospace';
-      ctx.fillStyle = '#a8e8c0';
-      ctx.fillText('自定义按键位置', lb.x + lb.w / 2, lb.y + lb.h / 2 + 1);
-      ctx.textBaseline = 'alphabetic';
+      drawSettingRow(SETTINGS_BTN.fire, '开火方式：' + (fireMode === 'stick' ? '摇杆开火' : '按键开火'), '#f2f2f4', '#e02929');
+      drawSettingRow(SETTINGS_BTN.layout, '自定义按键位置', '#a8e8c0', '#7fdca0');
+    } else {
+      drawSettingRow(SETTINGS_BTN.keys, '按键设置', '#a8e8c0', '#7fdca0');
     }
     // 返回按钮
     drawMenuButton(SETTINGS_BTN.back, '返回', '#c8c8d0');
     ctx.restore();
     // 设置页同属"主页面"，一起套 CRT 效果，切换时不跳味
     applyCRT(performance.now() / 1000);
+  }
+
+  // 键位设置页：两列 7 行，点一行进入"按下新键"，ESC 取消，撞键自动互换
+  const KEY_ROW = { xs: [64, 330], w: 246, top: 96, h: 24, step: 28, perCol: 7 };
+  const KEY_BTN = {
+    reset: { x: VIEW_W / 2 - 170, y: 300, w: 160, h: 30 },
+    back: { x: VIEW_W / 2 + 10, y: 300, w: 160, h: 30 }
+  };
+  function keyRowRect(i) {
+    const col = Math.floor(i / KEY_ROW.perCol);
+    const row = i % KEY_ROW.perCol;
+    return { x: KEY_ROW.xs[col], y: KEY_ROW.top + row * KEY_ROW.step, w: KEY_ROW.w, h: KEY_ROW.h };
+  }
+
+  function drawKeySettings() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,6,8,0.94)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 24px "Microsoft YaHei", monospace';
+    ctx.fillStyle = '#f2f2f4';
+    ctx.fillText('按键设置', VIEW_W / 2, 46);
+    ctx.font = '11px "Microsoft YaHei", monospace';
+    ctx.fillStyle = keyCapture >= 0 ? '#ffb0a8' : '#9c90a8';
+    ctx.fillText(keyCapture >= 0 ? '按下要绑定的键 · ESC 取消'
+      : '点一行再按新键 · 撞键会自动互换 · 绿色=改过的键', VIEW_W / 2, 70);
+
+    for (let i = 0; i < KEY_ACTIONS.length; i++) {
+      const a = KEY_ACTIONS[i], r = keyRowRect(i);
+      const hov = mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h;
+      const editing = keyCapture === i;
+      const changed = keyBind[a.id] !== a.def;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      if (editing || hov) {
+        ctx.fillStyle = editing ? 'rgba(224,41,41,0.22)' : 'rgba(255,255,255,0.07)';
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 5); }
+        else { ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); }
+        ctx.fill();
+      }
+      ctx.font = '12px "Microsoft YaHei", monospace';
+      ctx.fillStyle = editing ? '#ffb0a8' : (hov ? '#f2f2f4' : '#b8aec6');
+      ctx.fillText(a.label, r.x + 10, r.y + r.h / 2 + 1);
+      // 右侧键位胶囊
+      const bw = 76, bh = 18;
+      const bx = r.x + r.w - bw - 6, by = r.y + (r.h - bh) / 2;
+      ctx.fillStyle = editing ? 'rgba(224,41,41,0.30)' : 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = editing ? '#ff8a80' : (changed ? '#7fdca0' : 'rgba(255,255,255,0.22)');
+      ctx.lineWidth = 1.2;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); }
+      else { ctx.beginPath(); ctx.rect(bx, by, bw, bh); }
+      ctx.fill();
+      ctx.stroke();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+      ctx.fillStyle = editing ? '#ffd7d2' : (changed ? '#9fe6b8' : '#ddd6e6');
+      ctx.fillText(editing ? '按下键…' : keyLabel(a.id), bx + bw / 2, by + bh / 2 + 1);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    drawMenuButton(KEY_BTN.reset, '恢复默认', '#c8c8d0');
+    drawMenuButton(KEY_BTN.back, '返回', '#a8e8c0');
+    ctx.restore();
+    applyCRT(performance.now() / 1000);
+  }
+
+  /** 打开 / 关闭键位设置页（设置页 → 键位页 → 回设置页）。 */
+  function openKeySettings() {
+    keyCapture = -1;
+    G.state = 'keys';
+    pressed = Object.create(null);   // 点进来的那一下别被当成一次按键
+  }
+  function closeKeySettings() {
+    keyCapture = -1;
+    saveKeyBinds();
+    G.state = 'settings';
+    pressed = Object.create(null);
   }
 
   /**
@@ -7383,6 +7529,7 @@
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     if (G.state === 'settings') { drawSettings(); return; }
+    if (G.state === 'keys') { drawKeySettings(); return; }
     if (G.state === 'layout') { drawLayout(); return; }
     if (G.state === 'title' || !W) { drawTitle(); return; }
     if (G.state === 'storyclear') { drawStoryClear(); return; }
@@ -7492,9 +7639,9 @@
     // 这一下按键就被吞了，表现就是"按 4 要按好多下才切出护甲板"。
     // 所以只在跑到过 update 的帧末尾清空，没跑到的帧把按键留到下一帧。
     let advanced = false;
-    if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'layout')) advanced = true;   // 标题/设置/编辑画面不跑逻辑，按键当帧作废
+    if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'keys' || G.state === 'layout')) advanced = true;   // 标题/设置/键位/编辑画面不跑逻辑，按键当帧作废
 
-    if (G && G.state !== 'title' && G.state !== 'settings' && G.state !== 'layout') {
+    if (G && G.state !== 'title' && G.state !== 'settings' && G.state !== 'keys' && G.state !== 'layout') {
       if (G.paused || G.freeze) {
         // 暂停时主循环提前返回，所以这里的按键得自己处理，否则暂停后恢复不了
         if (G.paused) handlePauseKeys();
@@ -7712,6 +7859,10 @@
     if (G.state === 'settings') {
       if (pressed['escape']) { closeSettings(); pressed = Object.create(null); return; }
     }
+    // 键位设置页：ESC 回设置页（正在改键时的那一下 ESC 已被 keydown 吃掉，不会走到这）
+    if (G.state === 'keys') {
+      if (pressed['escape']) { closeKeySettings(); pressed = Object.create(null); return; }
+    }
     // 按键/HUD 自定义编辑页：ESC 保存并返回
     if (G.state === 'layout') {
       if (pressed['escape']) {
@@ -7889,6 +8040,10 @@
       // ?settings=1 直接进设置页，用于截图核对（调试用）
       if (/[?&]settings=1/.test(location.search)) {
         G.state = 'settings';
+      }
+      // ?keys=1 直接进键位设置页，用于截图核对（调试用）
+      if (/[?&]keys=1/.test(location.search)) {
+        G.state = 'keys';
       }
       // ?layout=1 直接进按键自定义编辑页，用于截图核对（调试用）
       if (/[?&]layout=1/.test(location.search)) {
@@ -8103,6 +8258,26 @@
     setHudOff(id, x, y) { if (HUD_OFF[id]) { HUD_OFF[id].x = x; HUD_OFF[id].y = y; } },
     get layoutMode() { return layoutMode; },
     openTouchLayout,
+    /** 键位设置：动作表 / 当前绑定 / 改绑 / 物理键→逻辑键翻译（测试用） */
+    get keyActions() { return KEY_ACTIONS.map(a => ({ id: a.id, label: a.label, def: a.def })); },
+    get keyBinds() { return Object.assign({}, keyBind); },
+    keyLabelOf(id) { return keyLabel(id); },
+    bindKey,
+    resetKeyBinds,
+    loadKeyBinds,
+    logicalKeyOf(phys) { return logicalKey(String(phys).toLowerCase()); },
+    openKeySettings,
+    closeKeySettings,
+    keyRowRect,
+    get keyCapture() { return keyCapture; },
+    setKeyCapture(i) { keyCapture = (typeof i === 'number' ? i : -1); },
+    get settingsBtn() {
+      return {
+        sound: SETTINGS_BTN.sound, control: SETTINGS_BTN.control, fire: SETTINGS_BTN.fire,
+        layout: SETTINGS_BTN.layout, keys: SETTINGS_BTN.keys, back: SETTINGS_BTN.back
+      };
+    },
+    get keyBtn() { return { reset: KEY_BTN.reset, back: KEY_BTN.back }; },
     refillArmor,
     /** 护甲等级辅助（测试护甲升级用） */
     armorMax,
