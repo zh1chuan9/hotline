@@ -26,6 +26,9 @@ BASE_SPRITES = ['corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun'
 #   两只手是从头两侧伸出去的小凸起：上面 x16..22 / y9..11，下面 x17..20 / y21..23。
 CUT_ARMS = [(16, 9, 7, 3), (16, 21, 5, 3)]        # 上臂+手 / 下臂+手（含拐角那颗描边，否则留一颗悬空像素）
 CUT_HEAD = [(19, 12, 7, 9)]                       # 头（含脖子以上）
+# 单臂变体：只擦掉其中一只手臂（上=top / 下=bottom），供"单独砍断左手或右手"用
+CUT_ARM_TOP = [CUT_ARMS[0]]
+CUT_ARM_BOTTOM = [CUT_ARMS[1]]
 
 RIM = (9, 9, 9, 255)       # 原图的描边色，逐像素统计出来的
 ALPHA_SOLID = 20           # 原图 alpha 是 0/255 二值（另有 2 个 200），>20 算实心
@@ -72,7 +75,17 @@ def main():
         torso = cut(src, CUT_ARMS + CUT_HEAD)
         torso.save(os.path.join(SPRITES, name + '_torso.png'))
 
-        print('%-22s -> _noarms + _torso' % name)
+        # 单臂变体：只擦掉上面那只（_noarm_top）或下面那只（_noarm_bottom）
+        noarm_top = cut(src, CUT_ARM_TOP)
+        noarm_top.save(os.path.join(SPRITES, name + '_noarm_top.png'))
+        noarm_bottom = cut(src, CUT_ARM_BOTTOM)
+        noarm_bottom.save(os.path.join(SPRITES, name + '_noarm_bottom.png'))
+
+        # 只剩头飞了（手还在）：_nohead
+        nohead = cut(src, CUT_HEAD)
+        nohead.save(os.path.join(SPRITES, name + '_nohead.png'))
+
+        print('%-22s -> _noarms + _torso + _noarm_top + _noarm_bottom + _nohead' % name)
 
 
 if __name__ == '__main__':

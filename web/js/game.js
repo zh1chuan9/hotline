@@ -67,9 +67,11 @@
   // ---------------------------------------------------------------- 资源
   const SPRITE_DIR = 'assets/sprites/';
   // 活人造型不用贴图（一个头 + 两只圆手，实时画），这里只留场景、血、尸体和武器。
-  // 每张敌人尸体还配两份"残缺版"（tools/make_corpse_variants.py 直接从原图擦掉手/头再补描边）：
-  //   *_noarms  两只手没了，头还在 —— 胳膊被砍飞时用
-  //   *_torso   手和头都没了，只剩躯干 —— 头被打飞时用
+  // 每张敌人尸体还配几份"残缺版"（tools/make_corpse_variants.py 直接从原图擦掉手/头再补描边）：
+  //   *_noarms  两只手没了，头还在 —— 双臂都被砍飞时用
+  //   *_noarm_top / *_noarm_bottom  只少上面那只手 / 只少下面那只手 —— 单独砍断左/右手时用
+  //   *_nohead  头没了，手还在 —— 只把头砍飞时用
+  //   *_torso   手和头都没了，只剩躯干 —— 头 + 双臂都飞了时用
   // 这样残缺版和完整版是同一张图、同一套笔触，摆在一起不会像两种画风。
   const SPRITE_NAMES = [
     'wall', 'floor', 'floor2', 'door', 'cover', 'shadow', 'spark', 'dot',
@@ -77,6 +79,9 @@
     'blood_streak_1', 'blood_streak_2', 'blood_streak_3',
     'corpse_player', 'corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun',
     'corpse_enemy_melee_noarms', 'corpse_enemy_gun_noarms', 'corpse_enemy_shotgun_noarms',
+    'corpse_enemy_melee_noarm_top', 'corpse_enemy_gun_noarm_top', 'corpse_enemy_shotgun_noarm_top',
+    'corpse_enemy_melee_noarm_bottom', 'corpse_enemy_gun_noarm_bottom', 'corpse_enemy_shotgun_noarm_bottom',
+    'corpse_enemy_melee_nohead', 'corpse_enemy_gun_nohead', 'corpse_enemy_shotgun_nohead',
     'corpse_enemy_melee_torso', 'corpse_enemy_gun_torso', 'corpse_enemy_shotgun_torso',
     'w_pistol', 'w_shotgun', 'w_smg', 'w_bat', 'w_knife'
   ];
@@ -111,8 +116,8 @@
       sound: 'shotgun', icon: 'w_shotgun', dmg: 9, price: 300, drawTime: 0.46,
       blood: { pools: 7, spurts: 6, streaks: 5, scale: 1.15, spray: 34, speckles: 46 },
       // 断肢：霰弹枪贴脸轰就是一个大洞，越近越容易把人打散（见 gibChance）；
-      // gibHead 表示还可能把头整个打飞（这时就不画完整尸体了）
-      gib: 0.38, gibHead: true
+      // gibHead 表示还可能把头整个打飞（这时就不画完整尸体了）。概率已调低，别每枪都掉一地。
+      gib: 0.22, gibHead: true
     },
     bat: {
       name: '棒球棍', melee: true, fireRate: 0.32, mag: Infinity,
@@ -125,8 +130,9 @@
       reach: 42, arc: 95, shake: 2.4, sound: 'swing', icon: 'w_knife', dmg: 48, price: 50,
       drawTime: 0.16,
       blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.85, spray: 14, speckles: 18 },
-      // 断肢：砍中打死时有这么高的概率把对方的手/头削下来（剧情模式一击必杀，最直观的"刀快"）
-      gib: 0.5
+      // 断肢：砍中打死时有概率把对方的手/头削下来（剧情模式一击必杀，最直观的"刀快"）。
+      // 概率已调低，且可能只削一只手，不必每次都是整条胳膊飞出去
+      gib: 0.30
     }
   };
   // 空手拳头：把枪扔出去后也不至于没辙 —— 贴脸才够得着（reach 24），但一拳能放倒一个人。
@@ -1315,16 +1321,22 @@
   // （tools/make_sfx.py 会打印时长和静音段），换录音要重新对一遍。
   const SAMPLES = {
     // 手枪枪声：tools/synth_pistol.py 现合成的 wav（0.55s，峰值已归一到 0.98）。
-    // 比原来那段录音更闷更吵：能量大半在 300Hz 以下，几乎没有高频"啪"，跟爆头音（hit/die）
-    // 是同一个路子。整段自带起手和 25ms 收尾，所以 trim=0、fade 只给 0.05（默认 0.10 会把
-    // 房间余响那一截咬掉）。峰值 0.98 太满，gain 压到 0.55。
-    // 0.15s 的射速下最多叠 4 个声部，再往上就糊成一团。
+    // 2026-11-08 起改"清脆"：>1500Hz 能量从 8% 提到 35%，起手是 2.6kHz 的脆"啪"。
+    // 整段自带起手和收尾，trim=0、fade 给 0.05。0.15s 射速下最多叠 4 个声部。
     pistol: { trim: 0, len: 0.55, gain: 0.55, maxVoices: 4, fade: 0.05 },
-    // 换弹：1.23s，前 0.19s 静音，0.19~0.55 是一串拔弹匣/摸弹匣的机械小响，
-    // 0.71s 弹匣拍到位（最响，样本峰值 0.663），尾巴到 1.0s。整段放完正好盖住手枪 0.9s 的换弹时间。
-    // steal：换弹声必须响（玩家按了 R 没声音会以为卡了），声部占满就抢掉最早那个，而不是哑火。
-    // gain 只给 0.38：这段录音峰值 0.663（比枪声的 0.294 响一倍多），不压的话换弹比开枪还吵。
-    reload: { trim: 0.18, len: 0.85, gain: 0.38, maxVoices: 2, steal: true }
+    // 换弹：1.23s 录音，0.71s 弹匣拍到位（样本峰值 0.663），gain 压到 0.38。
+    reload: { trim: 0.18, len: 0.85, gain: 0.38, maxVoices: 2, steal: true },
+    // ---- 以下都是 tools/synth_all.py 合成的拟真细节音 ----
+    smg:       { trim: 0, len: 0.16, gain: 1.0, maxVoices: 8 },
+    shotgun:   { trim: 0, len: 0.55, gain: 1.0, maxVoices: 3 },
+    headpop:   { trim: 0, len: 0.30, gain: 1.0, maxVoices: 3 },
+    blood_land:{ trim: 0, len: 0.35, gain: 0.7, maxVoices: 4 },
+    shell_drop:{ trim: 0, len: 0.40, gain: 0.7, maxVoices: 6 },
+    shell_eject:{ trim: 0, len: 0.12, gain: 0.8, maxVoices: 6 },
+    rack:      { trim: 0, len: 0.22, gain: 0.9, maxVoices: 2 },
+    body_drop: { trim: 0, len: 0.40, gain: 1.0, maxVoices: 3 },
+    knife_hit: { trim: 0, len: 0.25, gain: 1.0, maxVoices: 3 },
+    melee_swing:{ trim: 0, len: 0.18, gain: 0.7, maxVoices: 3 },
   };
   const Sfx = {
     ac: null,
@@ -1488,8 +1500,13 @@
         // 换弹：整段录音（拔弹匣 → 拍上新弹匣）一次性放完，比拆成两声合成的更像真的。
         // 返回 false 表示采样不可用，调用方用 'magout'/'magin' 两声兜底。
         case 'reload': return this.sample('reload', 1.0, 1.0);
-        case 'smg': this.noise(0.07, 1800, 1.0, 0.26, 0.15); this.tone(280, 80, 0.05, 0.08, 'square'); break;
-        case 'shotgun': this.noise(0.30, 1200, 0.8, 0.45, 0.3); this.tone(160, 45, 0.18, 0.16, 'sawtooth'); break;
+        // 冲锋枪 / 霰弹：先用采样（合成 wav），解码没就绪再走老合成兜底
+        case 'smg':
+          if (this.sample('smg', 0.96 + Math.random() * 0.08, 0.97 + Math.random() * 0.06)) return true;
+          this.noise(0.07, 1800, 1.0, 0.26, 0.15); this.tone(280, 80, 0.05, 0.08, 'square'); break;
+        case 'shotgun':
+          if (this.sample('shotgun', 0.96 + Math.random() * 0.08, 0.97 + Math.random() * 0.06)) return true;
+          this.noise(0.30, 1200, 0.8, 0.45, 0.3); this.tone(160, 45, 0.18, 0.16, 'sawtooth'); break;
         case 'swing': this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
         case 'hit': this.noise(0.12, 420, 1.0, 0.28, 0.2); this.tone(120, 50, 0.10, 0.14, 'square'); break;
         // 击中敌人护甲：金属"铛"一声，和打肉体的闷响区分开
@@ -1498,6 +1515,31 @@
         case 'armorbreak': this.noise(0.28, 1800, 1.4, 0.32, 0.22); this.tone(920, 240, 0.16, 0.12, 'square'); this.tone(420, 180, 0.10, 0.08, 'sawtooth'); break;
         case 'die': this.noise(0.34, 520, 0.9, 0.30, 0.3); this.tone(150, 40, 0.28, 0.12, 'sawtooth'); break;
         case 'empty': this.tone(900, 700, 0.04, 0.07, 'square'); break;
+        // 拟真细节音（tools/synth_all.py 合成的 wav，解码没就绪就走下面合成兜底）
+        case 'headpop':
+          if (this.sample('headpop', 1.0, 1.0)) return true;
+          this.noise(0.03, 4200, 1.8, 0.22, 0.01); this.noise(0.12, 420, 1.2, 0.28, 0.06); break;
+        case 'blood_land':
+          if (this.sample('blood_land', 1.0, 1.0)) return true;
+          this.noise(0.04, 1800, 3.0, 0.08, 0.02); break;
+        case 'shell_drop':
+          if (this.sample('shell_drop', 0.9 + Math.random() * 0.2, 0.9 + Math.random() * 0.2)) return true;
+          this.noise(0.05, 2200, 5.0, 0.06, 0.03); this.tone(2100, 1900, 0.05, 0.06, 'triangle'); break;
+        case 'shell_eject':
+          if (this.sample('shell_eject', 0.9 + Math.random() * 0.2, 0.9 + Math.random() * 0.2)) return true;
+          this.noise(0.04, 2600, 4.0, 0.10, 0.02); break;
+        case 'rack':
+          if (this.sample('rack', 1.0, 1.0)) return true;
+          this.noise(0.14, 1100, 1.5, 0.15, 0.08); this.noise(0.03, 2800, 4.0, 0.10, 0.01); break;
+        case 'body_drop':
+          if (this.sample('body_drop', 1.0, 1.0)) return true;
+          this.noise(0.20, 180, 0.8, 0.32, 0.1); break;
+        case 'knife_hit':
+          if (this.sample('knife_hit', 1.0, 1.0)) return true;
+          this.noise(0.04, 3000, 0.9, 0.14, 0.02); this.noise(0.12, 300, 1.0, 0.26, 0.06); break;
+        case 'melee_swing':
+          if (this.sample('melee_swing', 0.9 + Math.random() * 0.2, 0.9 + Math.random() * 0.2)) return true;
+          this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
         // 换弹：拔弹匣是干涩的"哐"，拍上弹匣是闷一点的"咔"
         case 'magout': this.noise(0.06, 760, 2.2, 0.10, 0.05); this.tone(300, 190, 0.05, 0.05, 'square'); break;
         case 'magin': this.noise(0.09, 520, 1.6, 0.15, 0.07); this.tone(210, 120, 0.06, 0.09, 'square'); break;
@@ -1679,9 +1721,12 @@
       bob: Math.random() * 6.28,
       deadT: 0,
       deathDir: 0,
-      // 断肢标记：gibbed = 头被打飞（尸体连头都不画），dismember = 胳膊被砍飞
+      // 断肢标记：gibbed = 头被打飞（尸体连头都不画）；dismember = 两只胳膊都被砍飞；
+      // dismTop / dismBottom = 只砍飞上面那只手 / 下面那只手（单独左/右手）
       gibbed: false,
       dismember: false,
+      dismTop: false,
+      dismBottom: false,
       // 侧移包抄：方向保持一段时间再翻，避免原地左右抖
       strafeDir: Math.random() < 0.5 ? -1 : 1,
       strafeTimer: 0.7 + Math.random() * 1.3,
@@ -1698,7 +1743,9 @@
   function makePickup(w, x, y) {
     return {
       def: w, x, y, bob: Math.random() * 6.28,
-      vx: 0, vy: 0, rot: Math.random() * 6.28
+      vx: 0, vy: 0, rot: Math.random() * 6.28,
+      // 掉落武器 25 秒后消失（消耗品不消失）；ttl 归零前 5 秒开始闪烁提示
+      ttl: 25
     };
   }
 
@@ -1991,13 +2038,29 @@
       const side = ang + Math.PI / 2;
       const sp = 34 + Math.random() * 16;
       this.clips.push({
-        type: 'shell',
+        type: 'shell', shell: 'shotgun',
         x, y,
         vx: Math.cos(side) * sp + Math.cos(ang) * 6,
         vy: Math.sin(side) * sp + Math.sin(ang) * 6,
         rot: side + (Math.random() - 0.5) * 1.2,
         rotV: 14 + Math.random() * 8,
         life: 0.55, max: 0.55
+      });
+    },
+
+    /** 开火抛壳：每把枪都从抛壳窗甩出一颗空弹壳，型号不同（手枪黄铜短壳 / 冲锋枪更短 / 霰弹红壳）。 */
+    addEjectShell(x, y, ang, shell) {
+      const side = ang + Math.PI / 2;
+      const sp = 46 + Math.random() * 20;
+      this.clips.push({
+        type: 'shell', shell: shell || 'pistol',
+        x, y,
+        vx: Math.cos(side) * sp + Math.cos(ang) * 10,
+        vy: Math.sin(side) * sp + Math.sin(ang) * 10 - 20,
+        rot: side + (Math.random() - 0.5) * 1.4,
+        rotV: 12 + Math.random() * 9,
+        life: 0.6, max: 0.6,
+        land: true                     // 落地后留在地上（不消失）
       });
     },
 
@@ -2054,26 +2117,28 @@
       }
     },
     /**
-     * 断肢：从尸体位置甩出几截"胳膊（袖子 + 圆手）"，霰弹枪贴脸时可以把头也打飞。
-     * 部件会转着飞一段、一路甩血，落地那一刻才贴进贴花层（跟血滴一样"先飞后落"）。
+     * 断肢：从尸体位置甩出截断的胳膊 / 头。部件转着飞、一路甩血，落地才贴进贴花层。
+     * parts 是要甩出去的东西列表：每项 { type:'arm'|'head', side:'top'|'bottom' }。
+     * 胳膊画成"袖子 + 方正的手"（不再是一颗圆手），跟尸体贴图那种方块像素感对齐。
      */
-    addGibs(x, y, ang, n, style, head) {
+    addGibs(x, y, ang, parts, style) {
       const st = style || {};
       const sc = st.scale || 1;
-      for (let i = 0; i < n; i++) {
-        const isHead = head && i === 0;
+      for (const pt of parts) {
+        const isHead = pt.type === 'head';
         const a = ang + (Math.random() - 0.5) * (isHead ? 0.7 : 1.6);
         const sp = (110 + Math.random() * 150) * sc;
         this.gibs.push({
           type: isHead ? 'head' : 'arm',
+          side: pt.side || 'top',
           x: x + (Math.random() - 0.5) * 5,
           y: y + (Math.random() - 0.5) * 5,
           vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
           rot: Math.random() * 6.283,
           rotV: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 10),
           len: (9 + Math.random() * 5) * sc,
-          w: (3.1 + Math.random() * 1.1) * sc,
-          hand: (2.5 + Math.random() * 0.7) * sc,
+          w: (3.4 + Math.random() * 1.0) * sc,
+          hand: (3.0 + Math.random() * 0.6) * sc,
           cloth: st.cloth || '#6e6e74',
           skin: st.skin || '#8a857e',
           life: 0.36 + Math.random() * 0.24, max: 0.6,
@@ -2134,7 +2199,16 @@
         c.rot += c.rotV * dt;
         c.rotV *= Math.pow(0.3, dt);
         c.life -= dt;
-        if (c.life <= 0) this.clips.splice(i, 1);
+        if (c.life <= 0) {
+          // 空弹壳 / 旧弹匣：落地那一刻响一声，然后烤进贴花层留在地上（不消失）
+          if (c.type === 'shell') {
+            Sfx.play('shell_drop');
+            bakeShell(c);
+          } else if (c.type === 'mag') {
+            bakeMag(c);
+          }
+          this.clips.splice(i, 1);
+        }
       }
       for (let i = this.texts.length - 1; i >= 0; i--) {
         const t = this.texts[i];
@@ -2153,6 +2227,12 @@
       for (let i = this.gibs.length - 1; i >= 0; i--) {
         const g = this.gibs[i];
         g.x += g.vx * dt; g.y += g.vy * dt;
+        // 撞墙：肢体碰到墙就反弹一下（速度衰减），不再穿墙飞出去
+        if (W && pointSolid(W, g.x, g.y, 4)) {
+          g.x -= g.vx * dt; g.y -= g.vy * dt;   // 退回这一帧
+          g.vx *= -0.45; g.vy *= -0.45;          // 反弹 + 减速
+          g.rotV *= 0.6;
+        }
         // 阻尼按秒算，不然 60fps 下刚离体就钉住（同弹匣那条坑）
         const damp = Math.pow(0.06, dt);
         g.vx *= damp; g.vy *= damp;
@@ -2745,6 +2825,8 @@
   function meleeSwing(actor, def, isPlayer) {
     const origin = { x: actor.x, y: actor.y };
     const facing = isPlayer ? Math.atan2(actor.facing.y, actor.facing.x) : actor.facing;
+    // 破空声：每次挥击都来一下（whoosh 采样，采样没就绪就落回旧的 swing 噪声）
+    Sfx.play('melee_swing');
     const reach = def.reach, halfArc = def.arc * Math.PI / 180 / 2;
     const targets = [];
     if (isPlayer) { for (const e of W.enemies) if (e.alive) targets.push(e); }
@@ -2779,6 +2861,11 @@
         damageEnemy(t, dmg, dirAngle, isPlayer, headshot);
       }
       hitAny = true;
+    }
+    // 命中音：刀具入肉（knife_hit 采样）和钝器砸击（hit）区分开
+    if (hitAny) {
+      const blade = def && (def.name === '武士刀' || def.kind === 'knife');
+      if (blade) Sfx.play('knife_hit'); else Sfx.play('hit');
     }
     FX.kick(def.shake + (hitAny ? 2 : 0), 0.16);
     emitNoise(actor.x, actor.y, 130);
@@ -2893,8 +2980,9 @@
     const wdef = killer && killer.weapon ? WEAPONS[killer.weapon] : null;
     spillBlood(e.x, e.y, dir, (wdef && wdef.blood) || BLOOD_PLAIN, false);
     if (headshot) {
-      // 爆头多喷一轮，画面更狠
+      // 爆头多喷一轮，画面更狠；脑浆炸开的"啪噗"一声
       spillBlood(e.x, e.y, dir, { pools: 3, spurts: 4, streaks: 3, scale: 1.05, spray: 16, speckles: 18 }, false);
+      Sfx.play('headpop');
     }
     // 断肢：霰弹枪 / 武士刀打死人时有概率把胳膊（霰弹还会连头）削下来。
     // 只在玩家打死的场合做 —— 敌人互殴、油桶炸死都不该掉一地手脚。
@@ -2962,21 +3050,43 @@
     return Math.random() < Math.min(0.9, chance);
   }
 
-  /** 把敌人的胳膊（霰弹还有可能带头）甩出去。 */
+  /** 把敌人的手 / 头甩出去。砍掉哪几块是随机的：
+   *  只砍飞一只手（左或右）、两只都飞、或者把头也削下来，比例都不一样。 */
   function gibEnemy(e, wdef) {
     const pal = PALETTE['enemy_' + e.kind] || PALETTE.enemy_gun;
     const style = { cloth: shade(pal.head, 0.78), skin: pal.skin, scale: e.scale || 1 };
-    const takeHead = !!wdef.gibHead && Math.random() < 0.55;
-    FX.addGibs(e.x, e.y, e.deathDir, takeHead ? 3 : 2, style, takeHead);
-    if (takeHead) {
-      // 头没了就别画整具尸体，留一地的肢体和血更像"轰碎"
-      e.gibbed = true;
-      FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 14, 1.15);
+
+    // 这一刀砍下什么：40% 只掉一只手、30% 两只手、30% 带头（头飞时手也可能跟着飞）
+    const parts = [];
+    const r = Math.random();
+    let takeHead = false;
+    if (wdef.gibHead && r < 0.30) {
+      takeHead = true;
+      if (Math.random() < 0.5) parts.push({ type: 'arm', side: 'top' });
+      if (Math.random() < 0.5) parts.push({ type: 'arm', side: 'bottom' });
+      parts.push({ type: 'head' });
+    } else if (r < 0.70) {
+      // 两只手都飞
+      parts.push({ type: 'arm', side: 'top' });
+      parts.push({ type: 'arm', side: 'bottom' });
     } else {
-      // 只砍飞胳膊：尸体改成"无手的躯干"，不然地上那只手和身上的手对不上
-      e.dismember = true;
-      FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 8, 1.0);
+      // 只飞一只手（随机哪只）
+      parts.push({ type: 'arm', side: Math.random() < 0.5 ? 'top' : 'bottom' });
     }
+
+    FX.addGibs(e.x, e.y, e.deathDir, parts, style);
+
+    // 按砍掉的东西给尸体打标记，corpseTexture 据此选残缺贴图
+    for (const pt of parts) {
+      if (pt.type === 'head') e.gibbed = true;
+      else if (pt.side === 'top') e.dismTop = true;
+      else if (pt.side === 'bottom') e.dismBottom = true;
+    }
+    if (e.dismTop && e.dismBottom) { e.dismember = true; e.dismTop = e.dismBottom = false; }
+
+    // 断肢飙血：血珠跟着断口往外喷（比普通死亡喷得更远更浓）
+    FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) },
+      takeHead ? 14 : 8, takeHead ? 1.15 : 1.0);
     Sfx.play('hit');
     FX.kick(2.8, 0.16);
   }
@@ -3016,8 +3126,8 @@
   // -------------------------------------------------------------- 断肢
   /**
    * 画一截断肢（局部坐标：原点在肢体中心，x 轴沿肢体长边）。
-   * 角色本来就是"一个头 + 两只圆手"，所以"胳膊"就是一截袖子加一只圆手，
-   * "头"就是那颗圆脑袋 —— 掉在地上的东西和站着的人形状对得上，才不像随机贴图。
+   * 胳膊 = 一截方形袖子 + 一只方正的手（不再是一颗圆手），和尸体贴图那种方块像素感对齐；
+   * 头 = 一颗圆脑袋。
    */
   function paintGib(c, g) {
     c.save();
@@ -3037,26 +3147,32 @@
       c.fillStyle = 'rgba(150,18,32,0.92)';                      // 脖子断口
       c.beginPath(); c.ellipse(0, -r * 0.74, r * 0.6, r * 0.38, 0, 0, 6.283); c.fill();
     } else {
-      // 袖子：先画粗一圈黑描边再压上布色，地板暗的时候才看得出轮廓
-      c.lineCap = 'round';
-      c.strokeStyle = 'rgba(0,0,0,0.5)';
-      c.lineWidth = g.w + 1.4;
-      c.beginPath();
-      c.moveTo(-g.len * 0.44, 0); c.lineTo(g.len * 0.3, 0);
-      c.stroke();
-      c.strokeStyle = g.cloth;
-      c.lineWidth = g.w;
-      c.beginPath();
-      c.moveTo(-g.len * 0.44, 0); c.lineTo(g.len * 0.3, 0);
-      c.stroke();
-      // 断口一圈暗红
+      // 袖子：一条粗的方角矩形，先黑描边再压布色（方角，别用 round 线帽）
+      const half = g.len * 0.44;
+      const sleeveW = g.w;
+      c.fillStyle = 'rgba(0,0,0,0.55)';
+      c.fillRect(-half - 0.7, -sleeveW / 2 - 0.7, g.len * 0.74 + 1.4, sleeveW + 1.4);
+      c.fillStyle = g.cloth;
+      c.fillRect(-half, -sleeveW / 2, g.len * 0.74, sleeveW);
+      // 袖子折痕：两条细线，让它不只是一块纯色
+      c.fillStyle = 'rgba(0,0,0,0.18)';
+      c.fillRect(-half + 1.5, -sleeveW / 2, 1, sleeveW);
+      c.fillRect(-half + g.len * 0.4, -sleeveW / 2, 1, sleeveW);
+      // 断口一圈暗红（被砍断那端）
       c.fillStyle = 'rgba(150,18,32,0.9)';
-      c.beginPath(); c.ellipse(-g.len * 0.44, 0, 1.2, g.w * 0.5, 0, 0, 6.283); c.fill();
-      // 圆手
+      c.fillRect(-half - 1, -sleeveW * 0.55, 1.6, sleeveW * 1.1);
+      // 方正的手：一个圆角很小的方块 + 三根短手指（方形，不是圆手）
+      const hw = g.hand, hh = g.hand * 0.8;
+      const hx = g.len * 0.5;
       c.fillStyle = 'rgba(0,0,0,0.45)';
-      c.beginPath(); c.arc(g.len * 0.5, 0, g.hand + 0.7, 0, 6.283); c.fill();
+      c.fillRect(hx - hw / 2 - 0.7, -hh / 2 - 0.7, hw + 1.4, hh + 1.4);
       c.fillStyle = g.skin;
-      c.beginPath(); c.arc(g.len * 0.5, 0, g.hand, 0, 6.283); c.fill();
+      c.fillRect(hx - hw / 2, -hh / 2, hw, hh);
+      // 手指缝：两三道暗缝，看出是只手
+      c.fillStyle = 'rgba(0,0,0,0.22)';
+      const fw = hw * 0.16;
+      c.fillRect(hx + hw * 0.12, -hh / 2 + 0.6, fw, hh - 1.2);
+      c.fillRect(hx + hw * 0.34, -hh / 2 + 0.6, fw, hh - 1.2);
     }
     c.restore();
   }
@@ -3067,6 +3183,8 @@
    */
   function bakeGib(g) {
     if (!W || !W.decals) return;
+    // 肢体落地：闷响一声 + 一小滩血
+    Sfx.play('body_drop');
     // 血泊受贴花总额度限制（满地都是的时候就不再铺），但肢体本身一定要落到地上，
     // 否则飞到一半凭空消失，看着像 bug。
     if (W.bloodCount <= BLOOD_CAP) {
@@ -3151,7 +3269,11 @@
       b.t -= dt;
       if (b.t > 0) continue;
       q.splice(i, 1);
-      if (b.kind === 'pool') bloodPool(b.x, b.y, b.s);
+      if (b.kind === 'pool') {
+        bloodPool(b.x, b.y, b.s);
+        // 血泊落地：飙出去的血砸到地上的湿"滴答"声（限流，别一次死一片就炸耳朵）
+        if (b.s > 0.6 && Math.random() < 0.5) Sfx.play('blood_land');
+      }
       else if (b.kind === 'streak') bloodStreak(b.x, b.y, b.a, b.s);
       else bloodSpeckle(b.x, b.y, b.a, b.n);
     }
@@ -3275,8 +3397,9 @@
             reloadFx(p);
           } else {
             p.shellReload = 0;
-            // 装填结束那一拍
+            // 装填结束那一拍 + 泵动上膛
             Sfx.play('magin');
+            Sfx.play('rack');
             FX.kick(1.1, 0.06);
             FX.addParticles(p.x + p.facing.x * 12, p.y + p.facing.y * 12, 3, '#cfd6e2', 26, 0.16);
           }
@@ -3296,6 +3419,8 @@
           // 弹匣拍到位那一拍：闷响 + 机匣位置崩出两点火星。
           // 真录音里本来就含"拍进去"这一下，用录音时就不再叠合成的"咔"。
           if (!p.reloadSampled) Sfx.play('magin');
+          // 上膛：拉一下套筒/枪机，让第一发上膛（清脆的金属"嚓咔"）
+          Sfx.play('rack');
           FX.kick(1.1, 0.06);
           FX.addParticles(p.x + p.facing.x * 12, p.y + p.facing.y * 12, 3, '#cfd6e2', 26, 0.16);
         }
@@ -3788,13 +3913,12 @@
     // 冲锋枪：后坐力让准心持续上抬（视觉上 kick 更大）
     if (gunStat(p.weapon, 'auto')) p.kick = (def.kick || 6) * 1.4;
 
-    // 散弹枪：打一发退一颗空弹壳（泵动/半自动都是打完才退壳，换弹时不再退）
-    if (p.weapon === 'shotgun') {
-      const side = base + Math.PI / 2;
-      FX.addShell(p.x + p.facing.x * 8 + Math.cos(side) * 4,
-                  p.y + p.facing.y * 8 + Math.sin(side) * 4, base);
-      Sfx.play('shellout');
-    }
+    // 抛壳：每把枪开火都从抛壳窗甩出一颗空弹壳（型号不同），落地"叮"一声留在地上
+    const shellKind = p.weapon === 'shotgun' ? 'shotgun' : (p.weapon === 'smg' ? 'smg' : 'pistol');
+    const side = base + Math.PI / 2;
+    FX.addEjectShell(p.x + p.facing.x * 8 + Math.cos(side) * 4,
+                     p.y + p.facing.y * 8 + Math.sin(side) * 4, base, shellKind);
+    Sfx.play('shell_eject');
   }
 
   /**
@@ -4163,6 +4287,12 @@
       (GUN_ROLE[e.role] || GUN_ROLE.hold).err);
     const err = (Math.random() - 0.5) * 2 * errDeg * Math.PI / 180;
     const base = angToP + err;
+    // 敌人开火同样抛壳（型号随武器走）
+    const eShell = e.weapon === 'shotgun' ? 'shotgun' : (e.weapon === 'smg' ? 'smg' : 'pistol');
+    const eSide = base + Math.PI / 2;
+    FX.addEjectShell(e.x + Math.cos(base) * 8 + Math.cos(eSide) * 4,
+                     e.y + Math.sin(base) * 8 + Math.sin(eSide) * 4, base, eShell);
+    Sfx.play('shell_eject');
     for (let i = 0; i < def.pellets; i++) {
       const a = base + (Math.random() - 0.5) * 2 * def.spread * Math.PI / 180;
       castShot({ x: e.x + Math.cos(base) * 11, y: e.y + Math.sin(base) * 11 }, a, def.range, e);
@@ -4216,8 +4346,14 @@
 
   // ---------------------------------------------------------------- 拾取物更新
   function updatePickups(dt) {
-    for (const pk of W.pickups) {
+    for (let i = W.pickups.length - 1; i >= 0; i--) {
+      const pk = W.pickups[i];
       pk.bob += dt * 3;
+      // 掉落武器倒计时：25 秒后消失。消耗品（血包/弹药，def 不在 WEAPONS 里）永不消失。
+      if (pk.ttl !== undefined && WEAPONS[pk.def]) {
+        pk.ttl -= dt;
+        if (pk.ttl <= 0) W.pickups.splice(i, 1);
+      }
     }
   }
 
@@ -5557,12 +5693,17 @@
   function drawPickups() {
     for (const pk of W.pickups) {
       const bob = Math.sin(pk.bob) * 1.6;
+      // 快消失的武器一闪一闪（最后 5 秒，越接近消失闪得越快）
+      let blink = 1;
+      if (pk.ttl !== undefined && WEAPONS[pk.def] && pk.ttl < 5) {
+        blink = (Math.sin(pk.bob * 3 + (5 - pk.ttl) * 6) > 0) ? 1 : 0.25;
+      }
       ctx.save();
       ctx.translate(pk.x, pk.y + bob);
       ctx.rotate(Math.sin(pk.bob * 0.5) * 0.12);
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = 0.35 * blink;
       ctx.drawImage(IMG.shadow, -16, -15, 32, 32);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = blink;
       if (pk.def === 'medkit') {
         // 血包：白色医疗箱 + 红十字
         drawMedkitIcon();
@@ -5712,8 +5853,16 @@
    */
   function corpseTexture(a, corpse) {
     const base = corpse || 'corpse_player';
-    if (a.gibbed && IMG[base + '_torso']) return base + '_torso';
+    // 断了几块就用对应残缺图：手+头都飞了→torso，双臂飞了→noarms，
+    // 只飞上面那只→noarm_top，只飞下面那只→noarm_bottom，只飞头→nohead。
+    // 贴图缺失时退回完整版，不至于画成空白。
+    if (a.gibbed && a.dismember && IMG[base + '_torso']) return base + '_torso';
     if (a.dismember && IMG[base + '_noarms']) return base + '_noarms';
+    if (a.gibbed && a.dismTop && IMG[base + '_noarm_top']) return base + '_noarm_top';
+    if (a.gibbed && a.dismBottom && IMG[base + '_noarm_bottom']) return base + '_noarm_bottom';
+    if (a.dismTop && !a.dismBottom && IMG[base + '_noarm_top']) return base + '_noarm_top';
+    if (a.dismBottom && !a.dismTop && IMG[base + '_noarm_bottom']) return base + '_noarm_bottom';
+    if (a.gibbed && IMG[base + '_nohead']) return base + '_nohead';
     return base;
   }
 
@@ -6006,15 +6155,7 @@
       ctx.translate(c.x, c.y);
       ctx.rotate(c.rot);
       if (c.type === 'shell') {
-        // 空弹壳：红铜色小壳，比弹匣小一截
-        ctx.fillStyle = '#0d0a11';
-        ctx.fillRect(-1.7, -2.7, 3.4, 5.4);
-        ctx.fillStyle = '#8a3a28';
-        ctx.fillRect(-1.4, -2.4, 2.8, 4.8);
-        ctx.fillStyle = '#c9684a';
-        ctx.fillRect(-1.4, -2.4, 2.8, 1.3);
-        ctx.fillStyle = '#5a2418';
-        ctx.fillRect(-1.1, 1.1, 2.2, 1.3);
+        paintShell(ctx, c.shell || 'shotgun');
       } else {
         // 旧弹匣：收窄成长条，别再像块方砖占半个身子
         ctx.fillStyle = '#0d0a11';
@@ -6029,6 +6170,75 @@
       ctx.restore();
     }
     ctx.globalAlpha = 1;
+  }
+
+  /** 画一颗空弹壳（原点在壳底中心，长边朝 +y）。型号不同外观不同：
+   *  pistol = 短黄铜壳，smg = 更短小的黄铜壳，shotgun = 红塑料壳。 */
+  function paintShell(c, kind) {
+    const k = kind || 'pistol';
+    if (k === 'shotgun') {
+      // 红塑料弹壳（霰弹）
+      c.fillStyle = '#0d0a11';
+      c.fillRect(-1.8, -3.0, 3.6, 6.0);
+      c.fillStyle = '#8a1f1f';
+      c.fillRect(-1.5, -2.6, 3.0, 5.2);
+      c.fillStyle = '#d04a3a';
+      c.fillRect(-1.5, -2.6, 3.0, 1.4);
+      c.fillStyle = '#5a1414';
+      c.fillRect(-1.1, 1.2, 2.2, 1.4);
+    } else if (k === 'smg') {
+      // 短小的黄铜壳（冲锋枪）
+      c.fillStyle = '#0d0a11';
+      c.fillRect(-1.4, -2.0, 2.8, 4.0);
+      c.fillStyle = '#a8822a';
+      c.fillRect(-1.1, -1.7, 2.2, 3.4);
+      c.fillStyle = '#e0c050';
+      c.fillRect(-1.1, -1.7, 2.2, 1.0);
+      c.fillStyle = '#6a5218';
+      c.fillRect(-0.85, 0.8, 1.7, 0.9);
+    } else {
+      // 手枪黄铜壳
+      c.fillStyle = '#0d0a11';
+      c.fillRect(-1.6, -2.5, 3.2, 5.0);
+      c.fillStyle = '#a8822a';
+      c.fillRect(-1.3, -2.2, 2.6, 4.4);
+      c.fillStyle = '#e0c050';
+      c.fillRect(-1.3, -2.2, 2.6, 1.2);
+      c.fillStyle = '#6a5218';
+      c.fillRect(-1.0, 1.0, 2.0, 1.2);
+    }
+  }
+
+  /** 弹壳落地：烤进贴花层，永久留在地上。 */
+  function bakeShell(clip) {
+    if (!W || !W.decals) return;
+    const dctx = W.decals.getContext('2d');
+    dctx.save();
+    dctx.globalAlpha = 0.92;
+    dctx.translate(clip.x, clip.y);
+    dctx.rotate(clip.rot);
+    paintShell(dctx, clip.shell || 'shotgun');
+    dctx.restore();
+  }
+
+  /** 旧弹匣落地：烤进贴花层留在地上（不消失）。 */
+  function bakeMag(clip) {
+    if (!W || !W.decals) return;
+    const dctx = W.decals.getContext('2d');
+    dctx.save();
+    dctx.globalAlpha = 0.92;
+    dctx.translate(clip.x, clip.y);
+    dctx.rotate(clip.rot);
+    // 弹匣：一个窄长条，黑描边 + 深灰匣体 + 顶部亮条
+    dctx.fillStyle = '#0d0a11';
+    dctx.fillRect(-2.0, -3.4, 4.0, 6.8);
+    dctx.fillStyle = '#4a4157';
+    dctx.fillRect(-1.6, -2.9, 3.2, 5.8);
+    dctx.fillStyle = '#8a7d96';
+    dctx.fillRect(-1.6, -2.9, 3.2, 1.4);
+    dctx.fillStyle = '#1a1524';
+    dctx.fillRect(-1.1, 1.1, 2.2, 1.7);
+    dctx.restore();
   }
 
   function drawWorldTexts() {
@@ -6181,13 +6391,38 @@
       ctx.fillStyle = '#c8c8d0';
       ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
-      // 右上：现金（击杀所得，商店货币）
+      // 右上：剩余敌人（LAST）+ 分数（SCORE）+ 现金（击杀所得，商店货币）
+      let aliveCount = 0;
+      for (const e of W.enemies) if (e.alive) aliveCount++;
       ctx.textAlign = 'right';
+      // 剩余敌人
+      ctx.font = 'bold 9px Consolas, monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText('LAST', VIEW_W - 9 + HUD_OFF.cash.x, 7 + HUD_OFF.cash.y);
+      ctx.fillStyle = '#8a8a92';
+      ctx.fillText('LAST', VIEW_W - 10 + HUD_OFF.cash.x, 6 + HUD_OFF.cash.y);
+      ctx.font = 'bold 15px Consolas, monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText('' + aliveCount, VIEW_W - 9 + HUD_OFF.cash.x, 16 + HUD_OFF.cash.y);
+      ctx.fillStyle = aliveCount > 0 ? '#e02929' : '#5a5a60';
+      ctx.fillText('' + aliveCount, VIEW_W - 10 + HUD_OFF.cash.x, 15 + HUD_OFF.cash.y);
+      // 分数
+      ctx.font = 'bold 9px Consolas, monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText('SCORE', VIEW_W - 9 + HUD_OFF.cash.x, 36 + HUD_OFF.cash.y);
+      ctx.fillStyle = '#8a8a92';
+      ctx.fillText('SCORE', VIEW_W - 10 + HUD_OFF.cash.x, 35 + HUD_OFF.cash.y);
+      ctx.font = 'bold 13px Consolas, monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText('' + (G.score || 0), VIEW_W - 9 + HUD_OFF.cash.x, 46 + HUD_OFF.cash.y);
+      ctx.fillStyle = '#c8c8d0';
+      ctx.fillText('' + (G.score || 0), VIEW_W - 10 + HUD_OFF.cash.x, 45 + HUD_OFF.cash.y);
+      // 现金
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
+      ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 62 + HUD_OFF.cash.y);
       ctx.fillStyle = '#e02929';
-      ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
+      ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 61 + HUD_OFF.cash.y);
 
       // 左下：血量 + 护甲（只给条和格，不标数值）
       drawBodyHUD();
@@ -6204,9 +6439,9 @@
       ctx.textAlign = 'right';
       ctx.font = 'bold 14px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillText('x' + G.combo, VIEW_W - 9 + HUD_OFF.combo.x, 29 + HUD_OFF.combo.y);
+      ctx.fillText('x' + G.combo, VIEW_W - 9 + HUD_OFF.combo.x, 78 + HUD_OFF.combo.y);
       ctx.fillStyle = '#e02929';
-      ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 28 + HUD_OFF.combo.y);
+      ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 77 + HUD_OFF.combo.y);
     }
 
     // 中下：提示（剧情模式不放文字提示）
@@ -6493,18 +6728,28 @@
 
     ctx.textAlign = 'right';
     ctx.textBaseline = 'top';
-    // 剩余人数
+    // 剩余人数（LAST 标签 + 大数字）
+    ctx.font = 'bold 9px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillText('LAST', VIEW_W - 9, 7);
+    ctx.fillStyle = '#8a8a92';
+    ctx.fillText('LAST', VIEW_W - 10, 6);
     ctx.font = 'bold 22px Consolas, monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillText('' + alive, VIEW_W - 9, 9);
+    ctx.fillText('' + alive, VIEW_W - 9, 15);
     ctx.fillStyle = alive > 0 ? '#e02929' : '#5a5a60';
-    ctx.fillText('' + alive, VIEW_W - 10, 8);
-    // 分数
+    ctx.fillText('' + alive, VIEW_W - 10, 14);
+    // 分数（SCORE 标签 + 数字）
+    ctx.font = 'bold 9px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillText('SCORE', VIEW_W - 9, 47);
+    ctx.fillStyle = '#8a8a92';
+    ctx.fillText('SCORE', VIEW_W - 10, 46);
     ctx.font = 'bold 13px Consolas, monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillText('' + (G.score || 0), VIEW_W - 9, 33);
+    ctx.fillText('' + (G.score || 0), VIEW_W - 9, 57);
     ctx.fillStyle = '#c8c8d0';
-    ctx.fillText('' + (G.score || 0), VIEW_W - 10, 32);
+    ctx.fillText('' + (G.score || 0), VIEW_W - 10, 56);
 
     if (!p) return;
     // 左下：武器剪影 + 弹匣内子弹（近战没子弹，就只画枪）

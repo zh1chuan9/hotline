@@ -100,40 +100,41 @@ def band_energies(x):
 # ---------------------------------------------------------------- 合成
 def build():
     rng = random.Random(20261108)
+    # 2026-11-08 改"清脆"：起手 crack 提到 2.6kHz、更短更亮，低频 body 压轻、
+    # 房间余响砍掉大半，饱和也减到 1.2 —— 从"闷响"变成"干脆的一枪"。
     body = [0.0] * N
     for i in range(N):
         t = i / SR
-        # 低频主体：两个正弦一起往下掉，比例给到 1:0.38
-        f1 = 48 + 72 * math.exp(-t / 0.045)
-        f2 = 90 + 145 * math.exp(-t / 0.032)
+        f1 = 52 + 60 * math.exp(-t / 0.035)
+        f2 = 100 + 120 * math.exp(-t / 0.025)
         body[i] = (math.sin(2 * math.pi * f1 * t) +
-                   0.38 * math.sin(2 * math.pi * f2 * t + 0.6))
+                   0.32 * math.sin(2 * math.pi * f2 * t + 0.6))
 
-    e_body = env(N, 0.0015, 0.075)
+    e_body = env(N, 0.0012, 0.045)
 
-    # 枪口厚度：白噪声过扫频低通（3500 → 380Hz）
+    # 枪口厚度：白噪声过扫频低通（4200 → 600Hz），起手更亮
     nz = noise(N, rng)
     blast = run_filter(nz, lambda i: biquad_lp(
-        360 + 2050 * math.exp(-(i / SR) / 0.055), 0.9))
-    e_blast = env(N, 0.002, 0.090)
+        4200 * math.exp(-(i / SR) / 0.020) + 600, 1.0))
+    e_blast = env(N, 0.001, 0.055)
 
-    # 起手：1100Hz 带通，20ms，只负责"有一下"
-    crack = run_filter(nz, lambda i: biquad_bp(880, 1.6))
-    e_crack = env(N, 0.0006, 0.020)
+    # 起手：2600Hz 带通、12ms，就是"清脆"的那一下
+    crack = run_filter(nz, lambda i: biquad_bp(2600, 1.8))
+    e_crack = env(N, 0.0004, 0.012)
 
-    # 房间余响：300Hz 低通，晚 25ms 才进
-    room = run_filter(nz, lambda i: biquad_lp(300, 0.8))
-    e_room = env(N, 0.020, 0.180, hold=0.025)
+    # 房间余响：砍淡，别再把枪声拖闷
+    room = run_filter(nz, lambda i: biquad_lp(360, 0.8))
+    e_room = env(N, 0.015, 0.090, hold=0.012)
 
     mix = [0.0] * N
     for i in range(N):
-        mix[i] = (body[i] * e_body[i] * 0.95 +
-                  blast[i] * e_blast[i] * 2.30 +
-                  crack[i] * e_crack[i] * 1.85 +
-                  room[i] * e_room[i] * 1.10)
+        mix[i] = (body[i] * e_body[i] * 0.55 +
+                  blast[i] * e_blast[i] * 2.10 +
+                  crack[i] * e_crack[i] * 2.30 +
+                  room[i] * e_room[i] * 0.45)
 
-    # 饱和：峰值压一压、中间抬一抬，听感更"吵"但不会削平
-    drive = 1.8
+    # 饱和：轻一点，保住高频瞬态不被压平（清脆的关键）
+    drive = 1.2
     sat = [math.tanh(drive * v) for v in mix]
 
     # 末尾 25ms 淡出，避免截断"咔"

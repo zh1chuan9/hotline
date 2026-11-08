@@ -623,6 +623,38 @@
       H.fxClips.length === shotShells0 + 1 && H.fxClips[H.fxClips.length - 1].type === 'shell');
     H.clearPressed();
 
+    // 每把枪开火都退壳，且型号不同（手枪黄铜短壳 / 冲锋枪更短 / 霰弹红壳）
+    H.startGame();
+    const gSh = H.g, pSh = gSh.player;
+    pSh.weapon = 'pistol'; pSh.ammo = 5; pSh.cooldown = 0; pSh.reload = 0; pSh.facing = { x: 1, y: 0 };
+    H.world.enemies.length = 0;
+    H.fxClips.length = 0;
+    H.attack();
+    const pistolShell = H.fxClips[H.fxClips.length - 1];
+    check('手枪开火也退壳（type=' + (pistolShell && pistolShell.type) + '，壳=' + (pistolShell && pistolShell.shell) + '）',
+      !!pistolShell && pistolShell.type === 'shell' && pistolShell.shell === 'pistol');
+    H.fxClips.length = 0;
+    pSh.weapon = 'smg'; pSh.ammo = 5; pSh.cooldown = 0; pSh.reload = 0;
+    H.attack();
+    const smgShell = H.fxClips[H.fxClips.length - 1];
+    check('冲锋枪退的壳型号不同（shell=' + (smgShell && smgShell.shell) + '）',
+      !!smgShell && smgShell.shell === 'smg');
+
+    // ============ 18. 掉落武器 25 秒消失 + 闪烁 ============
+    H.startGame();
+    const gTTL = H.g, wTTL = H.world;
+    wTTL.pickups.length = 0;
+    const pkTTL = H.dropGun('pistol', gTTL.player.x + 20, gTTL.player.y);
+    check('掉落的武器带 25 秒倒计时（ttl=' + pkTTL.ttl + '）', pkTTL.ttl === 25);
+    // 血包/弹药不消失
+    wTTL.pickups.push({ def: 'medkit', x: 0, y: 0, bob: 0, vx: 0, vy: 0, rot: 0 });
+    const medCount0 = wTTL.pickups.filter(function (p) { return p.def === 'medkit'; }).length;
+    for (let i = 0; i < 26 * 60; i++) H.step(1);   // 模拟 26 秒
+    const weaponGone = !wTTL.pickups.some(function (p) { return p === pkTTL; });
+    const medCount1 = wTTL.pickups.filter(function (p) { return p.def === 'medkit'; }).length;
+    check('掉落武器 25 秒后消失（weaponGone=' + weaponGone + '）', weaponGone === true);
+    check('血包不消失（' + medCount0 + ' → ' + medCount1 + '）', medCount1 === medCount0);
+
     // ============ 18. 副武器槽（能多背一把，Q 切换） ============
     H.startGame();
     const g18 = H.g, p18 = g18.player, w18 = H.world;
@@ -1692,7 +1724,7 @@
     check('血滴落地后才出现血迹（' + pend0 + ' → ' + H.bloodPending.length + ' 项待落地，bloodCount=' + w8s.bloodCount.toFixed(1) + '）',
       H.bloodPending.length < pend0 && w8s.bloodCount > blood0);
 
-    // 断肢：霰弹枪 / 武士刀打死人有概率把胳膊（霰弹还会连头）削下来
+    // 断肢：霰弹枪 / 武士刀打死人有概率把手/头削下来（概率已调低，不必每枪都掉一地）
     H.startGame({ mode: 'story' });
     const w11s = H.world, g11s = H.g;
     g11s.player.weapon = 'shotgun';
@@ -1701,13 +1733,13 @@
     e11.x = g11s.player.x + 30; e11.y = g11s.player.y;
     let gibSeen = 0, headSeen = 0;
     for (let i = 0; i < 40; i++) {
-      e11.alive = true; e11.gibbed = false; e11.hp = 10;
+      e11.alive = true; e11.gibbed = false; e11.dismember = false; e11.dismTop = false; e11.dismBottom = false; e11.hp = 10;
       H.hitEnemy(e11, 9999, 0);
       if (H.fxGibs.length > 0) gibSeen++;
       if (e11.gibbed) headSeen++;
       H.fxGibs.length = 0;
     }
-    check('霰弹枪贴脸打死人会打断肢（40 次里 ' + gibSeen + ' 次）', gibSeen > 12);
+    check('霰弹枪贴脸打死人会打断肢（40 次里 ' + gibSeen + ' 次）', gibSeen >= 5 && gibSeen <= 32);
     check('霰弹枪有机会把头打飞（' + headSeen + ' 次）', headSeen > 0);
 
     // 武士刀的断肢概率也要生效（同样多打几次）
@@ -1716,30 +1748,43 @@
     g12s.player.weapon = 'knife';
     const e12 = w12s.enemies[0];
     e12.x = g12s.player.x + 22; e12.y = g12s.player.y;
-    let knifeGib = 0, dismembered = 0, dismemberHeads = 0;
+    let knifeGib = 0, singleArm = 0, bothArms = 0;
     for (let i = 0; i < 40; i++) {
-      e12.alive = true; e12.gibbed = false; e12.dismember = false; e12.hp = 10;
+      e12.alive = true; e12.gibbed = false; e12.dismember = false; e12.dismTop = false; e12.dismBottom = false; e12.hp = 10;
       H.hitEnemy(e12, 9999, 0);
       if (H.fxGibs.length > 0) knifeGib++;
-      if (e12.dismember) { dismembered++; if (!e12.gibbed) dismemberHeads++; }
+      // 可能只掉一只手（dismTop / dismBottom 单独成立），也可能两只都掉（dismember）
+      if ((e12.dismTop || e12.dismBottom) && !e12.dismember) singleArm++;
+      if (e12.dismember) bothArms++;
       H.fxGibs.length = 0;
     }
-    check('武士刀砍死人有概率断肢（40 次里 ' + knifeGib + ' 次）', knifeGib > 10);
-    // 断过肢的尸体要标成残躯：胳膊飞了就不能再贴一张"手还长在身上"的完整尸体图
-    check('砍飞胳膊时尸体标记成残躯（40 次里 ' + dismemberHeads + ' 次，头还在）', dismemberHeads > 8);
+    check('武士刀砍死人有概率断肢（40 次里 ' + knifeGib + ' 次）', knifeGib >= 5 && knifeGib <= 30);
+    // 断肢不一定是砍断双手：也可能是单独一只手，或把头也削下来
+    check('可能只砍飞单独一只手（40 次里 ' + singleArm + ' 次）', singleArm > 0);
     // 残缺版尸体贴图（原图擦掉手/头）要真的加载了，否则 drawActor 会退回完整版 = 白改了
     const imgs = H.images;
     const texOk = ['corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun'].every(function (n) {
       return imgs[n + '_noarms'] && imgs[n + '_noarms'].width === 32 &&
-             imgs[n + '_torso'] && imgs[n + '_torso'].width === 32;
+             imgs[n + '_torso'] && imgs[n + '_torso'].width === 32 &&
+             imgs[n + '_noarm_top'] && imgs[n + '_noarm_top'].width === 32 &&
+             imgs[n + '_noarm_bottom'] && imgs[n + '_noarm_bottom'].width === 32 &&
+             imgs[n + '_nohead'] && imgs[n + '_nohead'].width === 32;
     });
-    check('残缺版尸体贴图已加载（6 张 32x32）', texOk);
-    // 选图逻辑：完整 / 只少胳膊 / 头也没了 三种情况各贴哪张
+    check('残缺版尸体贴图已加载（含单臂/去头 15 张 32x32）', texOk);
+    // 选图逻辑：完整 / 只少一只手 / 双臂 / 只少头 / 全没了 各贴哪张
     const pickFull = H.corpseTextureOf({ dismember: false, gibbed: false }, 'corpse_enemy_gun');
+    const pickTop = H.corpseTextureOf({ dismember: false, gibbed: false, dismTop: true }, 'corpse_enemy_gun');
+    const pickBot = H.corpseTextureOf({ dismember: false, gibbed: false, dismBottom: true }, 'corpse_enemy_gun');
     const pickArms = H.corpseTextureOf({ dismember: true, gibbed: false }, 'corpse_enemy_gun');
+    const pickHeadOnly = H.corpseTextureOf({ dismember: false, gibbed: true }, 'corpse_enemy_gun');
     const pickHead = H.corpseTextureOf({ dismember: true, gibbed: true }, 'corpse_enemy_gun');
-    check('尸体选图：完整→原图 / 断臂→_noarms / 断头→_torso（' + pickFull + ' / ' + pickArms + ' / ' + pickHead + '）',
-      pickFull === 'corpse_enemy_gun' && pickArms === 'corpse_enemy_gun_noarms' && pickHead === 'corpse_enemy_gun_torso');
+    check('尸体选图：完整→原图 / 单臂→_noarm / 双臂→_noarms / 只断头→_nohead / 全没→_torso',
+      pickFull === 'corpse_enemy_gun' &&
+      pickTop === 'corpse_enemy_gun_noarm_top' &&
+      pickBot === 'corpse_enemy_gun_noarm_bottom' &&
+      pickArms === 'corpse_enemy_gun_noarms' &&
+      pickHeadOnly === 'corpse_enemy_gun_nohead' &&
+      pickHead === 'corpse_enemy_gun_torso');
 
     // 剧情模式玩家移速加成（对比同一帧输入下两种模式的水平速度）
     H.startGame({ mode: 'story' });
