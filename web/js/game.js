@@ -1304,12 +1304,12 @@
   // 每个采样单独描述"跳过开头多少静音 / 放多长 / 放大多少"，这些数都是按录音实测出来的
   // （tools/make_sfx.py 会打印时长和静音段），换录音要重新对一遍。
   const SAMPLES = {
-    // 手枪枪声：**目前停用**（用户 2026-11-08 决定"先不用枪声，先存着"）。
-    // 采样本体还在 sfx_samples.js / tools/sfx_src/pistol.mp3 里，参数也照旧留着；
-    // 想启用就把 disabled 删掉（或改成 false），play('shoot') 会自动切回采样。
-    // 参数来历：1.70s，前 0.30s 纯静音，峰值在 0.47s（原始峰值 0.294，录音偏小），尾巴到 1.28s。
+    // 手枪枪声：tools/synth_pistol.py 现合成的 wav（0.55s，峰值已归一到 0.98）。
+    // 比原来那段录音更闷更吵：能量大半在 300Hz 以下，几乎没有高频"啪"，跟爆头音（hit/die）
+    // 是同一个路子。整段自带起手和 25ms 收尾，所以 trim=0、fade 只给 0.05（默认 0.10 会把
+    // 房间余响那一截咬掉）。峰值 0.98 太满，gain 压到 0.55。
     // 0.15s 的射速下最多叠 4 个声部，再往上就糊成一团。
-    pistol: { trim: 0.30, len: 0.50, gain: 1.20, maxVoices: 4, disabled: true },
+    pistol: { trim: 0, len: 0.55, gain: 0.55, maxVoices: 4, fade: 0.05 },
     // 换弹：1.23s，前 0.19s 静音，0.19~0.55 是一串拔弹匣/摸弹匣的机械小响，
     // 0.71s 弹匣拍到位（最响，样本峰值 0.663），尾巴到 1.0s。整段放完正好盖住手枪 0.9s 的换弹时间。
     // steal：换弹声必须响（玩家按了 R 没声音会以为卡了），声部占满就抢掉最早那个，而不是哑火。
@@ -1320,14 +1320,28 @@
     ac: null,
     noiseBuf: null,
     muted: false,
+    wallBase: 0,       // 建 AudioContext 的墙钟时刻，用来给"音频时钟不走"兜底（见 wallNow）
     samples: null,     // 名字 -> AudioBuffer
     sampleState: 0,    // 0 未开始 / 1 解码中 / 2 就绪 / 3 失败（失败就一直用合成音）
     voices: {},        // 名字 -> 各声部的结束时刻
+    // 声部清理用的"当前时间"：调度必须用 ac.currentTime（它在音频时间轴上），
+    // 但记账不能用它——无头浏览器、无声卡、标签页挂起后恢复这些情况下 currentTime 不前进，
+    // 声部就被永久占满，手枪从此哑火（真实踩到过：连打 4 枪后再也打不出声）。
+    // 所以记账时取"音频时钟 / 墙钟"里更晚的那个。
+    wallNow() {
+      const perf = window.performance;
+      const ms = perf && perf.now ? perf.now() : Date.now();
+      const wall = ms / 1000 - this.wallBase;
+      const ac = this.ac;
+      return ac ? Math.max(wall, ac.currentTime) : wall;
+    },
     init() {
       if (this.ac) return;
       try {
         const AC = window.AudioContext || window.webkitAudioContext;
         this.ac = new AC();
+        const perf0 = window.performance;
+        this.wallBase = (perf0 && perf0.now ? perf0.now() : Date.now()) / 1000;
         const len = Math.floor(this.ac.sampleRate * 0.5);
         const buf = this.ac.createBuffer(1, len, this.ac.sampleRate);
         const d = buf.getChannelData(0);
@@ -1379,15 +1393,17 @@
      * 播一个采样：跳过开头静音、末尾淡出、限制同时声部数。
      * 返回 true 表示"这一声真的用采样放了"，调用方据此决定要不要补合成音兜底。
      * 声部占用按"结束时刻"记账而不是 onended 回调：万一音频上下文被浏览器挂起，
-     * currentTime 不前进，计数也就不会漏放；靠 onended 则会永远卡在上限导致哑火。
+     * currentTime 不前进，onended 就永远不来，计数卡在上限导致哑火；
+     * 记账用 wallNow()（音频时钟/墙钟取晚者），这样时钟真停了也能自然释放。
      */
     sample(name, gain, rate) {
       const cfg = SAMPLES[name];
       const ac = this.ac;
       if (!ac || !cfg || cfg.disabled || !this.sampleReady(name)) return false;
-      const t = ac.currentTime;
+      const t = ac.currentTime;          // 调度必须用音频时钟，墙钟在音频时间轴上没有意义
+      const audible = this.wallNow();    // 清理用"现在到底过了多久"
       const ends = this.voices[name] || (this.voices[name] = []);
-      while (ends.length && ends[0] <= t) ends.shift();
+      while (ends.length && ends[0] <= audible) ends.shift();
       if (ends.length >= cfg.maxVoices) {
         // 枪声连打时宁可少一声（不糊），换弹声则宁可抢掉最早那个声部（不能哑火）
         if (!cfg.steal) return false;
@@ -1403,7 +1419,8 @@
       // 在 0.72s 处），一衰减就把最该有劲的那一拍压没了。
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(peak, t + 0.006);
-      g.gain.setValueAtTime(peak, t + Math.max(0.02, cfg.len - 0.10));
+      const fade = cfg.fade || 0.10;
+      g.gain.setValueAtTime(peak, t + Math.max(0.02, cfg.len - fade));
       g.gain.linearRampToValueAtTime(0.0001, t + cfg.len);
       src.connect(g).connect(ac.destination);
       src.start(t, cfg.trim, cfg.len / src.playbackRate.value + 0.02);
@@ -1450,15 +1467,13 @@
       if (this.ac.state === 'suspended') this.ac.resume();
       switch (name) {
         case 'shoot':
-          // 现在是纯合成枪声（采样停用，见 SAMPLES.pistol.disabled）。
-          // 采样一旦启用就走上面那条：真录音 + 极短合成爆点补起手。
-          if (this.sample('pistol', 0.9, 0.96 + Math.random() * 0.08)) {
-            this.noise(0.035, 3400, 0.9, 0.18, 0.05);
-            this.tone(190, 62, 0.05, 0.08, 'square');
-            return true;
-          }
-          this.noise(0.10, 2200, 1.2, 0.32, 0.2);
-          this.tone(320, 90, 0.07, 0.10, 'square');
+          // 采样本身就是完整的一枪（合成 wav 里已经叠了 body/blast/crack/room 四层），
+          // 再补合成层只会互相掩蔽、越叠越糊，所以这里什么都不加。
+          if (this.sample('pistol', 0.94 + Math.random() * 0.12, 0.97 + Math.random() * 0.06)) return true;
+          // 采样还没解码好 / 浏览器禁了 AudioContext 时的兜底：参数抄 synth_pistol.py 的主配方。
+          this.noise(0.10, 360, 0.9, 0.42, 0.12);
+          this.noise(0.02, 880, 1.6, 0.22, 0.02);
+          this.tone(120, 48, 0.09, 0.26, 'sine');
           return false;
         // 换弹：整段录音（拔弹匣 → 拍上新弹匣）一次性放完，比拆成两声合成的更像真的。
         // 返回 false 表示采样不可用，调用方用 'magout'/'magin' 两声兜底。

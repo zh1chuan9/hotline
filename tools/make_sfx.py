@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""把枪械音效 MP3 转成游戏内嵌的 base64 资源。
+"""把枪械音效（mp3 / wav）转成游戏内嵌的 base64 资源。
 
 用法：
+    python tools/synth_pistol.py        # 先合成手枪枪声（tools/sfx_src/pistol.wav）
     python tools/make_sfx.py            # 用 tools/sfx_src/ 里的源文件重新生成全部采样
     python tools/make_sfx.py pistol=新枪声.mp3   # 临时替换某一个（不覆盖 sfx_src）
+
+内嵌格式不挑：mp3 体积小、wav 能自己合成（这机器上没有 numpy/ffmpeg，枪声是用
+tools/synth_pistol.py 纯 Python 算出来的 wav）。decodeAudioData 两种都认。
 
 产出 web/js/sfx_samples.js（`window.SFX_SAMPLES = { 名字: 'base64', ... }`），由
 index.html / test.html 在 game.js 之前引入。之所以内嵌而不是丢 assets 里让 fetch 去读：
@@ -58,16 +62,27 @@ def mp3_info(raw):
     return sr, (total / sr if sr else 0), frames
 
 
+def wav_info(path):
+    """读 wav 头：返回 (采样率, 时长秒, 帧数)。"""
+    import wave
+    with wave.open(path, 'rb') as w:
+        sr = w.getframerate()
+        frames = w.getnframes()
+    return sr, (frames / sr if sr else 0.0), frames
+
+
 def collect(argv):
-    """名字 -> 源文件。默认把 sfx_src/*.mp3 全收（文件名即采样名）。"""
+    """名字 -> 源文件。默认把 sfx_src/*.mp3 和 *.wav 全收（文件名即采样名，
+    同名时 wav 优先——合成出来的是 wav）。`_old/` 里的归档不会被收。"""
     pairs = {}
     for arg in argv:
         if '=' in arg:
             name, path = arg.split('=', 1)
             pairs[name.strip()] = path
     if not pairs:
-        for path in sorted(glob.glob(os.path.join(SRC_DIR, '*.mp3'))):
-            pairs[os.path.splitext(os.path.basename(path))[0]] = path
+        for pat in ('*.mp3', '*.wav'):
+            for path in sorted(glob.glob(os.path.join(SRC_DIR, pat))):
+                pairs[os.path.splitext(os.path.basename(path))[0]] = path
     return pairs
 
 
@@ -81,7 +96,10 @@ def main(argv):
     for name in sorted(pairs):
         path = pairs[name]
         raw = open(path, 'rb').read()
-        sr, dur, frames = mp3_info(raw)
+        if path.lower().endswith('.wav'):
+            sr, dur, frames = wav_info(path)
+        else:
+            sr, dur, frames = mp3_info(raw)
         b64 = base64.b64encode(raw).decode()
         chunks.append((name, raw, sr, dur, frames, b64))
         print('%-8s %-28s %6d 字节  %.2fs @ %dHz  %d 帧' % (name, os.path.basename(path), len(raw), dur, sr, frames))
@@ -89,7 +107,8 @@ def main(argv):
     lines = [
         '// 枪械音效采样（源文件在 tools/sfx_src/，由 tools/make_sfx.py 生成，别手改）\n',
         '// 以 base64 内嵌，避免 file:// 下 fetch 被 CORS 拦掉——双击 index.html 也能出声。\n',
-        '// 换音效：把新 mp3 丢进 tools/sfx_src/（同名覆盖），重跑 python tools/make_sfx.py。\n',
+        '// 换音效：把新 mp3/wav 丢进 tools/sfx_src/（同名覆盖），重跑 python tools/make_sfx.py。\n',
+        '// 手枪枪声是 tools/synth_pistol.py 合成的 wav（更闷更响），想调就改那个脚本。\n',
         'window.SFX_SAMPLES = {\n',
     ]
     for name, raw, sr, dur, frames, b64 in chunks:

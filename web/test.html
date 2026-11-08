@@ -1424,31 +1424,37 @@
     // 注意：解码是异步的，这里只验证"资源在、没坏、调用不炸"；实际解码结果看
     // Sfx.sampleState（2=就绪 / 3=失败，失败会自动退回合成音）。
     const SAMP = window.SFX_SAMPLES || {};
-    let totalB64 = 0, badMp3 = [];
+    let totalB64 = 0, badSample = [];
     for (const nm of ['pistol', 'reload']) {
       const s = SAMP[nm] || '';
       totalB64 += s.length;
+      // 手枪是 tools/synth_pistol.py 合成的 WAV（头 = RIFF），换弹仍是录音 MP3（头 = ID3）
+      const want = nm === 'pistol' ? 'RIFF' : 'ID3';
       let ok = false;
       try {
         const raw = atob(s);
-        ok = raw.slice(0, 3) === 'ID3' && raw.length > 15000;
+        ok = raw.slice(0, want.length) === want && raw.length > 15000;
       } catch (e) { ok = false; }
-      if (!ok) badMp3.push(nm);
+      if (!ok) badSample.push(nm + '(要 ' + want + ' 头)');
     }
     check('枪声 + 换弹声采样都已内嵌（' + (totalB64 / 1024).toFixed(0) + 'KB base64）', totalB64 > 40000);
-    check('两个采样都是完整 MP3（' + (badMp3.length ? '坏：' + badMp3.join(',') : '头=ID3、各 >15KB') + '）', badMp3.length === 0);
+    check('两个采样都完整（' + (badSample.length ? '坏：' + badSample.join(',') : 'pistol=WAV / reload=MP3，各 >15KB') + '）',
+      badSample.length === 0);
     check('音效系统已挂上（ac=' + !!H.sfx.ac + '，state=' + H.sfx.sampleState + '=' + (H.sfx.sampleState === 3 ? '解码失败' : '正常/就绪') + '）',
       !!H.sfx.ac && H.sfx.sampleState !== 3);
-    let shotErr = '', shotSampled = null;
+    let shotErr = '', firstSampled = null;
+    H.sfx.voices.pistol = [];   // 前面的用例已经开过枪，先清空声部记账再测"能不能真放出来"
     try {
+      firstSampled = H.sfx.play('shoot');                // 第一枪：采样就绪就该走采样
       for (let i = 0; i < 6; i++) H.sfx.play('shoot');   // 连打，含解码未完成时的降级路径
-      shotSampled = H.sfx.play('shoot');                 // 采样被停用时应返回 false（走合成音）
       H.sfx.muted = true; H.sfx.play('shoot'); H.sfx.muted = false;
     } catch (err) { shotErr = err.message; }
-    check('连打 6 枪 + 静音反复切换都不报错' + (shotErr ? '（' + shotErr + '）' : ''), shotErr === '');
-    // 用户 2026-11-08 决定"枪声先不用，存着"：采样本体留在 sfx_samples.js，但不能被播出来。
-    check('枪声暂时用合成音（采样已存档、停用中：play 返回 ' + shotSampled + '，声部 ' + (H.sfx.voices.pistol || []).length + '）',
-      shotSampled === false && (H.sfx.voices.pistol || []).length === 0);
+    check('连打 7 枪 + 静音反复切换都不报错' + (shotErr ? '（' + shotErr + '）' : ''), shotErr === '');
+    // 2026-11-08 起枪声启用合成 wav：采样可用就必须真放出来（play 返回 true 且占到一个声部）。
+    const pistolReady = H.sfx.sampleReady('pistol');
+    const pistolVoices = (H.sfx.voices.pistol || []).length;
+    check('枪声走采样（就绪=' + pistolReady + '，首枪返回 ' + firstSampled + '，声部 ' + pistolVoices + '）',
+      pistolReady ? (firstSampled === true && pistolVoices > 0) : firstSampled === false);
 
     // 换弹：真录音整段放完，换弹结束就不该再补合成的"咔"
     H.startGame({ mode: 'challenge' });
