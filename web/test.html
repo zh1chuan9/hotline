@@ -1357,18 +1357,20 @@
       check('躺下的门板不会消失（' + H.flyingDoors.length + '）', H.flyingDoors.indexOf(fd) >= 0);
     }
 
-    // 制造近距离噪声 → 直接惊动追击（chase）
+    // 剧情模式：听见动静不再整层楼一起扑过来，先原地警戒守点(hold)，再按批次放行
     if (storyEnemies.length) {
       const e0 = storyEnemies[0];
+      e0.state = 'idle'; e0.seeTimer = 0;
       H.noise(e0.x, e0.y, 200);   // 声源就在敌人脚下，属近距离强噪声
-      check('近距离噪声直接惊动敌人（state=' + e0.state + '，应 chase）', e0.state === 'chase');
+      check('剧情·近距离噪声也只守点不扑上来（state=' + e0.state + '，应 hold）', e0.state === 'hold');
+      // 全场「无 chase」由 31 节的干净 6 人阵型严格验证（此处前面已 step 过 120 帧，批次已合法放行）
     }
-    // 远距离噪声 → 只进入怀疑（investigate）
     if (storyEnemies.length > 1) {
       const e1 = storyEnemies[1];
-      e1.state = 'idle';                       // 重置回放松
-      H.noise(e1.x + 300, e1.y, 700);          // 声源在远处（300px：只进了传播半径，够不上"贴脸"阈值）
-      check('远距离噪声让敌人怀疑（state=' + e1.state + '，应 investigate）', e1.state === 'investigate');
+      e1.state = 'idle'; e1.seeTimer = 0;
+      H.noise(e1.x + 300, e1.y, 700);          // 声源在远处（只进了传播半径）
+      check('剧情·远距离噪声同样守点（state=' + e1.state + '，应 hold）', e1.state === 'hold');
+      check('剧情·守点敌人记住声源方位', Math.abs(e1.target.x - (e1.x + 300)) < 1);
     }
 
     // 门倒下砸死门后敌人：独立造一个敌人摆在倒向（门后）上，撞倒门验证当场被砸死
@@ -1387,14 +1389,29 @@
     check('剧情第一关有出口（exit=' + (wSt.exit ? wSt.exit.x + ',' + wSt.exit.y : 'null') + '）', !!wSt.exit);
     check('开局没有 GO BACK 提示（goBack=' + gSt.goBack + '）', !gSt.goBack);
 
-    // 清空敌人 → 不应立即结算，而是进入「清场等出口」状态
+    // 清空敌人 → 最后一人倒地濒死，必须靠近按 E 处决；之后才进入「清场等出口」状态
     // （终点就是出生点，所以先把玩家挪进楼里，否则站在门口清完会直接判定为已返回）
     gSt.player.x = 15 * 24;
     gSt.player.y = 8 * 24;
     for (const e of wSt.enemies) H.hitEnemy(e, 9999);
+    const zzDown = wSt.enemies.find(e => e.downed);
+    check('最后一名敌人倒地待处决（downed=' + !!zzDown + '）', !!zzDown && zzDown.alive === true);
+    check('倒地时还不算清场（cleared=' + wSt.cleared + '）', wSt.cleared === false);
+    check('远处取不到处决目标', !H.interactTarget() || H.interactTarget().type !== 'execute');
+    // 走近 → E 的交互目标变成处决；处决把头打飞 + 飙血
+    gSt.player.x = zzDown.x; gSt.player.y = zzDown.y;
+    const zzIt = H.interactTarget();
+    check('走近倒地敌人才取得到处决目标（type=' + (zzIt && zzIt.type) + '）', !!zzIt && zzIt.type === 'execute');
+    const zzGibs0 = H.fxGibs.length, zzPend0 = H.bloodPending.length;
+    H.executeEnemy(zzDown);
+    check('处决把头打飞（gibbed=' + zzDown.gibbed + '，飞出 ' + (H.fxGibs.length - zzGibs0) + ' 块）',
+      zzDown.gibbed === true && H.fxGibs.length > zzGibs0);
+    check('处决飙血（待落地 ' + zzPend0 + ' → ' + H.bloodPending.length + ' 项）', H.bloodPending.length > zzPend0);
+    check('处决后敌人才真的死（alive=' + zzDown.alive + '）', zzDown.alive === false);
     H.step(1);  // 推进一帧触发清场判定
     check('剧情清空后敌人全灭', wSt.enemies.every(e => !e.alive));
     check('清空后已清场标记（cleared=' + wSt.cleared + '）', wSt.cleared === true);
+    check('清场后箭头目标切到出口（已无待处决敌人）', !wSt.enemies.some(e => e.downed) && !!wSt.exit);
     check('清空后未立即结算（state=' + gSt.state + '，应仍为 play）', gSt.state === 'play');
     check('清场后弹出 GO BACK 提示（goBack=' + gSt.goBack.toFixed(2) + '）', gSt.goBack > 0);
 
@@ -2036,6 +2053,66 @@
     H.tap(kb.back.x + kb.back.w / 2, kb.back.y + kb.back.h / 2);
     check('键位页「返回」回到设置页（state=' + H.g.state + '）', H.g.state === 'settings');
     H.resetKeyBinds();
+
+    // ============ 31. 剧情模式专属：警觉分批（防尸潮） ============
+    H.startGame({ mode: 'story' });
+    H.freeze(true);
+    const wAb = H.world, gAb = H.g;
+    wAb.enemies.length = 0;                 // 清掉预设敌人，摆一个干净的 6 人阵型
+    gAb.player.x = 60; gAb.player.y = 60;  // 离所有人 > ALERT_HOLD_D，避免贴脸保底干扰
+    const abTune = H.alertTuning;
+    const abE = [];
+    for (let i = 0; i < 6; i++) {
+      const zqE = H.makeEnemy('gun', 400 + i * 16, 300);
+      zqE.state = 'idle'; zqE.hunt = false;
+      wAb.enemies.push(zqE); abE.push(zqE);
+    }
+    H.noise(410, 300, 900);
+    const zqHold0 = abE.filter(e => e.state === 'hold').length;
+    check('剧情·一次噪声 6 人全部原地守点（hold=' + zqHold0 + '）', zqHold0 === 6);
+    check('剧情·噪声当帧没有任何人扑向玩家（chase=0）', abE.every(e => e.state !== 'chase'));
+    wAb.alertBatchT = 0;
+    H.updateAlertBatches(0.02);
+    const zqCh1 = abE.filter(e => e.state === 'chase').length;
+    check('剧情·首批最多放行 ' + abTune.maxChase + ' 人（实际 ' + zqCh1 + '）', zqCh1 === abTune.maxChase);
+    check('剧情·其余人继续守点（hold=' + abE.filter(e => e.state === 'hold').length + '）',
+      abE.filter(e => e.state === 'hold').length === 6 - abTune.maxChase);
+    H.updateAlertBatches(0.5);             // 不到 1.5s 间隔，不应再放一批
+    check('剧情·批次间隔内不再放行（chase 仍 ' + abE.filter(e => e.state === 'chase').length + '）',
+      abE.filter(e => e.state === 'chase').length === abTune.maxChase);
+    // 贴脸保底：玩家摸到跟前，守点的人必须立刻反应，不能被批次上限卡住
+    const zqNear = abE.find(e => e.state === 'hold');
+    zqNear.x = gAb.player.x + 50; zqNear.y = gAb.player.y;
+    H.step(1);
+    check('剧情·玩家贴脸时守点敌人立刻反应（state=' + zqNear.state + '）', zqNear.state === 'chase');
+    check('剧情·守点距离参数小于枪声半径（' + abTune.holdD + ' < 286）', abTune.holdD < 286);
+
+    // ============ 32. 挑战模式保持原样（新机制一律不生效） ============
+    H.startGame();                          // 默认 challenge
+    H.freeze(true);
+    const gCh = H.g, wCh = H.world;
+    check('已切回挑战模式（mode=' + gCh.mode + '）', gCh.mode === 'challenge');
+    const zqA = H.makeEnemy('gun', 300, 200); zqA.state = 'idle'; zqA.hunt = false;
+    const zqB = H.makeEnemy('gun', 300, 260); zqB.state = 'idle'; zqB.hunt = false;
+    wCh.enemies.push(zqA, zqB);
+    H.noise(zqA.x, zqA.y, 200);            // 近距离强噪声
+    check('挑战·近距离噪声仍直接惊动追击（state=' + zqA.state + '，应 chase）', zqA.state === 'chase');
+    zqB.state = 'idle';
+    H.noise(zqB.x + 300, zqB.y, 700);       // 远处声源
+    check('挑战·远距离噪声仍是 investigate（state=' + zqB.state + '）', zqB.state === 'investigate');
+    check('挑战·全场不产生 hold 守点状态', wCh.enemies.every(e => e.state !== 'hold'));
+    check('挑战·波次猎杀敌人开局仍直接 chase（hunt 不受影响）',
+      wCh.enemies.some(e => e.hunt && e.state === 'chase') || wCh.enemies.every(e => !e.hunt));
+    check('挑战·不画剧情目标箭头（target=null）', H.objectiveArrowTarget() === null);
+    for (const zqE of wCh.enemies) H.hitEnemy(zqE, 9999);
+    check('挑战·击杀不产生倒地待处决（downed=' + wCh.enemies.filter(e => e.downed).length + '）',
+      wCh.enemies.every(e => !e.downed));
+    const zqIt = H.interactTarget();
+    check('挑战·E 键交互绝不返回处决（type=' + (zqIt && zqIt.type) + '）',
+      !zqIt || zqIt.type !== 'execute');
+    H.step(1);
+    check('挑战·清空后仍走波次整备而非等处决（intermission=' + gCh.intermission.toFixed(1) + '）',
+      gCh.intermission > 0);
 
     report();
   }

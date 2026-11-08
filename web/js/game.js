@@ -532,6 +532,14 @@
   const HEADSHOT_MULT = 2.6;   // 爆头伤害倍率
   const HEADSHOT_SCORE = 1.8;  // 爆头积分倍率
 
+  // ---- 以下三块机制全部只在【剧情模式】生效；挑战模式保持原样，没有任何分支会命中 ----
+  // ① 终局处决：最后一个被打倒的人不直接死，倒地等玩家靠近按 E 补刀
+  const EXEC_RANGE = 32;       // 走到多近才能按 E 处决（世界像素）
+  // ② 警觉分批：听见动静不再全场一起扑过来（尸潮），先原地警戒，按批次放行
+  const ALERT_HOLD_D = 110;    // 玩家摸到这么近才强制反应（远小于枪声半径 286，否则分批没意义）
+  const ALERT_MAX_CHASE = 3;   // 同时主动扑向玩家的敌人上限，其余继续守点
+  const ALERT_BATCH_GAP = 1.5; // 每批之间的放行间隔（秒）
+
   // ---------------------------------------------------------------- 画布
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1939,6 +1947,7 @@
       spawn: { x: TILE * 1.5, y: TILE * 1.5 },
       exit: null,
       cleared: false,
+      alertBatchT: 0,        // 剧情模式警觉分批的放行计时器（挑战模式用不到）
       decals: document.createElement('canvas'),
       bloodCount: 0,
       bloodPending: [],  // 排队等着"落地"的血泊/血痕（血是喷出来的，不是瞬间贴上去的）
@@ -2712,6 +2721,18 @@
       const d = Math.hypot(x - e.x, y - e.y);
       if (d <= R) {
         if (e.state === 'chase') continue;
+        // 【剧情模式专属】听见动静不再整层楼一起扑过来（尸潮）：改为原地警戒守点(hold)，
+        // 由 updateAlertBatches 按批次放行，或等玩家自己摸到跟前（ALERT_HOLD_D）才激活。
+        // 挑战模式永远不会命中这个分支，下面的原始反应逻辑保持逐字不变。
+        if (G && G.mode === 'story' && !e.hunt && !e.downed) {
+          if (e.state !== 'hold') FX.addText(e.x, e.y - 14, '?', '#ffd76e');
+          e.state = 'hold';
+          e.target.x = x; e.target.y = y;          // 记住声源，守点时朝这边张望
+          e.facing = Math.atan2(y - e.y, x - e.x);
+          e.seeTimer = 0;
+          e.path = null;
+          continue;
+        }
         // 警觉系统：噪声越近，反应越强。近距离（< 半径 30%）直接惊动追击，
         // 中远距离则先怀疑、走向声源查看（investigate），途中看到玩家才转追击。
         const near = d <= R * ALERT_NEAR;
@@ -2727,6 +2748,42 @@
           FX.addText(e.x, e.y - 14, '?', '#ffd76e');
         }
       }
+    }
+  }
+
+  /** 把一名守点敌人放出去追人（剧情模式专用）。 */
+  function releaseAlert(e) {
+    if (!e || e.state !== 'hold') return;
+    e.state = 'chase';
+    e.lastSeen.x = G.player.x; e.lastSeen.y = G.player.y;
+    e.seeTimer = 0;
+    e.path = null;
+    FX.addText(e.x, e.y - 14, '!', '#ff5a5a');
+  }
+
+  /**
+   * 剧情模式：每帧一次的警觉批次调度。
+   * 场上主动追击的人补到 ALERT_MAX_CHASE 就停，其余守点的人按 ALERT_BATCH_GAP 一批批放行，
+   * 于是"一开枪全楼涌来"变成"最多三个先来、死了再补"。挑战模式直接返回，行为完全不变。
+   */
+  function updateAlertBatches(dt) {
+    if (!G || G.mode !== 'story' || !W) return;
+    W.alertBatchT = (W.alertBatchT || 0) - dt;
+    let chasing = 0;
+    for (const e of W.enemies) {
+      if (e.alive && !e.downed && !e.hunt && e.state === 'chase') chasing++;
+    }
+    if (W.alertBatchT > 0 || chasing >= ALERT_MAX_CHASE) return;
+    W.alertBatchT = ALERT_BATCH_GAP;
+    const px = G.player.x, py = G.player.y;
+    const dd = e => (e.x - px) * (e.x - px) + (e.y - py) * (e.y - py);
+    const holds = W.enemies
+      .filter(e => e.alive && !e.downed && !e.hunt && e.state === 'hold')
+      .sort((a, b) => dd(a) - dd(b));           // 离玩家近的先放，远的继续守
+    for (const e of holds) {
+      if (chasing >= ALERT_MAX_CHASE) break;
+      releaseAlert(e);
+      chasing++;
     }
   }
 
@@ -3182,10 +3239,10 @@
     }
     const targets = [];
     if (shooter === G.player) {
-      for (const e of W.enemies) if (e.alive) targets.push(e);
+      for (const e of W.enemies) if (e.alive && !e.downed) targets.push(e);
     } else {
       if (G.player.alive) targets.push(G.player);
-      for (const e of W.enemies) if (e.alive && e !== shooter) targets.push(e);
+      for (const e of W.enemies) if (e.alive && !e.downed && e !== shooter) targets.push(e);
     }
     for (const a of targets) {
       const t = rayCircle(origin.x, origin.y, dx, dy, a.x, a.y, ACTOR_R);
@@ -3265,7 +3322,7 @@
     Sfx.play('melee_swing');
     const reach = def.reach, halfArc = def.arc * Math.PI / 180 / 2;
     const targets = [];
-    if (isPlayer) { for (const e of W.enemies) if (e.alive) targets.push(e); }
+    if (isPlayer) { for (const e of W.enemies) if (e.alive && !e.downed) targets.push(e); }
     else { if (G.player.alive) targets.push(G.player); }
     let hitAny = false, headAny = false, hurtEnemy = false;
     for (const t of targets) {
@@ -3388,6 +3445,7 @@
   /** 对敌人造成伤害，返回是否死亡。精英先扣护甲：护甲打光前只碎甲不掉血。 */
   function damageEnemy(e, dmg, dirAngle, byPlayer, headshot) {
     if (!e.alive) return true;
+    if (e.downed) return false;      // 倒地濒死的人只能按 E 处决，再补枪/补刀都无效
     // 剧情模式：迈阿密式一击必杀 —— 不管什么枪、打中哪，一下就死（护甲也不顶）
     if (G.mode === 'story') { dmg = 9999; }
     // 护甲先扣（仅精英有）。击中护甲时给准心护甲反馈，护甲被打空那一下给破碎反馈。
@@ -3419,6 +3477,12 @@
       FX.addText(e.x, e.y - 18, '爆头', '#e02929');
     }
     if (e.hp <= 0) {
+      // 剧情模式最后一人：倒地濒死，必须走过去按 E 处决，否则不算清场（箭头会指过来）。
+      // 只留 he 一个还站着的人时触发（其他倒地尸体不计），处决后才会亮 GO BACK。
+      if (G.mode === 'story' && !W.enemies.some(o => o !== e && o.alive && !o.downed)) {
+        downEnemy(e, dirAngle);
+        return false;
+      }
       e.alive = false;
       e.deathDir = dirAngle;
       onEnemyKilled(e, byPlayer, headshot);
@@ -3427,8 +3491,51 @@
     return false;
   }
 
+  /** 最后一人被打倒：还不算死，摊在地上等处决。清场判定看 alive，所以它仍会挡着过关。 */
+  function downEnemy(e, dirAngle) {
+    e.downed = true;
+    e.hp = 1;
+    e.state = 'downed';
+    e.downT = 0;
+    e.deathDir = dirAngle;
+    e.vx = e.vy = e.wind = 0;
+    const p = G.player;
+    const wdef = p && p.weapon ? WEAPONS[p.weapon] : null;
+    FX.addBlood(e.x, e.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) }, 10, 1.0);
+    spillBlood(e.x, e.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) },
+      (wdef && wdef.blood) || BLOOD_PLAIN, false);
+    Sfx.play('body_drop');
+    FX.addText(e.x, e.y - 20, '按 E 处决', MIAMI.redHot);
+    G.toast = '最后一人倒地 · 靠近按 E 处决';
+    G.toastTimer = 3.2;
+  }
+
+  /** 处决：补一刀把头打飞 + 飙血，然后才走正常死亡结算（积分、掉枪、清场）。 */
+  function executeEnemy(e) {
+    if (!e || !e.downed || !e.alive) return false;
+    const p = G.player;
+    const ang = Math.atan2(e.y - p.y, e.x - p.x);
+    const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+    e.downed = false;
+    e.alive = false;
+    e.deathDir = ang;
+    // 正常结算（noGib=true：断肢交给下面这次"必定打飞头"，别随机又甩一颗出来）
+    onEnemyKilled(e, true, false, true);
+    const pal = PALETTE['enemy_' + e.kind] || PALETTE.enemy_gun;
+    e.gibbed = true;                       // 尸体贴图切到无头版
+    FX.addGibs(e.x, e.y, ang, [{ type: 'head' }],
+      { cloth: shade(pal.head, 0.78), skin: pal.skin, scale: e.scale || 1 });
+    FX.addBlood(e.x, e.y, dir, 20, 1.35);
+    spillBlood(e.x, e.y, dir,
+      { pools: 3, spurts: 5, streaks: 4, scale: 1.1, spray: 18, speckles: 20 }, false);
+    Sfx.play('headpop');
+    FX.kick(5, 0.20);
+    FX.addText(e.x, e.y - 22, '处决', MIAMI.redHot);
+    return true;
+  }
+
   /** 敌人被打死后的结算：积分、掉落、连击、血迹。 */
-  function onEnemyKilled(e, byPlayer, headshot) {
+  function onEnemyKilled(e, byPlayer, headshot, noGib) {
     const dir = { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) };
     const killer = G.player;
     const wdef = killer && killer.weapon ? WEAPONS[killer.weapon] : null;
@@ -3440,7 +3547,7 @@
     }
     // 断肢：霰弹枪 / 武士刀打死人时有概率把胳膊（霰弹还会连头）削下来。
     // 只在玩家打死的场合做 —— 敌人互殴、油桶炸死都不该掉一地手脚。
-    if (byPlayer && wdef && wdef.gib && rollGib(wdef, e)) gibEnemy(e, wdef);
+    if (byPlayer && !noGib && wdef && wdef.gib && rollGib(wdef, e)) gibEnemy(e, wdef);
     Sfx.play('die');
     e.deadT = 0;
     // 掉枪：挑战模式近战武器不掉（匕首/球棍满地都是没意义，还会盖住血包和子弹）；
@@ -4461,6 +4568,16 @@
       }
       return;
     }
+    if (e.downed) { e.downT += dt; return; }   // 倒地濒死：不追、不开枪、不被警觉，只等处决
+    // 【剧情模式专属】守点警戒：不移动、不开枪、不推门，只朝声源张望。
+    // 'hold' 只可能由剧情模式的 emitNoise 产生，挑战模式永远走不到这里。
+    if (e.state === 'hold') {
+      const want = Math.atan2(e.target.y - e.y, e.target.x - e.x);
+      e.facing += angDiff(want, e.facing) * Math.min(1, dt * 2);
+      const ph = G.player;   // 贴脸保底：玩家都走到跟前了别还站着，且不受批次上限卡住
+      if (ph.alive && Math.hypot(ph.x - e.x, ph.y - e.y) <= ALERT_HOLD_D) releaseAlert(e);
+      return;
+    }
     const K = ENEMY_KIND[e.kind];
     const p = G.player;
     if (e.stun > 0) {
@@ -4488,8 +4605,17 @@
       e.lostTimer = 0;
       e.lastSeen.x = p.x; e.lastSeen.y = p.y;
       if (e.seeTimer >= K.reaction && e.state !== 'chase') {
-        e.state = 'chase';
-        FX.addText(e.x, e.y - 14, '!', '#ff5a5a');
+        // 【剧情模式】目视发现也先守点：一屋子人同时看见你就一起扑过来，还是尸潮。
+        // 近处的由贴脸保底立刻放行，远的进批次队列；挑战模式仍是原来的直接 chase。
+        if (G.mode === 'story' && !e.hunt) {
+          e.state = 'hold';
+          e.target.x = p.x; e.target.y = p.y;
+          e.path = null;
+          FX.addText(e.x, e.y - 14, '?', '#ffd76e');
+        } else {
+          e.state = 'chase';
+          FX.addText(e.x, e.y - 14, '!', '#ff5a5a');
+        }
       }
     } else {
       e.seeTimer = 0;
@@ -4642,7 +4768,7 @@
       // 同伴分离：离得太近就互相推开，一窝蜂叠在同一个点会像"一个人"
       let sepX = 0, sepY = 0;
       for (const o of W.enemies) {
-        if (o === e || !o.alive) continue;
+        if (o === e || !o.alive || o.downed) continue;
         const ddx = e.x - o.x, ddy = e.y - o.y;
         const dd2 = ddx * ddx + ddy * ddy;
         const R = 30;
@@ -5639,16 +5765,30 @@
   }
 
   /**
-   * 统一的"交互目标"判定：走近后按 E 打开对应的 UI。
-   * 优先级：补给点商店 > 武器升级站（两者空间上不会重叠）。
+   * 统一的"交互目标"判定：走近后按 E 处决 / 打开对应 UI。
+   * 优先级：倒地待处决的敌人 > 补给点商店 > 武器升级站。
    * 返回 { type, obj } 或 null（null 表示 E 走拾取武器逻辑）。
    */
   function interactTarget() {
     if (!W || !G.player) return null;
+    // 处决目标只在剧情模式存在：挑战模式连查都不查，E 键交互路径与原版完全一致。
+    if (G.mode === 'story') {
+      const d = downedEnemyNear();
+      if (d) return { type: 'execute', obj: d };
+    }
     const s = nearSupply();
     if (s) return { type: 'shop', obj: s };
     const st = nearStation();
     if (st) return { type: 'upgrade', obj: st };   // 未解锁也在 openUpgrade 里提示
+    return null;
+  }
+
+  /** 玩家够得着的倒地敌人（处决目标）。同屏最多一个，找到就返回。 */
+  function downedEnemyNear() {
+    const p = G.player;
+    for (const e of W.enemies) {
+      if (e.downed && e.alive && Math.hypot(e.x - p.x, e.y - p.y) <= EXEC_RANGE) return e;
+    }
     return null;
   }
 
@@ -5762,6 +5902,7 @@
       updateGrenades(dt);
       updateThrown(dt);
       updateBloodDecals(dt);
+      updateAlertBatches(dt);   // 仅剧情模式生效（函数内部对挑战模式直接返回）
       for (const e of W.enemies) updateEnemy(e, dt);
       updatePickups(dt);
       // BGM 战况强度：有敌人追过来（进入交火）就拉满，脱战/准备期回落。
@@ -6460,12 +6601,12 @@
     ctx.save();
     ctx.translate(a.x, a.y);
     if (sc !== 1) ctx.scale(sc, sc);
-    ctx.globalAlpha = a.alive ? 0.55 : 0.22;
+    ctx.globalAlpha = (a.alive && !a.downed) ? 0.55 : 0.22;
     ctx.drawImage(IMG.shadow, -8, -8, 16, 16);
     ctx.globalAlpha = 1;
 
     // 精英/BOSS：脚下一圈脉动的环。光靠体型区分不够，混战时一眼要能认出来
-    if ((a.elite || a.boss) && a.alive) {
+    if ((a.elite || a.boss) && a.alive && !a.downed) {
       const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
       ctx.globalAlpha = 0.3 + pulse * 0.25;
       ctx.strokeStyle = a.boss ? '#f2f2f4' : '#c8c8d0';   // BOSS 亮白环、精英浅灰环（红留给血）
@@ -6476,11 +6617,19 @@
       ctx.globalAlpha = 1;
     }
 
-    if (!a.alive) {
+    if (!a.alive || a.downed) {
       // 尸体是单独画的贴图（面朝下摊开），不是把活人转个角度
       ctx.rotate(a.deathDir + 0.18);
       ctx.globalAlpha = 0.92;
       ctx.drawImage(IMG[corpseTexture(a, corpse)] || IMG.corpse_player, -16, -16, 32, 32);
+      // 倒地待处决：一圈红色脉动，跟已经死透的尸体区分开
+      if (a.downed) {
+        const q = 0.5 + 0.5 * Math.sin(performance.now() / 170);
+        ctx.globalAlpha = 0.35 + 0.45 * q;
+        ctx.strokeStyle = MIAMI.redHot;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(0, 0, 13 + q * 2, 0, 6.283); ctx.stroke();
+      }
       ctx.restore();
       return;
     }
@@ -7438,6 +7587,80 @@
     ctx.stroke();
 
     ctx.restore();
+  }
+
+  /** 目标箭头指向谁。挑战模式恒 null —— 这支红箭头是剧情模式专属 UI。 */
+  function objectiveArrowTarget() {
+    if (!G || G.mode !== 'story' || G.state !== 'play' || !W || !G.player) return null;
+    const down = W.enemies.find(e => e.downed && e.alive);
+    return down || (W.cleared ? W.exit : null);
+  }
+
+  /**
+   * 剧情模式目标箭头（屏幕空间）：
+   *   有倒地待处决的人 → 指向那具尸体；处决完清场 → 指向出口（终点）。
+   * 目标在屏幕内就把箭头悬在它头顶，出了屏幕就贴到画面边缘并朝目标方向转，
+   * 隔几个房间也知道该往哪走。
+   */
+  function drawObjectiveArrow() {
+    const target = objectiveArrowTarget();
+    if (!target) return;
+    const down = !!target.downed;      // 尸体带 downed 标记，出口没有
+
+    const z = camZoom();
+    let sx = (target.x - G.cam.x) * z;
+    let sy = (target.y - G.cam.y) * z;
+    const t = performance.now() / 1000;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+    const cx = VIEW_W / 2, cy = VIEW_H / 2;
+    const vx = sx - cx, vy = sy - cy;
+    const mx = cx - 34, my = cy - 34;
+    const k = Math.min(mx / Math.max(1, Math.abs(vx)), my / Math.max(1, Math.abs(vy)));
+    const outside = k < 1;
+    if (outside) { sx = cx + vx * k; sy = cy + vy * k; }
+
+    const dist = Math.round(Math.hypot(target.x - G.player.x, target.y - G.player.y) / TILE);
+    const label = down ? (downedEnemyNear() ? '按 E 处决' : '处决目标 ' + dist + ' 格')
+                       : '返回出口 ' + dist + ' 格';
+
+    // 箭头本体：屏幕外朝目标转，屏幕内朝下指着目标
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (!outside) ctx.translate(0, -24 - pulse * 3);
+    ctx.rotate(outside ? Math.atan2(vy, vx) : Math.PI / 2);
+    ctx.globalAlpha = 0.55 + 0.45 * pulse;
+    ctx.fillStyle = MIAMI.redHot;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(13, 0); ctx.lineTo(-8, -9); ctx.lineTo(-4, 0); ctx.lineTo(-8, 9);
+    ctx.closePath();
+    ctx.stroke(); ctx.fill();
+    ctx.restore();
+
+    // 标签不跟着旋转，压在箭头旁边
+    ctx.save();
+    ctx.font = 'bold 11px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lw = ctx.measureText(label).width + 12;
+    const ly = outside ? sy - 20 : sy - 44 - pulse * 3;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(sx - lw / 2, ly - 8, lw, 16);
+    ctx.fillStyle = MIAMI.redHot;
+    ctx.fillText(label, sx, ly);
+    ctx.restore();
+
+    // 目标在屏幕内时，脚下一圈红环指到具体是哪具尸体 / 哪个门口
+    if (!outside) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 + 0.4 * pulse;
+      ctx.strokeStyle = MIAMI.red;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(sx, sy, 15 + pulse * 3, 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function drawReloadHint() {
@@ -8471,7 +8694,7 @@
     if (!G.player || G.state !== 'play') return null;
     const aim = screenToWorld(mouse.x, mouse.y);
     for (const e of W.enemies) {
-      if (!e.alive) continue;
+      if (!e.alive || e.downed) continue;
       if (Math.hypot(aim.x - e.x, aim.y - e.y) <= HEADSHOT_R) return e;
     }
     return null;
@@ -8531,13 +8754,13 @@
     // 先画尸体（最底层活物）。被砍飞胳膊/打掉头的，画"剩下的躯干"而不是整张尸体图，
     // 否则地上躺着一只手、身上还长着一只手（之前就是只把肢体甩出去、尸体原样留着）。
     for (const e of W.enemies) {
-      if (!e.alive) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+      if (!e.alive || e.downed) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
     }
     // 拾取物压在尸体上面，避免血包/弹药被尸体盖住捡不到
     drawPickups();
     // 活人压在最上面
     for (const e of W.enemies) {
-      if (e.alive) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+      if (e.alive && !e.downed) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
     }
     drawActor(G.player, 'player', true, 'corpse_player');
     drawLaser();
@@ -8573,6 +8796,7 @@
     // 也不会被边缘暗角/受击闪白糊掉（之前被压暗成一坨暗红，看着像没画）
     drawCrosshair();
     drawHUD();
+    drawObjectiveArrow();
     drawGoBackPrompt();
     drawTouchUI();
     if (G.state === 'shop') drawShop();
@@ -8839,7 +9063,10 @@
     // 都没靠近时，E 交给拾取武器逻辑（updatePlayer 里已用 interactTarget 区分）。
     if (pressed['e'] && G.state === 'play') {
       const t = interactTarget();
-      if (t && t.type === 'shop') {
+      if (t && t.type === 'execute') {
+        executeEnemy(t.obj);
+        pressed = Object.create(null);
+      } else if (t && t.type === 'shop') {
         openShop();
         pressed = Object.create(null);
       } else if (t && t.type === 'upgrade') {
@@ -9330,6 +9557,13 @@
     ignite(b) { return igniteBarrel(b); },
     /** 直接对敌人造成伤害（测试用） */
     hitEnemy(e, dmg) { return damageEnemy(e, dmg || 999, 0, true, false); },
+    /** 终局处决（测试用）：找到够得着的倒地敌人 / 直接处决指定目标 */
+    downedEnemyNear,
+    executeEnemy,
+    /** 剧情模式专属：目标箭头指向谁 / 手动放行一批警觉敌人（测试用） */
+    objectiveArrowTarget,
+    updateAlertBatches,
+    get alertTuning() { return { holdD: ALERT_HOLD_D, maxChase: ALERT_MAX_CHASE, gap: ALERT_BATCH_GAP }; },
     /** 破门（测试用） */
     breakDoor(d, hitPos) { return breakDoor(d, hitPos || { x: d.x, y: d.y }); },
     /** 门的四种破坏方式（测试用）：打开 / 打碎 / 撞倒 */
