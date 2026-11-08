@@ -1361,6 +1361,65 @@
     H.step(90);
     check('扔出的枪落地变成拾取物（' + pkBefore + ' → ' + w3.pickups.length + '）', w3.pickups.length > pkBefore);
 
+    // ============ 30.3 难度：开枪前摇 / 精准度 / 会开门 / 不堵门 ============
+    const EK = H.enemyKind;
+    check('枪手有举枪前摇（windup=' + EK.gun.windup + 's）', EK.gun.windup >= 0.45);
+    check('霰弹兵前摇更长（windup=' + EK.shotgun.windup + 's）', EK.shotgun.windup >= EK.gun.windup);
+    check('近战也有前摇（windup=' + EK.melee.windup + 's）', EK.melee.windup >= 0.2);
+    check('枪手精准度降低（aimErr=' + EK.gun.aimErr + '°）', EK.gun.aimErr >= 12);
+    check('霰弹兵精准度降低（aimErr=' + EK.shotgun.aimErr + '°）', EK.shotgun.aimErr >= 15);
+    check('距离越远越飘（170px ' + H.enemyAimErr(EK.gun, 170).toFixed(1) + '° > 40px '
+      + H.enemyAimErr(EK.gun, 40).toFixed(1) + '°）',
+      H.enemyAimErr(EK.gun, 170) > H.enemyAimErr(EK.gun, 40));
+
+    // 前摇：把枪手摆在玩家正前方视线内，逼它进入攻击流程
+    H.startGame({ mode: 'story' });
+    const w4 = H.world, g4 = H.g;
+    const shooter = w4.enemies.find(e => EK[e.kind].aimErr > 0);
+    if (shooter) {
+      const K4 = EK[shooter.kind];
+      shooter.state = 'chase';
+      shooter.attackCd = 0;
+      shooter.wind = 0;
+      shooter.x = g4.player.x + 70;
+      shooter.y = g4.player.y;
+      shooter.facing = Math.PI;          // 朝左，正对玩家
+      H.step(12);                        // ≈0.2s：还在举枪，没开火
+      check('敌人开枪前先举枪（wind=' + shooter.wind.toFixed(2) + 's / 前摇 ' + K4.windup + 's）',
+        shooter.wind > 0 && shooter.wind < H.enemyWindup(K4));
+      check('前摇没走完玩家还活着（state=' + g4.state + '）', g4.state === 'play');
+    }
+
+    // 敌人开门：剧情敌人不是 hunt 型，但也得会推门（否则全堵在门后）
+    H.startGame({ mode: 'story' });
+    const w5 = H.world;
+    const d5 = w5.doors && w5.doors[0];
+    if (d5) {
+      const opener = w5.enemies[0];
+      opener.alive = true;
+      opener.hunt = false;
+      opener.state = 'chase';
+      opener.x = d5.x; opener.y = d5.y;
+      H.step(1);
+      check('警觉的敌人会自己开门（open=' + d5.open + '）', d5.open === true);
+    }
+
+    // 不堵门：四关敌人生成后都不贴着门站岗
+    let minDoor = 1e9, ecnt = 0;
+    for (let li = 0; li < H.storyLevels.length; li++) {
+      H.startGame({ mode: 'story', storyLevel: li });
+      const wl = H.world;
+      for (const e of wl.enemies) {
+        ecnt++;
+        for (const d of (wl.doors || [])) {
+          if (d.open) continue;
+          minDoor = Math.min(minDoor, Math.hypot(e.x - d.x, e.y - d.y));
+        }
+      }
+    }
+    check('各关敌人生成后不贴门（' + ecnt + ' 人，最近 ' + minDoor.toFixed(0) + 'px > 20）', minDoor > 20);
+
+
     // 挑战模式回归：仍走波次
     H.startGame({ mode: 'challenge' });
     check('挑战模式回归（mode=' + H.g.mode + '）', H.g.mode === 'challenge');

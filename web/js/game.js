@@ -427,18 +427,21 @@
       tex: 'enemy_melee', corpse: 'corpse_enemy_melee',
       speed: 76, view: 190, attackRange: 26,
       keep: 0, interval: 0.62, aimErr: 0, weapon: 'knife', reaction: 0.3,
+      windup: 0.28,
       hp: 24, dmg: 10, score: 50
     },
     gun: {
       tex: 'enemy_gun', corpse: 'corpse_enemy_gun',
       speed: 62, view: 215, attackRange: 170,
-      keep: 140, interval: 0.62, aimErr: 7, weapon: 'pistol', reaction: 0.34,
+      keep: 140, interval: 0.62, aimErr: 13, weapon: 'pistol', reaction: 0.34,
+      windup: 0.55,
       hp: 20, dmg: 9, score: 75
     },
     shotgun: {
       tex: 'enemy_shotgun', corpse: 'corpse_enemy_shotgun',
       speed: 68, view: 195, attackRange: 100,
-      keep: 84, interval: 1.1, aimErr: 9, weapon: 'shotgun', reaction: 0.32,
+      keep: 84, interval: 1.1, aimErr: 17, weapon: 'shotgun', reaction: 0.32,
+      windup: 0.7,
       hp: 26, dmg: 8, score: 100
     }
   };
@@ -1383,6 +1386,10 @@
       investigateTimer: 0,
       path: null, pathI: 0, pathTimer: 0,
       attackCd: Math.random() * 0.4,
+      // 开枪前摇：wind 攒到 K.windup 才真正开火；aimX/aimY 是"举枪时瞄着的点"，
+      // 只以有限速度追玩家 —— 玩家横移能把它甩开，子弹就打在身后。
+      wind: 0,
+      aimX: x, aimY: y,
       stun: 0,
       weapon: K.weapon,
       ammo: WEAPONS[K.weapon].mag,
@@ -3354,6 +3361,7 @@
           e.path = null;
         } else {
           // 声源/最后目击点可能隔着墙，走 A*
+          pushDoor(e);              // 路被门挡住时自己推开（会发出声音，但不会惊动同伴之外的东西）
           const st = steerTo(e, e.target.x, e.target.y, dt);
           if (st) { mx = st.x; my = st.y; }
           else { mx = (e.target.x - e.x) / d; my = (e.target.y - e.y) / d; }
@@ -3391,12 +3399,26 @@
           const st = steerTo(e, e.lastSeen.x, e.lastSeen.y, dt);
           if (st) { mx = st.x; my = st.y; }
         }
-        // 猎杀型敌人（剧情模式）无论有没有视线，贴着门就推开——这样门后的敌人会主动破门追出，
-        // 玩家开一枪就能听见门被撞开的声音，形成"突入/反突入"的迈阿密式张力。
-        if (e.hunt) pushDoor(e);
-        // 攻击
+        // 追人的时候贴着门就推开（不再只有 hunt 型会推）：门后听到动静的敌人能自己开门出来，
+        // 不会一直对着门撞、更不会全都堵在门后等玩家推门进来。
+        pushDoor(e);
+        // 攻击：先举枪（windup 前摇），攒满才真的开火。前摇期间瞄点只以有限速度追玩家，
+        // 玩家横移/后撤能把枪口甩在身后；中途丢了视线则前摇回落，不开这一枪。
         if (sees && dToP <= K.attackRange && e.attackCd <= 0) {
-          enemyAttack(e, K, angToP);
+          if (e.wind <= 0) { e.aimX = p.x; e.aimY = p.y; }
+          else {
+            const track = Math.min(1, dt * 5.5);
+            e.aimX += (p.x - e.aimX) * track;
+            e.aimY += (p.y - e.aimY) * track;
+          }
+          e.wind += dt;
+          if (e.wind >= enemyWindup(K)) {
+            const aimAng = Math.atan2(e.aimY - e.y, e.aimX - e.x);
+            e.wind = 0;
+            enemyAttack(e, K, aimAng);
+          }
+        } else if (e.wind > 0) {
+          e.wind = Math.max(0, e.wind - dt * 2.5);
         }
         break;
       }
@@ -3445,6 +3467,17 @@
     }
   }
 
+  /** 举枪前摇时长（秒）：剧情模式是一击必杀，再放宽一档，给玩家看清并抢先手的窗口。 */
+  function enemyWindup(K) {
+    return (K.windup || 0) * (G.mode === 'story' ? 1.25 : 1);
+  }
+
+  /** 敌人射击误差（度）：基础值 × 剧情放宽 × 距离系数 —— 越远越飘，近身也别指望百发百中。 */
+  function enemyAimErr(K, d) {
+    const rr = K.attackRange > 1 ? clamp(d / K.attackRange, 0, 1) : 1;
+    return (K.aimErr || 0) * (G.mode === 'story' ? 1.35 : 1) * (0.75 + 0.55 * rr);
+  }
+
   function enemyAttack(e, K, angToP) {
     const def = WEAPONS[e.weapon];
     if (def.melee) {
@@ -3469,7 +3502,8 @@
     e.ammo--;
     Sfx.play(def.sound);
     emitNoise(e.x, e.y, 480);
-    const err = (Math.random() - 0.5) * 2 * K.aimErr * Math.PI / 180;
+    const errDeg = enemyAimErr(K, Math.hypot(G.player.x - e.x, G.player.y - e.y));
+    const err = (Math.random() - 0.5) * 2 * errDeg * Math.PI / 180;
     const base = angToP + err;
     for (let i = 0; i < def.pellets; i++) {
       const a = base + (Math.random() - 0.5) * 2 * def.spread * Math.PI / 180;
@@ -3478,13 +3512,48 @@
   }
 
   function pickPatrol(e) {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = 12 + Math.random() * 46;
       const x = e.hx + Math.cos(a) * r, y = e.hy + Math.sin(a) * r;
-      if (!pointSolid(W, x, y, 6)) { e.target.x = x; e.target.y = y; return; }
+      if (pointSolid(W, x, y, 6)) continue;
+      // 巡逻点别贴着门：几个人一起在门口站岗，玩家一开门就被贴脸齐射
+      if (nearClosedDoor(x, y, 40)) continue;
+      e.target.x = x; e.target.y = y; return;
     }
     e.target.x = e.hx; e.target.y = e.hy;
+  }
+
+  /** 附近有没有关着的门（半径 r 内）。巡逻选点用：别在门口站岗。 */
+  function nearClosedDoor(x, y, r) {
+    if (!W.doors) return false;
+    const r2 = r * r;
+    for (const d of W.doors) {
+      if (d.open) continue;
+      if (dist2(x, y, d.x, d.y) < r2) return true;
+    }
+    return false;
+  }
+
+  /** 剧情敌人别贴着门站岗：开局往远离最近那扇门的方向挪一点，避免一开门就被贴脸齐射。 */
+  function nudgeFromDoor(e) {
+    if (!W.doors || !W.doors.length) return;
+    let near = null, best = 48 * 48;
+    for (const d of W.doors) {
+      if (d.open) continue;
+      const dd = dist2(e.x, e.y, d.x, d.y);
+      if (dd < best) { best = dd; near = d; }
+    }
+    if (!near) return;
+    let ang = Math.atan2(e.y - near.y, e.x - near.x);
+    if (!isFinite(ang) || best < 1) ang = Math.random() * Math.PI * 2;
+    // 从远到近试几个落点，找得到空位就走，都不行就原地不动
+    for (const step of [44, 34, 24]) {
+      const nx = e.x + Math.cos(ang) * step, ny = e.y + Math.sin(ang) * step;
+      if (pointSolid(W, nx, ny, 9)) continue;
+      e.x = nx; e.y = ny; e.hx = nx; e.hy = ny;
+      return;
+    }
   }
 
   // ---------------------------------------------------------------- 拾取物更新
@@ -3954,17 +4023,20 @@
     // opts.prep: false 时跳过开局准备期（测试/调试用）
     const mode = (opts && opts.mode) || 'challenge';
     const withPrep = !(opts && opts.prep === false);
+    // 剧情关序号（调试/测试用，默认第 0 关）
+    const lvl = (mode === 'story' && opts && opts.storyLevel)
+      ? clamp(opts.storyLevel | 0, 0, STORY_LEVELS.length - 1) : 0;
     G.mode = mode;
-    G.storyLevel = 0;
+    G.storyLevel = lvl;
     G.storyKills = 0;
     G.storyComboBest = 0;
     G.storyHits = 0;        // 受击次数（评分用）
     G.storyStartT = performance.now();
 
     if (mode === 'story') {
-      const lv = STORY_LEVELS[0];
-      W = buildLevel(0, lv);
-      G.levelIndex = 0;
+      const lv = STORY_LEVELS[lvl];
+      W = buildLevel(lvl, lv);
+      G.levelIndex = lvl;
       G.player = makePlayer(W.spawn.x, W.spawn.y);
       G.wave = 0;
       G.cash = 0;
@@ -3998,7 +4070,7 @@
       G.camV.x = 0;
       G.camV.y = 0;
       // 预设敌人：按关卡数据摆好，清空即过关
-      spawnStoryEnemies(0);
+      spawnStoryEnemies(lvl);
       // 开场提示
       G.centerText = lv.title;
       G.centerColor = MIAMI.pink;
@@ -4071,6 +4143,7 @@
       e.state = 'idle';
       e.facing = Math.random() * Math.PI * 2;
       e.thinkTimer = 0.6 + Math.random() * 2.0;
+      nudgeFromDoor(e);   // 别让他贴着门站岗（玩家一开门就被贴脸）
       W.enemies.push(e);
     }
     W.cleared = false;
@@ -5108,6 +5181,38 @@
       const ey = Math.sin(ea) * HEAD_R * 0.6;
       dot(ex + Math.cos(ang) * 0.3, ey + Math.sin(ang) * 0.3, 1.05, '#1a141e');
       dot(ex - Math.cos(ang) * 0.7, ey - Math.sin(ang) * 0.7 - 0.4, 0.36, '#fcfaf4');
+    }
+
+    // 开枪前摇：举枪瞄准的这段时间里，头顶一条红色进度弧 + 一条指向玩家的虚线，
+    // 一眼看出"谁要打你、还差多久"——能抢在开火前闪开或先手打死他。
+    if (!isPlayer && a.alive && a.wind > 0) {
+      const K2 = ENEMY_KIND[a.kind];
+      const prog = clamp(a.wind / ((K2 && enemyWindup(K2)) || 1), 0, 1);
+      const pp = G.player;
+      if (K2 && K2.aimErr > 0 && pp && pp.alive) {
+        const dx = pp.x - a.x, dy = pp.y - a.y;
+        const dl = Math.hypot(dx, dy) || 1;
+        ctx.save();
+        ctx.globalAlpha = 0.12 + prog * 0.45;
+        ctx.strokeStyle = '#ff4a4a';
+        ctx.lineWidth = 0.9;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        ctx.moveTo(dx / dl * 10, dy / dl * 10);
+        ctx.lineTo(dx, dy);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath(); ctx.arc(0, 0, 11, 0, 6.283); ctx.stroke();
+      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = prog > 0.72 ? '#ff3b3b' : '#ffcf5a';
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, -Math.PI / 2, -Math.PI / 2 + 6.283 * prog);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // 警觉标记：敌人头顶常驻图标，一眼看出状态。
@@ -7388,6 +7493,11 @@
     get arena() { return ARENA; },
     get shop() { return SHOP; },
     get slotSymbols() { return SLOT_SYMBOLS; },
+    /** 敌人数值表（前摇 / 精度等难度参数的测试断言用） */
+    get enemyKind() { return ENEMY_KIND; },
+    enemyWindup, enemyAimErr,
+    /** 敌人推门 / 门口净空判断（测试用） */
+    pushDoor, nearClosedDoor, nudgeFromDoor,
     /** 测试默认跳过开局准备期，直接进第一波；想测准备期传 { prep: true } */
     startGame(opts) { return startGame(Object.assign({ prep: false }, opts || {})); },
     /** 结束当前倒计时（准备期 / 整备期都适用），立即开下一波 */
