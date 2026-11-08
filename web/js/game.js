@@ -11,7 +11,7 @@
   const TILE = 24;
   // 墙体厚度：墙砖贴图/碰撞矩形都从整格 TILE 收窄到这条，室内走廊显得更宽。
   // 横向墙瘦高度、纵向墙瘦宽度，统一居中（每侧留 (TILE-WALL_THICK)/2 的地板边）。
-  const WALL_THICK = 18;
+  const WALL_THICK = 12;
   const PLAYER_SPEED = 134;
   const ACTOR_R = 8;
 
@@ -88,7 +88,7 @@
   //   *_torso   手和头都没了，只剩躯干 —— 头 + 双臂都飞了时用
   // 这样残缺版和完整版是同一张图、同一套笔触，摆在一起不会像两种画风。
   const SPRITE_NAMES = [
-    'wall', 'floor', 'floor2', 'door', 'cover', 'shadow', 'spark', 'dot',
+    'wall', 'wall_h', 'wall_v', 'floor', 'floor2', 'door', 'cover', 'shadow', 'spark', 'dot',
     'blood_1', 'blood_2', 'blood_3', 'blood_4', 'blood_5', 'blood_6',
     'blood_streak_1', 'blood_streak_2', 'blood_streak_3',
     'corpse_player', 'corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun',
@@ -1345,7 +1345,7 @@
     shotgun:   { trim: 0, len: 0.55, gain: 1.0, maxVoices: 3 },
     headpop:   { trim: 0, len: 0.30, gain: 1.0, maxVoices: 3 },
     blood_land:{ trim: 0, len: 0.35, gain: 0.7, maxVoices: 4 },
-    shell_drop:{ trim: 0, len: 0.40, gain: 0.7, maxVoices: 6 },
+    shell_drop:{ trim: 0, len: 0.45, gain: 0.7, maxVoices: 6 },
     shell_eject:{ trim: 0, len: 0.12, gain: 0.8, maxVoices: 6 },
     rack:      { trim: 0, len: 0.22, gain: 0.9, maxVoices: 2 },
     body_drop: { trim: 0, len: 0.40, gain: 1.0, maxVoices: 3 },
@@ -2550,6 +2550,26 @@
       for (let i = this.clips.length - 1; i >= 0; i--) {
         const c = this.clips[i];
         c.x += c.vx * dt; c.y += c.vy * dt;
+        // 弹壳碰到墙：要么反弹要么停下（横向/纵向速度分别处理，弹壳沿墙滑动更自然）
+        if (W) {
+          const r = 3;
+          if (pointSolid(W, c.x + r, c.y, r)) {
+            c.x -= c.vx * dt;            // 退回撞墙前
+            if (Math.abs(c.vx) > 40) { c.vx *= -0.42; Sfx.play('shell_drop'); }
+            else c.vx = 0;
+          }
+          if (pointSolid(W, c.x - r, c.y, r)) {
+            if (Math.abs(c.vx) > 40) c.vx *= -0.42; else c.vx = 0;
+          }
+          if (pointSolid(W, c.x, c.y + r, r)) {
+            c.y -= c.vy * dt;
+            if (Math.abs(c.vy) > 40) { c.vy *= -0.42; Sfx.play('shell_drop'); }
+            else c.vy = 0;
+          }
+          if (pointSolid(W, c.x, c.y - r, r)) {
+            if (Math.abs(c.vy) > 40) c.vy *= -0.42; else c.vy = 0;
+          }
+        }
         // 阻尼按秒算：写成每帧乘常数的话，60fps 下 0.86^60 ≈ 0.0001，弹匣刚出手就钉住了
         const damp = Math.pow(0.16, dt);
         c.vx *= damp; c.vy *= damp;
@@ -5846,17 +5866,33 @@
 
   function drawWalls() {
     const r = visibleTileRange();
-    // 内墙用 buildLevel 收窄好的矩形画（横墙瘦高、纵墙瘦宽，方向和碰撞完全一致）
+    // 内墙用 buildLevel 收窄好的矩形画：横墙用 wall_h（24×WALL_THICK）沿 x 平铺、
+    // 纵墙用 wall_v（WALL_THICK×24）沿 y 平铺，砖纹 1:1 不拉伸。
+    const imgH = IMG.wall_h, imgV = IMG.wall_v;
+    const th = WALL_THICK;
     for (const rc of W.walls) {
       if (rc.x + rc.w < r.x0 * TILE || rc.x > (r.x1 + 1) * TILE) continue;
       if (rc.y + rc.h < r.y0 * TILE || rc.y > (r.y1 + 1) * TILE) continue;
-      ctx.drawImage(IMG.wall, rc.x, rc.y, rc.w, rc.h);
+      if (rc.dir === 'v') {
+        // 纵向墙：竖条贴图沿 y 平铺（宽 WALL_THICK）
+        for (let y = rc.y; y < rc.y + rc.h; y += TILE) {
+          const hh = Math.min(TILE, rc.y + rc.h - y);
+          ctx.drawImage(imgV, 0, 0, th, hh, rc.x, y, th, hh);
+        }
+      } else {
+        // 横向墙：横条贴图沿 x 平铺（高 WALL_THICK）
+        for (let x = rc.x; x < rc.x + rc.w; x += TILE) {
+          const ww = Math.min(TILE, rc.x + rc.w - x);
+          ctx.drawImage(imgH, 0, 0, ww, th, x, rc.y, ww, th);
+        }
+      }
     }
-    // 地图外一律当墙：外圈本来就是 '#',继续铺出去视觉上就是更厚的楼体（整格，不瘦）
+    // 地图外一律纯黑（楼体外是无尽的黑暗，不再铺墙砖）
     for (let y = r.y0; y <= r.y1; y++) {
       for (let x = r.x0; x <= r.x1; x++) {
         if (x < 0 || y < 0 || x >= W.w || y >= W.h) {
-          ctx.drawImage(IMG.wall, x * TILE, y * TILE, TILE, TILE);
+          ctx.fillStyle = '#000';
+          ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
         }
       }
     }
@@ -5966,27 +6002,39 @@
   }
 
   function drawDoors() {
+    const th = WALL_THICK;
     for (const d of W.doors) {
-      if (d.broken || d.flying) continue;   // 打碎/撞飞的门不在原位画
+      if (d.broken || d.flying) continue;
       ctx.save();
       ctx.translate(d.x, d.y);
-      const vertical = d.dir === 'v';
-      if (d.open) {
-        const a = clamp(d.t * 3, 0, 1);
-        ctx.globalAlpha = 1 - a * 0.75;
-        ctx.rotate(a * 1.1);
-        ctx.translate(-a * 8, 0);
-      }
-      // 门板跟墙体一起收窄：横墙门瘦高、纵墙门瘦宽（竖门转 90° 让门把手朝外）
-      if (vertical) {
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, WALL_THICK, TILE);
+      // 门 = 一条厚线（跟墙同厚），关闭时平贴在墙里；打开时绕铰链转到 90°（与墙垂直）。
+      const openA = d.open ? clamp(d.t * 6, 0, 1) * (Math.PI / 2) : 0;
+      if (d.dir === 'v') {
+        // 纵墙门：关闭时是竖线，铰链在上端，打开绕上端转到水平
+        ctx.translate(0, -TILE / 2);
+        ctx.rotate(openA);
+        // 门板线：从铰链向下延伸 TILE 长（宽 th）
+        ctx.fillStyle = '#4a4a52';
+        ctx.fillRect(-th / 2, 0, th, TILE);
+        ctx.fillStyle = '#5d5d66';
+        ctx.fillRect(-th / 2, 0, th / 2, TILE);   // 一侧受光，让厚线有体积
+        // 红色门把手（末端，远离铰链）
+        ctx.fillStyle = '#c82828';
+        ctx.fillRect(-th / 2, TILE - 5, th, 3);
       } else {
-        ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, TILE, WALL_THICK);
+        // 横墙门：关闭时是横线，铰链在左端，打开绕左端转到竖直
+        ctx.translate(-TILE / 2, 0);
+        ctx.rotate(openA);
+        ctx.fillStyle = '#4a4a52';
+        ctx.fillRect(0, -th / 2, TILE, th);
+        ctx.fillStyle = '#5d5d66';
+        ctx.fillRect(0, -th / 2, TILE, th / 2);
+        ctx.fillStyle = '#c82828';
+        ctx.fillRect(TILE - 5, -th / 2, 3, th);
       }
       ctx.restore();
     }
-    // 撞飞的门板：单独画（带旋转、沿飞行方向翻滚），撞到人/落地后渐隐
+    // 撞倒的门板：脱离铰链飞出去，是"方形贴图的门"（带旋转翻滚）
     for (const f of W.flyingDoors) {
       ctx.save();
       ctx.translate(f.x, f.y);
@@ -8357,7 +8405,7 @@
     // 菜单界面显示系统光标，战斗时隐藏系统光标（改用准心）。
     canvas.style.cursor = (G.state !== 'play' || G.paused) ? 'default' : 'none';
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#0f0c12';
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     if (G.state === 'settings') { drawSettings(); return; }

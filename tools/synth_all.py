@@ -218,22 +218,35 @@ def make_blood_land(rng):
 
 
 def make_shell_drop(rng):
-    """弹壳落地：黄铜小壳在地板上弹跳的"叮叮叮"，几次渐弱。"""
-    dur = 0.4
+    """弹壳落地：黄铜小壳磕在硬地上，一声尖锐的金属"叮" + 几下弹跳渐弱。
+
+    真实黄铜弹壳落地是"叮——"：极短的高频瞬态（碰撞）叠加一段金属筒壁共振
+    （几个非谐波泛音一起衰减），弹跳次数少但每次都有清脆的"叮"。
+    """
+    dur = 0.45
     n = int(SR * dur)
     out = [0.0] * n
-    freqs = [2100, 2400, 2000]
-    gains = [1.0, 0.65, 0.4]
-    ats = [0.0, 0.09, 0.18]
-    for f, g, at in zip(freqs, gains, ats):
-        nd = int(SR * 0.08)
-        nz = noise(nd, rng)
-        ding = run_filter(nz, lambda i: biquad_bp(f, 5.0))
-        ding = mul(ding, env(nd, 0.0003, 0.025))
-        add_into(out, ding, g, at=at)
-        # 黄铜壳的金属共振正弦
-        ring = sine(f, f * 0.95, 0.05, 0.3, rng=rng)
-        add_into(out, mul(ring, env(len(ring), 0.001, 0.02)), 0.6, at=at)
+
+    # 每次落地/弹跳：锐利瞬态 + 金属共振泛音。3 次，间隔渐长、音量渐弱。
+    bounces = [
+        (0.00, 1.00, 4200, 0.030),
+        (0.10, 0.62, 3800, 0.022),
+        (0.21, 0.36, 3500, 0.016),
+    ]
+    for at, g, f0, tau in bounces:
+        off = int(at * SR)
+        seg = n - off
+        if seg <= 0:
+            continue
+        # 锐利瞬态：高频窄带噪声，极短，模拟壳壁磕地那一下"啪"
+        nz = noise(seg, rng)
+        click = run_filter(nz, lambda i: biquad_bp(f0, 6.0))
+        add_into(out, mul(click, env(seg, 0.0002, 0.004)), 1.6 * g, at=at)
+        # 金属共振：筒壁的多个非谐波泛音一起衰减（这才是"叮"的余韵）
+        for ratio, rg in ((1.0, 1.0), (1.47, 0.55), (2.11, 0.32), (2.73, 0.20)):
+            ring = sine(f0 * ratio, f0 * ratio * 0.985, tau * 3.2, rg, rng=rng)
+            add_into(out, mul(ring, env(len(ring), 0.0005, tau)), 0.7 * g, at=at)
+
     return out, dur
 
 
