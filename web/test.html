@@ -1589,14 +1589,17 @@
     g12s.player.weapon = 'knife';
     const e12 = w12s.enemies[0];
     e12.x = g12s.player.x + 22; e12.y = g12s.player.y;
-    let knifeGib = 0;
+    let knifeGib = 0, dismembered = 0, dismemberHeads = 0;
     for (let i = 0; i < 40; i++) {
-      e12.alive = true; e12.gibbed = false; e12.hp = 10;
+      e12.alive = true; e12.gibbed = false; e12.dismember = false; e12.hp = 10;
       H.hitEnemy(e12, 9999, 0);
       if (H.fxGibs.length > 0) knifeGib++;
+      if (e12.dismember) { dismembered++; if (!e12.gibbed) dismemberHeads++; }
       H.fxGibs.length = 0;
     }
     check('武士刀砍死人有概率断肢（40 次里 ' + knifeGib + ' 次）', knifeGib > 10);
+    // 断过肢的尸体要标成残躯：胳膊飞了就不能再贴一张"手还长在身上"的完整尸体图
+    check('砍飞胳膊时尸体标记成残躯（40 次里 ' + dismemberHeads + ' 次，头还在）', dismemberHeads > 8);
 
     // 剧情模式玩家移速加成（对比同一帧输入下两种模式的水平速度）
     H.startGame({ mode: 'story' });
@@ -1611,6 +1614,23 @@
     H.key('d', false);
     check('剧情模式移速更快（' + vStory.toFixed(0) + ' vs ' + vChal.toFixed(0) + ' px/s）',
       vStory > vChal * 1.15);
+
+    // 剧情模式：按 Q 把枪背到背上（空手）再去捡另一把，背上那把必须掉回地上 —— 之前被直接清空
+    H.startGame({ mode: 'story' });
+    const gPk = H.g, pPk = gPk.player, wPk = H.world;
+    gPk.centerText = ''; gPk.centerTimer = 0;
+    wPk.pickups.length = 0;
+    H.swap();
+    H.step(20);
+    const backedOk = pPk.weapon === null && !!pPk.side && pPk.side.weapon === 'pistol';
+    H.dropGun('shotgun', pPk.x, pPk.y);
+    H.step(2);
+    const groundGuns = wPk.pickups.map(pk => pk.def);
+    check('剧情模式空手（Q 背枪）捡新枪：背上的手枪不凭空消失（地上 ' + (groundGuns.join(',') || '空') + '）',
+      backedOk && pPk.weapon === 'shotgun' && groundGuns.indexOf('pistol') >= 0);
+    const backPk = wPk.pickups.find(pk => pk.def === 'pistol');
+    check('掉回地上的那把还带着原来的子弹（ammo=' + (backPk ? backPk.ammo : '-') + '）',
+      !!backPk && backPk.ammo === 8);
 
     // 扔枪砸人：把枪扔出去，飞一段距离后砸死目标
     H.startGame({ mode: 'story' });

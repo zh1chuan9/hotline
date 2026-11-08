@@ -132,9 +132,10 @@
   };
   const PUNCH_TIME = 0.2;   // 出拳的前伸动画时长（纯视觉）
   // 近战挥砍动画：刀/棍整把武器从一侧扫到另一侧（纯视觉，判定仍是 fireRate 那一瞬间的扇形）。
-  // 挥得比出手间隔（fireRate）短一截，刀才像"唰"地一下划过去，而不是慢吞吞地推。
-  const SWING_TIME = { knife: 0.11, bat: 0.16 };
-  const SWING_DEFAULT = 0.12;
+  // 比出手间隔（fireRate）短一截，武器才像"唰"地一下划过去；但也不能短到只剩三四帧，
+  // 那样整把刀是"瞬移"过去的，看不出挥砍路线（0.11s 就是这个毛病，放到 0.15/0.19）。
+  const SWING_TIME = { knife: 0.15, bat: 0.19 };
+  const SWING_DEFAULT = 0.16;
   // 剧情模式玩家移速倍率：没有血量、一击必杀的关卡里，走位就是唯一的容错手段，
   // 默认 134 在"一堆小房间 + 密集敌人"的新地图里太憋屈，放到 1.22 倍（≈163）才能边跑边突入。
   const STORY_MOVE_MUL = 1.22;
@@ -1540,6 +1541,9 @@
       bob: Math.random() * 6.28,
       deadT: 0,
       deathDir: 0,
+      // 断肢标记：gibbed = 头被打飞（尸体连头都不画），dismember = 胳膊被砍飞
+      gibbed: false,
+      dismember: false,
       // 侧移包抄：方向保持一段时间再翻，避免原地左右抖
       strafeDir: Math.random() < 0.5 ? -1 : 1,
       strafeTimer: 0.7 + Math.random() * 1.3
@@ -1551,6 +1555,15 @@
       def: w, x, y, bob: Math.random() * 6.28,
       vx: 0, vy: 0, rot: Math.random() * 6.28
     };
+  }
+
+  /** 换枪时旧枪掉哪儿：身后一点，别跟地上刚捡的那把叠在一起（叠住就只能靠 E 猜）。 */
+  function dropSpot(p) {
+    for (const s of [15, 24, 0]) {
+      const x = p.x - p.facing.x * s, y = p.y - p.facing.y * s;
+      if (!W || !pointSolid(W, x, y, 7)) return { x, y };
+    }
+    return { x: p.x, y: p.y };
   }
 
   // ---------------------------------------------------------------- 碰撞
@@ -2815,6 +2828,8 @@
       e.gibbed = true;
       FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 14, 1.15);
     } else {
+      // 只砍飞胳膊：尸体改成"无手的躯干"，不然地上那只手和身上的手对不上
+      e.dismember = true;
       FX.addBlood(e.x, e.y, { x: Math.cos(e.deathDir), y: Math.sin(e.deathDir) }, 8, 1.0);
     }
     Sfx.play('hit');
@@ -3491,11 +3506,20 @@
       if (p.weapon && !explicit) return;
       const magS = gunStat(best.def, 'mag');
       const ammoS = best.ammo !== undefined ? best.ammo : magS;
+      const spot = dropSpot(p);          // 旧枪掉在身后一点，别和新捡的那把叠成一堆
       if (p.weapon) {
-        const oldPk = makePickup(p.weapon, p.x, p.y);
+        const oldPk = makePickup(p.weapon, spot.x, spot.y);
         oldPk.ammo = p.ammo;
         oldPk.reserve = 0;
         W.pickups.push(oldPk);
+      }
+      // 背上那把（按 Q 背起来的）也要掉回地上 —— 剧情模式捡起新枪时 p.side 会被清空，
+      // 不在这儿补一把，背着的枪就凭空消失了（空手捡枪 = 白丢一把枪）。
+      if (p.side) {
+        const sidePk = makePickup(p.side.weapon, spot.x, spot.y);
+        sidePk.ammo = p.side.ammo;
+        sidePk.reserve = 0;
+        W.pickups.push(sidePk);
       }
       p.weapon = best.def;
       p.ammo = ammoS;
@@ -5451,6 +5475,54 @@
     ctx.fillRect(3.3, -2.9, 1.3, 1.3);
   }
 
+  /**
+   * 断肢之后躺在地上的"剩下的那一坨"：一截压扁的布 + （头还在的话）脑袋 + 两处暗红断口。
+   * 贴图版尸体（32px 面朝下）里手和头是长在身上的，胳膊被砍飞以后再原样贴回去，
+   * 就成了"地上躺着一只手、身上还长着一只手"。所以断过肢的尸体不用贴图，改画这套残骸。
+   * 局部坐标和尸体贴图一致：原点在身体中心，长边沿 x（调用前已经按 deathDir 转过）。
+   */
+  function drawRemains(pal, headless) {
+    const cloth = shade(pal.head, 0.58);
+    const dark = shade(pal.head, 0.4);
+    const rim = 'rgba(0,0,0,0.62)';
+    const blood = 'rgba(150,18,32,0.9)';
+    ctx.lineCap = 'round';
+    // 腿：先从躯干后面拖出去一小截（先画，被躯干盖住根部），轮廓才不是个圆饼
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = 7.4;
+    ctx.beginPath(); ctx.moveTo(-6.6, 0); ctx.lineTo(-9.6, 0); ctx.stroke();
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = 5.6;
+    ctx.beginPath(); ctx.moveTo(-6.6, 0); ctx.lineTo(-9.6, 0); ctx.stroke();
+    // 躯干：一段压扁的圆头胶囊（长边沿 x），先黑描边再压布色
+    ctx.strokeStyle = rim;
+    ctx.lineWidth = 10.6;
+    ctx.beginPath(); ctx.moveTo(-5.4, 0); ctx.lineTo(2.0, 0); ctx.stroke();
+    ctx.strokeStyle = cloth;
+    ctx.lineWidth = 8.6;
+    ctx.beginPath(); ctx.moveTo(-5.4, 0); ctx.lineTo(2.0, 0); ctx.stroke();
+    // 头：还在就画在 +x 那头（面朝下，露后脑 + 一点侧脸）
+    if (!headless) {
+      ctx.fillStyle = rim;
+      ctx.beginPath(); ctx.arc(6.4, 0, 5.0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = pal.head;
+      ctx.beginPath(); ctx.arc(6.4, 0, 4.4, 0, 6.283); ctx.fill();
+      ctx.fillStyle = pal.skin;
+      ctx.beginPath(); ctx.arc(7.9, 0.5, 2.7, 0, 6.283); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';            // 一只闭着的眼：读成"侧着躺"而不是一张正脸
+      ctx.beginPath(); ctx.ellipse(7.6, -1.6, 1.5, 0.5, 0.5, 0, 6.283); ctx.fill();
+      ctx.fillStyle = blood;                          // 脖子一圈血
+      ctx.beginPath(); ctx.ellipse(2.9, 0, 1.3, 2.1, 0, 0, 6.283); ctx.fill();
+    } else {
+      ctx.fillStyle = blood;                          // 头没了：只剩脖子断口
+      ctx.beginPath(); ctx.ellipse(3.4, 0, 2.0, 2.4, 0, 0, 6.283); ctx.fill();
+    }
+    // 肩两侧的断口（两条胳膊被砍飞的地方）
+    ctx.fillStyle = blood;
+    ctx.beginPath(); ctx.ellipse(-1.4, -3.8, 1.7, 1.1, 0.4, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-1.0, 3.8, 1.6, 1.0, -0.4, 0, 6.283); ctx.fill();
+  }
+
   function drawActor(a, tex, isPlayer, corpse) {
     // 精英整体放大：头、手、枪、阴影一起缩放，不用单独做一套贴图
     const sc = a.scale || 1;
@@ -5477,7 +5549,12 @@
       // 尸体是单独画的贴图（面朝下摊开），不是把活人转个角度
       ctx.rotate(a.deathDir + 0.18);
       ctx.globalAlpha = 0.92;
-      ctx.drawImage(IMG[corpse] || IMG.corpse_player, -16, -16, 32, 32);
+      if (a.gibbed || a.dismember) {
+        // 断肢之后：贴图里那两只手/那颗头已经飞出去了，不能再原样贴一遍
+        drawRemains(PALETTE[tex] || PALETTE.player, a.gibbed);
+      } else {
+        ctx.drawImage(IMG[corpse] || IMG.corpse_player, -16, -16, 32, 32);
+      }
       ctx.restore();
       return;
     }
@@ -7364,9 +7441,10 @@
     drawStations();
     drawExit();
 
-    // 先画尸体（最底层活物）。被轰碎（头都没了）的那种不画整具尸体，只留地上的肢体
+    // 先画尸体（最底层活物）。被砍飞胳膊/打掉头的，画"剩下的躯干"而不是整张尸体图，
+    // 否则地上躺着一只手、身上还长着一只手（之前就是只把肢体甩出去、尸体原样留着）。
     for (const e of W.enemies) {
-      if (!e.alive && !e.gibbed) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+      if (!e.alive) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
     }
     // 拾取物压在尸体上面，避免血包/弹药被尸体盖住捡不到
     drawPickups();
