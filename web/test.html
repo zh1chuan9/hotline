@@ -1623,6 +1623,28 @@
     check('设置页有独立的音乐开关（music 行 y=' + zzSB.music.y + '）',
       !!zzSB.music && zzSB.music.y !== zzSB.sound.y);
 
+    // ============ 29.8 连击倍率进度条：倍数越多衰减越快 ============
+    // 连击窗口固定 2.5s，但衰减速度随 combo 增高：combo=2 正常、每多 1 连击快 18%。
+    // 进度条显示剩余时间占比（comboTimer/2.5），高倍率下回退更快。
+    H.startGame({ mode: 'challenge' });
+    const zzCb = H.g;
+    // 低倍率（combo=2）：衰减速度 = 1 + 1*0.18 = 1.18 倍
+    zzCb.combo = 2; zzCb.comboTimer = 2.5;
+    const zzDecay2 = 1 + (zzCb.combo - 1) * 0.18;
+    // 高倍率（combo=8）：衰减速度 = 1 + 7*0.18 = 2.26 倍
+    zzCb.combo = 8; zzCb.comboTimer = 2.5;
+    const zzDecay8 = 1 + (zzCb.combo - 1) * 0.18;
+    check('连击衰减随倍率加快（x2=' + zzDecay2.toFixed(2) + '倍速，x8=' + zzDecay8.toFixed(2) + '倍速）',
+      zzDecay8 > zzDecay2 && Math.abs(zzDecay2 - 1.18) < 0.001);
+    // 进度条比例：剩余时间 / 2.5，恒在 0..1 之间
+    zzCb.combo = 5; zzCb.comboTimer = 1.25;
+    const zzFrac = Math.max(0, Math.min(1, zzCb.comboTimer / 2.5));
+    check('进度条比例 = 剩余时间/2.5（' + zzFrac.toFixed(2) + '，应为 0.50）', Math.abs(zzFrac - 0.5) < 0.001);
+    // 连击掉到 0 就清空（走 update 一帧让 comboTimer 递减判定）
+    zzCb.combo = 2; zzCb.comboTimer = 0.001;
+    H.step(1);
+    check('连击窗口耗尽则清零（combo=' + zzCb.combo + '）', zzCb.combo === 0);
+
     // ============ 30.4 地图：更小 / 房间更多 / 敌人更多 ============
     const lvls = H.storyLevels;
     let fitSize = true, rectOk = true, minDoors = 99, minEnemies = 99, totalDoors = 0;

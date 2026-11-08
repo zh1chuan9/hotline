@@ -5550,6 +5550,13 @@
   // ---------------------------------------------------------------- 更新
   function update(dt) {
     if (!W) return;
+    // 连击衰减随倍率加快：combo 越高，窗口掉得越快，高倍率更难维持（也更有压迫感）。
+    // combo=2 时正常速度，每多 1 连击快 18%，combo=8 时约 2 倍速。
+    // 右上角那个进度条显示的"剩余时间/2.5"就会随着倍率增高而回退得更快。
+    if (G.comboTimer > 0) {
+      G.comboTimer -= dt * (1 + (G.combo - 1) * 0.18);
+      if (G.comboTimer <= 0) G.combo = 0;
+    }
     if (G.state === 'play') {
       // 触屏模式：先把摇杆/按钮折算成 keys/mouse，再跑玩家逻辑（复用全部键鼠逻辑）
       applyTouchInput();
@@ -6056,6 +6063,16 @@
     const g = Math.min(255, Math.round(((n >> 8) & 255) * k));
     const b = Math.min(255, Math.round((n & 255) * k));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  /** 两个十六进制色按 t（0..1）线性混合，返回 rgb()。 */
+  function mixColor(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const k = clamp(t, 0, 1);
+    const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * k);
+    const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * k);
+    const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * k);
+    return 'rgb(' + r + ',' + g + ',' + bl + ')';
   }
 
   function dot(x, y, r, color) {
@@ -6696,12 +6713,12 @@
       ctx.fillText('' + (G.score || 0), VIEW_W - 9 + HUD_OFF.cash.x, 46 + HUD_OFF.cash.y);
       ctx.fillStyle = '#c8c8d0';
       ctx.fillText('' + (G.score || 0), VIEW_W - 10 + HUD_OFF.cash.x, 45 + HUD_OFF.cash.y);
-      // 现金
+      // 现金（击杀所得，商店货币）—— 往下挪，给上面的倍率+进度条腾位
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 62 + HUD_OFF.cash.y);
+      ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 83 + HUD_OFF.cash.y);
       ctx.fillStyle = '#e02929';
-      ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 61 + HUD_OFF.cash.y);
+      ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 82 + HUD_OFF.cash.y);
 
       // 左下：血量 + 护甲（只给条和格，不标数值）
       drawBodyHUD();
@@ -6713,14 +6730,27 @@
       drawReloadHint();
     }
 
-    // 连击（挑战模式才显示；剧情模式 HUD 只允许数字）
+    // 连击倍率 + 进度条（挑战模式才显示；剧情模式 HUD 只允许数字）。
+    // 倍率在上、进度条在下，分行不重叠；进度条表示连击窗口剩余时间，combo 越高回退越快。
     if (G.mode !== 'story' && G.combo > 1 && G.comboTimer > 0) {
+      const bx = VIEW_W - 10 + HUD_OFF.combo.x, by = 56 + HUD_OFF.combo.y;
+      // 倍率数字（xN）：右对齐，紧贴分数下方；用亮红突出，和普通分数区分
       ctx.textAlign = 'right';
-      ctx.font = 'bold 14px "Microsoft YaHei", monospace';
+      ctx.font = 'bold 15px Consolas, monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillText('x' + G.combo, VIEW_W - 9 + HUD_OFF.combo.x, 78 + HUD_OFF.combo.y);
-      ctx.fillStyle = '#e02929';
-      ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 77 + HUD_OFF.combo.y);
+      ctx.fillText('x' + G.combo, bx + 1, by + 1);
+      ctx.fillStyle = '#ff3b3b';
+      ctx.fillText('x' + G.combo, bx, by);
+      // 进度条：在倍率文字下方单独一行；剩余时间占比，越接近耗尽越窄；颜色随倍率变红
+      const frac = clamp(G.comboTimer / 2.5, 0, 1);
+      const bw = 56, bh = 4, bwX = bx - bw, bwY = by + 17;
+      // 底槽
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(bwX, bwY, bw, bh);
+      // 填充：宽度 = 剩余比例；高倍率更红、低倍率偏橙
+      const hot = clamp((G.combo - 2) / 8, 0, 1);
+      ctx.fillStyle = mixColor('#ff9d3c', '#ff2a2a', hot);
+      ctx.fillRect(bwX + 1, bwY + 1, Math.max(1, (bw - 2) * frac), bh - 2);
     }
 
     // 中下：提示（剧情模式不放文字提示）
@@ -8300,7 +8330,6 @@
           acc -= STEP;
           guard++;
         }
-        if (G.comboTimer > 0) { G.comboTimer -= dt; if (G.comboTimer <= 0) G.combo = 0; }
         if (G.toastTimer > 0) G.toastTimer -= dt;
         if (G.armorHitT > 0) G.armorHitT -= dt;
         if (G.armorBreakT > 0) G.armorBreakT -= dt;
@@ -8668,6 +8697,13 @@
       // ?settings=1 直接进设置页，用于截图核对（调试用）
       if (/[?&]settings=1/.test(location.search)) {
         G.state = 'settings';
+      }
+      // ?combo=N 强制设一个连击倍率（截图核对右上角进度条用，调试用）
+      const cbM = /[?&]combo=(\d+)/.exec(location.search);
+      if (cbM) {
+        const cbN = clamp(parseInt(cbM[1], 10), 1, 99);
+        G.combo = cbN;
+        G.comboTimer = 2.5;
       }
       // ?keys=1 直接进键位设置页，用于截图核对（调试用）
       if (/[?&]keys=1/.test(location.search)) {
