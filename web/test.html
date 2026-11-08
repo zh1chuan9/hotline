@@ -1332,11 +1332,15 @@
       // 撞倒：门板直接躺在地上，进入 flyingDoors（不飞、不转、不过期）
       const d2 = doors[2];
       const flyBefore = H.flyingDoors.length;
-      H.knockDoor(d2, 1, 0);
+      H.knockDoor(d2, 0, 1);   // 按真实玩法朝门后（+y，垂直墙面）撞倒
       check('撞倒门（flying=' + d2.flying + '）', d2.flying === true && d2.open === true);
       check('撞倒后门板进入躺下队列（' + flyBefore + ' → ' + H.flyingDoors.length + '）', H.flyingDoors.length === flyBefore + 1);
       const fd = H.flyingDoors[H.flyingDoors.length - 1];
       check('躺下的门板就地不动（无速度/旋转字段）', fd.vx === undefined && fd.rot === undefined && fd.life === undefined);
+      // 往前倒一点：门板要沿撞击方向挪出门框（落在门后那一格里），别原地贴在门槛上
+      const fdOff = { x: fd.x - d2.x, y: fd.y - d2.y };
+      check('撞倒后门板朝撞击方向前倒（偏移 ' + fdOff.x.toFixed(0) + ',' + fdOff.y.toFixed(0) + 'px）',
+        fdOff.y > 8 && Math.abs(fdOff.x) < 0.001 && fdOff.y <= 18);
       H.step(120);   // 推进 2 秒：门板既不该移动、也不该消失
       check('躺下的门板不会消失（' + H.flyingDoors.length + '）', H.flyingDoors.indexOf(fd) >= 0);
     }

@@ -22,6 +22,14 @@
   //   子弹（手枪/冲锋枪）：命中 → 门弹开（绕铰链打开，从推门者那一侧朝门后展开）
   //   霰弹：命中 → 门直接打碎
   const DOOR_SLAM_DMG = 200;    // 门板倒下砸人的伤害（普通敌人一击必杀）
+  // 门板尺寸：比墙（WALL_THICK=12）更细、比格子（TILE=24）更短，一眼看得出是"一扇门"而不是一段墙。
+  const DOOR_THICK = 9;         // 门板厚度（横墙门是竖向厚度、纵墙门是横向厚度）
+  const DOOR_LEAF = TILE - 4;   // 门板长度（沿墙方向）：两端各留 2px 门框，短一格才像门
+  const DOOR_HIT_THICK = 7;     // 门碰撞盒厚度：比视觉再收一圈，贴门时不"粘手"
+  const DOOR_HIT_LEAF = DOOR_LEAF;  // 碰撞盒长度跟门板一致（再短两端就漏缝了）
+  // 撞倒后门板朝撞击方向前移多少才算"往前倒"：门板半边 + 墙半边，
+  // 正好让躺下的门板整体落在门框外那一格里（不会一半压在墙上）。
+  const DOOR_FALL_ADV = (TILE - 2) / 2 + WALL_THICK / 2;
 
   // ---------------------------------------------------------------- 瞄准（ADS）
   // 按住右键抬枪：散射收紧、准心收拢、**画面拉远**（视野反而比腰射大）+ 相机顺着
@@ -2067,11 +2075,11 @@
     const out = world.walls.slice();
     for (const d of world.doors) {
       if (d.open || d.broken || d.flying) continue;
-      const inset = (TILE - WALL_THICK) / 2;
-      // 门碰撞矩形跟着墙的方向收窄（横墙门瘦高、纵墙门瘦宽），与墙体对齐
+      // 门碰撞矩形跟着墙的方向收窄（横墙门瘦高、纵墙门瘦宽），与墙体对齐；
+      // 长度/厚度都比门板视觉再小一圈 —— 撞门、贴门走都更爽利，不会有"隔空挡人"。
       const rc = d.dir === 'v'
-        ? { x: d.x - TILE / 2 + inset, y: d.y - TILE / 2, w: WALL_THICK, h: TILE }
-        : { x: d.x - TILE / 2, y: d.y - TILE / 2 + inset, w: TILE, h: WALL_THICK };
+        ? { x: d.x - DOOR_HIT_THICK / 2, y: d.y - DOOR_HIT_LEAF / 2, w: DOOR_HIT_THICK, h: DOOR_HIT_LEAF }
+        : { x: d.x - DOOR_HIT_LEAF / 2, y: d.y - DOOR_HIT_THICK / 2, w: DOOR_HIT_LEAF, h: DOOR_HIT_THICK };
       rc.door = d;
       out.push(rc);
     }
@@ -2340,8 +2348,15 @@
     d.open = true;
     d.t = 0;
     W._solidDirty = true;
-    // 门板倒在原地：只记位置，不旋转、不移动、不过期
-    W.flyingDoors.push({ door: d, x: d.x, y: d.y });
+    // 门板朝撞击方向"往前倒"一点：整扇门往前挪 DOOR_FALL_ADV，
+    // 倒在门后那半格里（原地躺着会像地上贴了块门口的地砖）。
+    // 万一前方紧贴墙/箱子就退一步，别让门板糊到墙上。
+    let fx = d.x, fy = d.y;
+    for (const s of [DOOR_FALL_ADV, DOOR_FALL_ADV * 0.5, 0]) {
+      const tx = d.x + nx * s, ty = d.y + ny * s;
+      if (!pointSolid(W, tx, ty, 6)) { fx = tx; fy = ty; break; }
+    }
+    W.flyingDoors.push({ door: d, x: fx, y: fy });
     // 倒下的那一下砸人：撞击方向前方、门板宽度内的敌人被砸死
     for (const e of W.enemies) {
       if (!e.alive) continue;
@@ -5982,55 +5997,56 @@
   }
 
   function drawDoors() {
-    const th = WALL_THICK;
+    const th = DOOR_THICK;             // 门板厚度（细）
+    const L = DOOR_LEAF;               // 门板长度（沿墙，比格子短一点）
+    const HL = L / 2;                  // 半长：铰链/自由端到门中心的距离
     for (const d of W.doors) {
       if (d.broken || d.flying) continue;
       ctx.save();
       ctx.translate(d.x, d.y);
-      // 门 = 一条亮棕色的厚线，两端各一把金色门把手。关闭时平贴在墙里；
+      // 门 = 一条亮棕色的细线，自由端正反两面各一把小金把手。关闭时平贴在墙里；
       // 打开时绕铰链转到 90°（与墙垂直），摆向由 d.swing 决定（从哪边推就从哪边开）。
       const openA = d.open ? clamp(d.t * 6, 0, 1) * (Math.PI / 2) : 0;
       const sw = d.swing > 0 ? 1 : -1;
       if (d.dir === 'v') {
         // 纵墙门：关闭时是竖线。swing>0 铰链在上端、门朝右(+x)开；swing<0 铰链在下端、门朝左(-x)开。
         // 旋转恒为逆时针(-openA)：门板从铰链向 +y 或 -y 延伸，逆时针转 90° 正好摆到 +x 或 -x（门后那侧）。
-        ctx.translate(0, sw > 0 ? -TILE / 2 : TILE / 2);
+        ctx.translate(0, sw > 0 ? -HL : HL);
         ctx.rotate(-openA);
         ctx.fillStyle = '#8a5420';
-        ctx.fillRect(-th / 2, sw > 0 ? 0 : -TILE, th, TILE);
+        ctx.fillRect(-th / 2, sw > 0 ? 0 : -L, th, L);
         ctx.fillStyle = '#a56a2e';                                  // 受光面（亮棕）
-        ctx.fillRect(-th / 2 + th * 0.5, sw > 0 ? 0 : -TILE, th * 0.5, TILE);
-        // 两把金色门把手：都在门的自由端，一把从左侧边凸出、一把从右侧边凸出
-        const hy = sw * TILE * 0.78;        // 自由端附近（铰链端在 y=0）
+        ctx.fillRect(-th / 2 + th * 0.5, sw > 0 ? 0 : -L, th * 0.5, L);
+        // 两把小金把手：都在自由端，一把从左侧边凸出、一把从右侧边凸出（正反面各一把）
+        const hy = sw * L * 0.72;           // 自由端附近（铰链端在 y=0）
         for (const dout of [-1, 1]) {
-          const hx = dout * (th / 2 + 1.8);
-          ctx.fillStyle = '#6b4e10';                                 // 暗金描边
-          ctx.beginPath(); ctx.arc(hx, hy, 3.5, 0, 6.283); ctx.fill();
-          ctx.fillStyle = '#e8b923';                                 // 金色
-          ctx.beginPath(); ctx.arc(hx, hy, 2.6, 0, 6.283); ctx.fill();
-          ctx.fillStyle = '#fff2b0';                                 // 高光
-          ctx.beginPath(); ctx.arc(hx - 0.8, hy - 0.8, 1.1, 0, 6.283); ctx.fill();
+          const hx = dout * (th / 2 + 0.9);
+          ctx.fillStyle = '#6b4e10';                                  // 暗金描边
+          ctx.beginPath(); ctx.arc(hx, hy, 2.1, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#e8b923';                                  // 金色
+          ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#fff2b0';                                  // 高光
+          ctx.beginPath(); ctx.arc(hx - 0.5, hy - 0.5, 0.6, 0, 6.283); ctx.fill();
         }
       } else {
         // 横墙门：关闭时是横线。swing>0 铰链在左端、门朝下(+y)开；swing<0 铰链在右端、门朝上(-y)开。
         // 旋转恒为顺时针(+openA)：门板从铰链向 +x 或 -x 延伸，顺时针转 90° 正好摆到 +y 或 -y（门后那侧）。
-        ctx.translate(sw > 0 ? -TILE / 2 : TILE / 2, 0);
+        ctx.translate(sw > 0 ? -HL : HL, 0);
         ctx.rotate(openA);
         ctx.fillStyle = '#8a5420';
-        ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th);
+        ctx.fillRect(sw > 0 ? 0 : -L, -th / 2, L, th);
         ctx.fillStyle = '#a56a2e';
-        ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th * 0.5);
-        // 两把金色门把手：都在门的自由端（远离铰链那端），一把从上侧边凸出、一把从下侧边凸出
-        // ——俯视角看就是门的这一端上下面各有一个把手（真实门正反两面各一个把手）
-        const hx = sw * TILE * 0.78;        // 自由端附近（铰链端在 x=0）
+        ctx.fillRect(sw > 0 ? 0 : -L, -th / 2, L, th * 0.5);
+        // 两把小金把手：都在自由端（远离铰链那端），一把从上侧边凸出、一把从下侧边凸出
+        const hx = sw * L * 0.72;           // 自由端附近（铰链端在 x=0）
         for (const dout of [-1, 1]) {       // -1 = 上侧边向外凸，+1 = 下侧边向外凸
-          const hy = dout * (th / 2 + 1.8);
+          const hy = dout * (th / 2 + 0.9);
           ctx.fillStyle = '#6b4e10';
-          ctx.beginPath(); ctx.arc(hx, hy, 3.5, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 2.1, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#e8b923';
-          ctx.beginPath(); ctx.arc(hx, hy, 2.6, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, 6.283); ctx.fill();
           ctx.fillStyle = '#fff2b0';
-          ctx.beginPath(); ctx.arc(hx - 0.7, hy - 0.8, 1.1, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(hx - 0.5, hy - 0.5, 0.6, 0, 6.283); ctx.fill();
         }
       }
       ctx.restore();
@@ -6040,19 +6056,22 @@
       ctx.save();
       ctx.translate(f.x, f.y);
       const s = TILE - 2;                 // 门板比格子略小一圈，露出地板边
+      // 暗色投影：门板躺在地上有一点点厚度感
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(-s / 2 + 1.5, -s / 2 + 1.5, s, s);
       // 亮棕色方形门板
       ctx.fillStyle = '#8a5420';
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.fillStyle = '#a56a2e';                       // 受光面（亮棕）
       ctx.fillRect(-s / 2, -s / 2, s, s * 0.32);
-      // 一把金色门把手（躺在门板靠右端处）
+      // 一把小金把手（躺在门板靠右端处）
       const hx = s * 0.24, hy = 0;
       ctx.fillStyle = '#6b4e10';
-      ctx.beginPath(); ctx.arc(hx, hy, 3.4, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx, hy, 2.2, 0, 6.283); ctx.fill();
       ctx.fillStyle = '#e8b923';
-      ctx.beginPath(); ctx.arc(hx, hy, 2.5, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, 6.283); ctx.fill();
       ctx.fillStyle = '#fff2b0';
-      ctx.beginPath(); ctx.arc(hx - 0.7, hy - 0.8, 1.0, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx - 0.5, hy - 0.5, 0.6, 0, 6.283); ctx.fill();
       // 暗棕描边
       ctx.strokeStyle = '#5c3611';
       ctx.lineWidth = 1;
