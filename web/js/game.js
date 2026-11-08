@@ -118,6 +118,14 @@
       blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.85, spray: 14, speckles: 18 }
     }
   };
+  // 空手拳头：把枪扔出去后也不至于没辙 —— 贴脸才够得着（reach 24），但一拳能放倒一个人。
+  // 故意不进 WEAPONS 表，这样商店/升级站/拾取逻辑里都不会冒出"拳头"这件装备。
+  const FIST = {
+    name: '拳头', melee: true, fireRate: 0.34, mag: Infinity, hidden: true,
+    reach: 24, arc: 80, shake: 1.6, sound: 'swing', icon: null, dmg: 30,
+    blood: { pools: 2, spurts: 2, streaks: 2, scale: 0.9, spray: 16, speckles: 20 }
+  };
+  const PUNCH_TIME = 0.2;   // 出拳的前伸动画时长（纯视觉）
   // ---------------------------------------------------------------- 武器升级
   //
   // 地图上的升级站（字符 U）在**第 5 波清完之后**解锁。四条线各 3 级，越升越贵；
@@ -272,154 +280,160 @@
   const BARREL_RADIUS = 68;      // 爆炸半径
   const BARREL_DMG = 110;        // 中心伤害（按距离衰减到 30%）
   const BARREL_DELAY = 0.16;     // 中弹到炸开的引信时间：留一帧让人看见"我打中了"
-  // 地图 30×18，但结构按迈阿密热线来：15/16 行是楼外街道，14 行是楼体正面（只留一扇入口门 D），
-  // 0-13 行才是室内。玩家出生在街道上（P），从门口打进去，杀完人再原路走回出生点即结算。
+  // 地图 24×16（比原来 30×18 小一圈，房间多、隔得碎，室内更贴脸）：
+  // 12 行是楼体正面（只留一扇入口门 D），13/14 行是楼外街道，玩家出生在街道上（P），
+  // 从门口打进去，杀完人再原路走回出生点即结算。
   // enemy：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
   const STORY_LEVELS = [
     {
       title: '序章 · 破门',
       rows: [
-        '##############################',
-        '#.........#.........#........#',
-        '#....o....#.......o.#.....o..#',
-        '#.........#.o.......#........#',
-        '#.......o.#.........#.o......#',
-        '#.........#.........#........#',
-        '#.........#.........#........#',
-        '####D##########D#########D####',
-        '#............................#',
-        '#............................#',
-        '#......o..............o......#',
-        '#............................#',
-        '#.............o..............#',
-        '#............................#',
-        '####D#########################',
-        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '##############################',
+        '########################',
+        '#...o.#......o#.......o#',
+        '#.....#.......#........#',
+        '#.....#.......#........#',
+        '#o....#o......#o.......#',
+        '###D######D#######D#####',
+        '#......................#',
+        '##D######D########D#####',
+        '#....#......o#o........#',
+        '#....#.......#.........#',
+        '#....#.......#.........#',
+        '#...o#o......#........o#',
+        '###########D############',
+        '#rrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrr#',
+        '########################',
       ],
       enemies: [
-        { kind: 'melee', pos: [3, 2] },
-        { kind: 'melee', pos: [6, 4] },
-        { kind: 'melee', pos: [13, 2] },
-        { kind: 'melee', pos: [17, 4] },
-        { kind: 'melee', pos: [23, 2] },
-        { kind: 'melee', pos: [27, 4] },
+        { kind: 'melee', pos: [2, 2] },
+        { kind: 'melee', pos: [4, 3] },
+        { kind: 'melee', pos: [9, 2] },
+        { kind: 'melee', pos: [12, 3] },
+        { kind: 'melee', pos: [17, 2] },
+        { kind: 'melee', pos: [21, 3] },
+        { kind: 'melee', pos: [2, 9] },
+        { kind: 'melee', pos: [10, 9] },
       ]
     },
     {
       title: '第二章 · 猎犬',
       rows: [
-        '##############################',
-        '#.........#.........#........#',
-        '#.....o...#.........#......o.#',
-        '#.o.......#..o.....o#.o......#',
-        '#.........#.........#........#',
-        '####D##########D#########D####',
-        '#.......#............#.......#',
-        '#.......#............#.......#',
-        '#.......#............#.......#',
-        '#...o...#....o.......#...o...#',
-        '#.......D............D.......#',
-        '#.......#............#.......#',
-        '#...o...#........o...#...o...#',
-        '#.......#............#.......#',
-        '###############D##############',
-        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '##############################',
+        '########################',
+        '#...o#...o#...o#.......#',
+        '#....#....#....#......o#',
+        '#....#....#....#.......#',
+        '#o...#o...#o...#o......#',
+        '##D####D####D######D####',
+        '#......................#',
+        '#......................#',
+        '###D#######D#######D####',
+        '#......#.......#.......#',
+        '#.....o#......o#......o#',
+        '#o.....#o......#o......#',
+        '###########D############',
+        '#rrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrr#',
+        '########################',
       ],
       enemies: [
-        { kind: 'melee', pos: [4, 2] },
+        { kind: 'melee', pos: [2, 2] },
+        { kind: 'gun', pos: [4, 3] },
+        { kind: 'melee', pos: [7, 2] },
+        { kind: 'gun', pos: [9, 3] },
         { kind: 'gun', pos: [12, 2] },
-        { kind: 'gun', pos: [17, 3] },
-        { kind: 'melee', pos: [26, 3] },
-        { kind: 'gun', pos: [5, 7] },
-        { kind: 'melee', pos: [6, 11] },
-        { kind: 'gun', pos: [24, 7] },
-        { kind: 'melee', pos: [23, 11] },
-        { kind: 'melee', pos: [12, 8] },
-        { kind: 'gun', pos: [17, 8] },
-        { kind: 'gun', pos: [15, 11] },
-        { kind: 'melee', pos: [19, 12] },
+        { kind: 'melee', pos: [14, 3] },
+        { kind: 'gun', pos: [17, 2] },
+        { kind: 'gun', pos: [21, 3] },
+        { kind: 'melee', pos: [5, 6] },
+        { kind: 'gun', pos: [17, 7] },
+        { kind: 'gun', pos: [2, 10] },
+        { kind: 'melee', pos: [5, 11] },
+        { kind: 'gun', pos: [9, 10] },
+        { kind: 'melee', pos: [13, 11] },
       ]
     },
     {
       title: '第三章 · 破晓',
       rows: [
-        '##############################',
-        '#............#..#............#',
-        '#..o.....o...#..#...o.....o..#',
-        '#............D..D............#',
-        '#............#..#............#',
-        '##############..##############',
-        '#............#X.#............#',
-        '#........o...#..#...o........#',
-        '#..o.........D..D.........o..#',
-        '#............#..#............#',
-        '##############..##############',
-        '#........o...#..#...o........#',
-        '#..o.........D.XD.........o..#',
-        '#............#..#............#',
-        '##############D###############',
-        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '##############################',
+        '########################',
+        '#......o#......#o......#',
+        '#.......D......D.......#',
+        '#o......#......#......o#',
+        '#########......#########',
+        '#.......#......#.......#',
+        '#......oD......Do......#',
+        '#o......#......#......o#',
+        '#########......#########',
+        '#.......#......#.......#',
+        '#......oD......Do......#',
+        '#o......#......#......o#',
+        '###########D############',
+        '#rrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrr#',
+        '########################',
       ],
       enemies: [
-        { kind: 'melee', pos: [5, 3] },
-        { kind: 'gun', pos: [9, 3] },
-        { kind: 'gun', pos: [21, 3] },
-        { kind: 'melee', pos: [25, 3] },
-        { kind: 'gun', pos: [5, 8] },
-        { kind: 'shotgun', pos: [9, 8] },
-        { kind: 'shotgun', pos: [21, 8] },
-        { kind: 'gun', pos: [25, 8] },
-        { kind: 'gun', pos: [5, 12] },
-        { kind: 'melee', pos: [9, 12] },
-        { kind: 'melee', pos: [21, 12] },
-        { kind: 'gun', pos: [25, 12] },
+        { kind: 'melee', pos: [2, 2] },
+        { kind: 'gun', pos: [6, 2] },
+        { kind: 'gun', pos: [2, 6] },
+        { kind: 'melee', pos: [6, 6] },
+        { kind: 'gun', pos: [2, 10] },
+        { kind: 'shotgun', pos: [6, 10] },
+        { kind: 'gun', pos: [17, 2] },
+        { kind: 'melee', pos: [21, 2] },
+        { kind: 'shotgun', pos: [17, 6] },
+        { kind: 'gun', pos: [21, 6] },
+        { kind: 'gun', pos: [17, 10] },
+        { kind: 'melee', pos: [21, 10] },
+        { kind: 'gun', pos: [11, 2] },
+        { kind: 'melee', pos: [12, 5] },
+        { kind: 'gun', pos: [10, 7] },
+        { kind: 'gun', pos: [12, 10] },
       ]
     },
     {
       title: '终章 · 炽线',
       rows: [
-        '##############################',
-        '#............................#',
-        '#............................#',
-        '#......####D######D####......#',
-        '#..o...#..............#...o..#',
-        '#......#..o..o....o...#......#',
-        '#......D.......X......D......#',
-        '#......#..o..o..X...o.#......#',
-        '#..o...#..............#...o..#',
-        '#......####D######D####......#',
-        '#............................#',
-        '#..o.........o...o........o..#',
-        '#............................#',
-        '#............................#',
-        '###############D##############',
-        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
-        '##############################',
+        '########################',
+        '#......................#',
+        '#.o..................o.#',
+        '#....###D######D###....#',
+        '#....#o..........o#....#',
+        '#....#....o..o....#....#',
+        '#....D...X........D....#',
+        '#....#........X...#....#',
+        '#....#o..........o#....#',
+        '#....###D######D###....#',
+        '#.o..................o.#',
+        '#......................#',
+        '###########D############',
+        '#rrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrr#',
+        '########################',
       ],
       enemies: [
-        { kind: 'shotgun', pos: [4, 2] },
-        { kind: 'gun', pos: [10, 2] },
-        { kind: 'gun', pos: [19, 2] },
-        { kind: 'shotgun', pos: [25, 2] },
+        { kind: 'shotgun', pos: [7, 5] },
+        { kind: 'melee', pos: [11, 4] },
+        { kind: 'gun', pos: [16, 5] },
         { kind: 'gun', pos: [9, 5] },
-        { kind: 'melee', pos: [12, 7] },
-        { kind: 'melee', pos: [17, 5] },
-        { kind: 'gun', pos: [20, 8] },
+        { kind: 'gun', pos: [13, 8] },
+        { kind: 'melee', pos: [15, 7] },
+        { kind: 'gun', pos: [7, 7] },
+        { kind: 'gun', pos: [11, 6] },
+        { kind: 'melee', pos: [3, 1] },
+        { kind: 'gun', pos: [10, 1] },
+        { kind: 'shotgun', pos: [20, 1] },
+        { kind: 'gun', pos: [2, 4] },
         { kind: 'melee', pos: [3, 6] },
-        { kind: 'gun', pos: [26, 6] },
-        { kind: 'gun', pos: [5, 12] },
-        { kind: 'shotgun', pos: [9, 12] },
-        { kind: 'melee', pos: [20, 12] },
-        { kind: 'gun', pos: [26, 12] },
+        { kind: 'gun', pos: [20, 4] },
+        { kind: 'gun', pos: [21, 6] },
+        { kind: 'melee', pos: [4, 10] },
+        { kind: 'gun', pos: [9, 11] },
+        { kind: 'shotgun', pos: [19, 10] },
       ]
     }
+
   ];
 
   const ENEMY_KIND = {
@@ -1875,6 +1889,8 @@
       // 扳机就绪标记：用完护甲板/医疗包切回枪后置 false，要求重新按一下开火键才恢复开火，
       // 避免"手指还按着"就误开火浪费子弹。
       armed: true,
+      // 空手出拳的前伸动画计时（>0 时拳头往前探）
+      punchT: 0,
       // 散弹枪逐发装填：shellReload > 0 表示正在塞当前这一发
       shellReload: 0,
       shellTotal: 0
@@ -2675,6 +2691,7 @@
     // 冷却
     if (p.cooldown > 0) p.cooldown -= dt;
     if (p.throwCd > 0) p.throwCd -= dt;
+    if (p.punchT > 0) p.punchT -= dt;   // 空手出拳的前伸动画
     // 换枪动画：倒计时，走完才恢复持枪状态
     if (p.swapT > 0) {
       p.swapT -= dt;
@@ -2795,10 +2812,10 @@
     } else if (p.grenadeHeld) {
       // 手持手雷：左键单击（fireTap）丢出，朝准心方向
       if (fireTap) throwGrenade();
-    } else if (p.weapon) {
-      // 按住（fireHeld）或单击（fireTap）都开枪。所有枪械（含手枪/霰弹枪这类半自动）
-      // 长按都会按各自 fireRate 持续射击——手机上"一直推着摇杆"就应持续开火，
-      // 射速仍由 p.cooldown（= fireRate）限制，不会过快。
+    } else {
+      // 有枪就开枪，空手就出拳：按住（fireHeld）或单击（fireTap）都触发。
+      // 所有枪械（含手枪/霰弹枪这类半自动）长按都会按各自 fireRate 持续射击 ——
+      // 手机上"一直推着摇杆"就应持续开火，射速仍由 p.cooldown（= fireRate）限制。
       //
       // 扳机就绪（armed）：用完护甲板/医疗包切回枪后 armed=false，此时"手指还按着"
       // （fireHeld 恒真）不该再开枪；必须重新按一下（fireTap 上升沿）才重新武装并开火，
@@ -3139,10 +3156,12 @@
     const p = G.player;
     if (p.reload > 0) return;         // 换弹动画没走完，扳机扣不动
     if (p.swapT > 0) return;          // 换枪动画没走完，同样扣不动
-    const def = WEAPONS[p.weapon];
+    // 空手 = 拳头（FIST），枪扔了也能贴脸打
+    const def = p.weapon ? WEAPONS[p.weapon] : FIST;
     if (def.melee) {
       p.cooldown = def.fireRate;
       Sfx.play(def.sound);
+      if (!p.weapon) p.punchT = PUNCH_TIME;   // 只做出拳前伸动画
       meleeSwing(p, def, true);
       return;
     }
@@ -5120,6 +5139,11 @@
     // 只盖住握把/护木，不糊住枪管 —— 手一旦扣在枪管上，整把枪就看不见了。
     const hands = [];
     const grip = (!holding && held) ? GRIP[held] : null;
+    // 空手出拳：两只手一起往前探（sin 曲线 —— 起手收、中段最远、收势回原位）
+    let punchOut = 0;
+    if (isPlayer && !held && a.punchT > 0) {
+      punchOut = Math.sin(clamp(1 - a.punchT / PUNCH_TIME, 0, 1) * Math.PI) * 7;
+    }
     if (grip) {
       // 后坐时手跟着枪一起往回缩，不然会看到"枪缩了、手还伸着"；换弹内收同理
       const back = gunShift - kick * 0.5 - pull;
@@ -5135,7 +5159,7 @@
       }
     } else {
       const arc = holding ? HAND_ARC * 0.62 : HAND_ARC;
-      const reach = holding ? HAND_REACH * 1.12 : HAND_REACH;
+      const reach = (holding ? HAND_REACH * 1.12 : HAND_REACH) + punchOut;
       const hr = holding ? HAND_R * 0.9 : HAND_R;
       for (const s of [-1, 1]) {
         hands.push({ x: Math.cos(s * arc) * reach, y: Math.sin(s * arc) * reach, r: hr, da: 0 });
@@ -5181,38 +5205,6 @@
       const ey = Math.sin(ea) * HEAD_R * 0.6;
       dot(ex + Math.cos(ang) * 0.3, ey + Math.sin(ang) * 0.3, 1.05, '#1a141e');
       dot(ex - Math.cos(ang) * 0.7, ey - Math.sin(ang) * 0.7 - 0.4, 0.36, '#fcfaf4');
-    }
-
-    // 开枪前摇：举枪瞄准的这段时间里，头顶一条红色进度弧 + 一条指向玩家的虚线，
-    // 一眼看出"谁要打你、还差多久"——能抢在开火前闪开或先手打死他。
-    if (!isPlayer && a.alive && a.wind > 0) {
-      const K2 = ENEMY_KIND[a.kind];
-      const prog = clamp(a.wind / ((K2 && enemyWindup(K2)) || 1), 0, 1);
-      const pp = G.player;
-      if (K2 && K2.aimErr > 0 && pp && pp.alive) {
-        const dx = pp.x - a.x, dy = pp.y - a.y;
-        const dl = Math.hypot(dx, dy) || 1;
-        ctx.save();
-        ctx.globalAlpha = 0.12 + prog * 0.45;
-        ctx.strokeStyle = '#ff4a4a';
-        ctx.lineWidth = 0.9;
-        ctx.setLineDash([4, 6]);
-        ctx.beginPath();
-        ctx.moveTo(dx / dl * 10, dy / dl * 10);
-        ctx.lineTo(dx, dy);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.save();
-      ctx.lineWidth = 2.4;
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.beginPath(); ctx.arc(0, 0, 11, 0, 6.283); ctx.stroke();
-      ctx.lineWidth = 1.8;
-      ctx.strokeStyle = prog > 0.72 ? '#ff3b3b' : '#ffcf5a';
-      ctx.beginPath();
-      ctx.arc(0, 0, 11, -Math.PI / 2, -Math.PI / 2 + 6.283 * prog);
-      ctx.stroke();
-      ctx.restore();
     }
 
     // 警觉标记：敌人头顶常驻图标，一眼看出状态。
@@ -5786,12 +5778,20 @@
         ctx.fillText(txt, bx + 60, by);
       }
     } else {
-      // 空手：一个空心圆圈，表示没家伙了（去捡或去扔）
-      ctx.strokeStyle = 'rgba(200,200,208,0.45)';
+      // 空手：画一个拳头 —— 还能打，只是得贴脸
+      const fx = bx + 28, fy = by - 12;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(214,214,222,0.8)';
+      ctx.fillStyle = 'rgba(214,214,222,0.12)';
       ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(bx + 28, by - 12, 11, 0, Math.PI * 2);
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(fx - 9, fy - 7, 18, 14, 4); }
+      else { ctx.beginPath(); ctx.rect(fx - 9, fy - 7, 18, 14); }
+      ctx.fill();
       ctx.stroke();
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) { ctx.moveTo(fx + i * 5, fy - 7); ctx.lineTo(fx + i * 5, fy - 2); }
+      ctx.stroke();
+      ctx.restore();
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
@@ -7619,7 +7619,7 @@
     },
     /** 当前画面缩放（瞄准会升高） */
     get zoom() { return camZoom(); },
-    attack() { if (G.player && G.player.weapon) playerAttack(); },
+    attack() { if (G.player) playerAttack(); },
     pickup() { tryPickup(true); },
     reload() { return startReload(); },
     swap() { return swapWeapon(); },

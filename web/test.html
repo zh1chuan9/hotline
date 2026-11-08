@@ -1419,6 +1419,64 @@
     }
     check('各关敌人生成后不贴门（' + ecnt + ' 人，最近 ' + minDoor.toFixed(0) + 'px > 20）', minDoor > 20);
 
+    // ============ 30.4 地图：更小 / 房间更多 / 敌人更多 ============
+    const lvls = H.storyLevels;
+    let fitSize = true, rectOk = true, minDoors = 99, minEnemies = 99, totalDoors = 0;
+    for (const lv of lvls) {
+      if (lv.rows.length > 16 || lv.rows[0].length > 24) fitSize = false;
+      for (const r of lv.rows) if (r.length !== 24) rectOk = false;
+      const doors = lv.rows.join('').split('D').length - 1;
+      totalDoors += doors;
+      minDoors = Math.min(minDoors, doors);
+      minEnemies = Math.min(minEnemies, lv.enemies.length);
+    }
+    check('地图缩小到 ' + lvls[0].rows[0].length + '×' + lvls[0].rows.length + '（原 30×18）', fitSize);
+    check('每行都是 24 列（墙面严格对齐）', rectOk);
+    check('每关至少 6 扇门/房间隔断（最少 ' + minDoors + ' 扇，四关共 ' + totalDoors + '）', minDoors >= 6);
+    check('每关敌人更多（最少 ' + minEnemies + ' 人）', minEnemies >= 8);
+
+    // ============ 30.5 空手拳头 ============
+    H.startGame({ mode: 'story' });
+    const w6 = H.world, g6 = H.g;
+    g6.player.weapon = null;
+    g6.player.ammo = 0;
+    g6.player.cooldown = 0;
+    g6.player.facing = { x: 1, y: 0 };
+    const tgt = w6.enemies[0];
+    tgt.alive = true;
+    tgt.x = g6.player.x + 16;
+    tgt.y = g6.player.y;
+    H.aim(40, 0);
+    H.attack();
+    check('空手出拳能打倒贴脸的敌人（alive=' + tgt.alive + '）', tgt.alive === false);
+
+    H.startGame({ mode: 'story' });
+    const w6b = H.world, g6b = H.g;
+    g6b.player.weapon = null;
+    g6b.player.facing = { x: 1, y: 0 };
+    g6b.player.cooldown = 0;
+    const tgt2 = w6b.enemies[0];
+    tgt2.alive = true;
+    tgt2.x = g6b.player.x + 70;      // 拳头够不着（reach 24 + 10）
+    tgt2.y = g6b.player.y;
+    H.attack();
+    check('拳头够不着远处（70px 外没打到）', tgt2.alive === true);
+
+    H.startGame({ mode: 'challenge' });
+    const w6c = H.world, g6c = H.g;
+    g6c.player.weapon = null;
+    g6c.player.facing = { x: 1, y: 0 };
+    g6c.player.cooldown = 0;
+    const tgt3 = w6c.enemies[0];
+    if (tgt3) {
+      const hp0 = tgt3.hp;
+      tgt3.x = g6c.player.x + 16;
+      tgt3.y = g6c.player.y;
+      H.attack();
+      check('挑战模式拳头有伤害（' + hp0 + ' → ' + tgt3.hp + '）', tgt3.hp < hp0);
+    }
+
+
 
     // 挑战模式回归：仍走波次
     H.startGame({ mode: 'challenge' });
