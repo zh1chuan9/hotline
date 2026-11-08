@@ -1962,7 +1962,7 @@
           const vDoor = (y > 0 && rows[y - 1][x] === '#') || (y + 1 < h && rows[y + 1][x] === '#');
           world.doors.push({
             x: cx, y: cy, open: false, broken: false, flying: false, t: 0,
-            dir: vDoor ? 'v' : 'h'
+            dir: vDoor ? 'v' : 'h', swing: 1   // swing=开门摆向：+1 朝正法线开、-1 朝负法线开
           });
         }
         else if (ch === 'o') {
@@ -2290,16 +2290,26 @@
     for (const d of W.doors) {
       if (d.open || d.broken || d.flying) continue;
       if (dist2(e.x, e.y, d.x, d.y) < 34 * 34) {
-        openDoor(d);
+        openDoor(d, e.x, e.y);
       }
     }
   }
 
-  /** 门弹开（绕铰链打开，迈阿密式破门）。子弹（手枪/冲锋枪）命中、敌人推门都用这个。 */
-  function openDoor(d) {
+  /** 门从哪边推就从哪边（对面）打开：算开门摆向 swing。
+   *  横墙门（沿 x）：推门者在门上方(y更小) → 朝下(+y)开 = +1；在下方 → 朝上开 = -1。
+   *  纵墙门（沿 y）：推门者在门左侧(x更小) → 朝右(+x)开 = +1；在右侧 → 朝左开 = -1。 */
+  function doorSwing(d, fromX, fromY) {
+    if (d.dir === 'v') return fromX < d.x ? 1 : -1;
+    return fromY < d.y ? 1 : -1;
+  }
+
+  /** 门弹开（绕铰链打开，迈阿密式破门）。子弹（手枪/冲锋枪）命中、敌人推门都用这个。
+   *  fromX/fromY 是推门者/子弹来的方向，决定门从哪一面打开。 */
+  function openDoor(d, fromX, fromY) {
     if (!d || d.open || d.broken || d.flying) return;
     d.open = true;
     d.t = 0;
+    d.swing = doorSwing(d, fromX, fromY);
     W._solidDirty = true;
     Sfx.play('door');
   }
@@ -2345,11 +2355,13 @@
     emitNoise(d.x, d.y, 320);
   }
 
-  /** 玩家射击破门：迈阿密式突入。普通子弹把门弹开（带摆动开门动画）、飞出木屑、惊动门后敌人。 */
+  /** 玩家射击破门：迈阿密式突入。普通子弹把门弹开（带摆动开门动画）、飞出木屑、惊动门后敌人。
+   *  hitPos 是子弹命中点，用来定木屑位置和门的打开方向（子弹从哪边打、门就从哪边开）。 */
   function breakDoor(d, hitPos) {
     if (!d || d.open || d.broken || d.flying) return;
     d.open = true;
     d.t = 0;
+    d.swing = doorSwing(d, hitPos.x, hitPos.y);
     W._solidDirty = true;
     Sfx.play('door');
     // 门后敌人被惊动：破门那一瞬间，门后房间里的敌人都知道玩家来了
@@ -6007,30 +6019,47 @@
       if (d.broken || d.flying) continue;
       ctx.save();
       ctx.translate(d.x, d.y);
-      // 门 = 一条厚线（跟墙同厚），关闭时平贴在墙里；打开时绕铰链转到 90°（与墙垂直）。
+      // 门 = 一条亮棕色的厚线，两端各一把金色门把手。关闭时平贴在墙里；
+      // 打开时绕铰链转到 90°（与墙垂直），摆向由 d.swing 决定（从哪边推就从哪边开）。
       const openA = d.open ? clamp(d.t * 6, 0, 1) * (Math.PI / 2) : 0;
+      const sw = d.swing > 0 ? 1 : -1;
       if (d.dir === 'v') {
-        // 纵墙门：关闭时是竖线，铰链在上端，打开绕上端转到水平
-        ctx.translate(0, -TILE / 2);
-        ctx.rotate(openA);
-        // 门板线：从铰链向下延伸 TILE 长（宽 th）
-        ctx.fillStyle = '#4a4a52';
-        ctx.fillRect(-th / 2, 0, th, TILE);
-        ctx.fillStyle = '#5d5d66';
-        ctx.fillRect(-th / 2, 0, th / 2, TILE);   // 一侧受光，让厚线有体积
-        // 红色门把手（末端，远离铰链）
-        ctx.fillStyle = '#c82828';
-        ctx.fillRect(-th / 2, TILE - 5, th, 3);
+        // 纵墙门：关闭时是竖线。swing>0 铰链在上端、门朝右(+x)开；swing<0 铰链在下端、门朝左(-x)开。
+        ctx.translate(0, sw > 0 ? -TILE / 2 : TILE / 2);
+        ctx.rotate(sw * openA);
+        ctx.fillStyle = '#8a5420';
+        ctx.fillRect(-th / 2, sw > 0 ? 0 : -TILE, th, TILE);
+        ctx.fillStyle = '#a56a2e';                                  // 受光面（亮棕）
+        ctx.fillRect(-th / 2 + th * 0.5, sw > 0 ? 0 : -TILE, th * 0.5, TILE);
+        // 两把金色门把手：门板两端（铰链端 + 末端），圆形金块 + 高光，突出可见
+        const ky1 = sw > 0 ? TILE * 0.18 : -TILE + TILE * 0.18;
+        const ky2 = sw > 0 ? TILE * 0.68 : -TILE + TILE * 0.68;
+        for (const ky of [ky1, ky2]) {
+          ctx.fillStyle = '#6b4e10';                                 // 暗金描边
+          ctx.beginPath(); ctx.arc(0, ky + 2, 3.2, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#e8b923';                                 // 金色
+          ctx.beginPath(); ctx.arc(0, ky + 2, 2.4, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#fff2b0';                                 // 高光
+          ctx.beginPath(); ctx.arc(-0.7, ky + 1.2, 1.0, 0, 6.283); ctx.fill();
+        }
       } else {
-        // 横墙门：关闭时是横线，铰链在左端，打开绕左端转到竖直
-        ctx.translate(-TILE / 2, 0);
-        ctx.rotate(openA);
-        ctx.fillStyle = '#4a4a52';
-        ctx.fillRect(0, -th / 2, TILE, th);
-        ctx.fillStyle = '#5d5d66';
-        ctx.fillRect(0, -th / 2, TILE, th / 2);
-        ctx.fillStyle = '#c82828';
-        ctx.fillRect(TILE - 5, -th / 2, 3, th);
+        // 横墙门：关闭时是横线。swing>0 铰链在左端、门朝下(+y)开；swing<0 铰链在右端、门朝上(-y)开。
+        ctx.translate(sw > 0 ? -TILE / 2 : TILE / 2, 0);
+        ctx.rotate(sw * openA);
+        ctx.fillStyle = '#8a5420';
+        ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th);
+        ctx.fillStyle = '#a56a2e';
+        ctx.fillRect(sw > 0 ? 0 : -TILE, -th / 2, TILE, th * 0.5);
+        const kx1 = sw > 0 ? TILE * 0.18 : -TILE + TILE * 0.18;
+        const kx2 = sw > 0 ? TILE * 0.68 : -TILE + TILE * 0.68;
+        for (const kx of [kx1, kx2]) {
+          ctx.fillStyle = '#6b4e10';
+          ctx.beginPath(); ctx.arc(kx + 2, 0, 3.2, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#e8b923';
+          ctx.beginPath(); ctx.arc(kx + 2, 0, 2.4, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#fff2b0';
+          ctx.beginPath(); ctx.arc(kx + 1.2, -0.7, 1.0, 0, 6.283); ctx.fill();
+        }
       }
       ctx.restore();
     }

@@ -1316,6 +1316,15 @@
       H.breakDoor(d0);
       check('子弹破门后门打开（open=' + d0.open + '）', d0.open === true && !d0.broken);
       check('破门后门不再挡路（_solidDirty 置位）', wSt._solidDirty === true);
+      // 开门方向：从哪边推就从哪边开（swing 由推门者方向决定）
+      const sw0 = doors[0];
+      sw0.open = false; sw0.broken = false; sw0.flying = false;
+      H.breakDoor(sw0, { x: sw0.x, y: sw0.y - 30 });   // 从上方（法线负侧）打门 → swing=+1
+      const swUp = sw0.swing;
+      sw0.open = false; sw0.broken = false; sw0.flying = false;
+      H.breakDoor(sw0, { x: sw0.x, y: sw0.y + 30 });   // 从下方（法线正侧）打门 → swing=-1
+      const swDn = sw0.swing;
+      check('门从哪边推就从哪边开（上方打 swing=' + swUp + '、下方打 swing=' + swDn + '）', swUp !== swDn && Math.abs(swUp) === 1 && Math.abs(swDn) === 1);
       // 近战打碎：门直接碎掉（broken 置位）
       const d1 = doors[1];
       H.shatterDoor(d1, { x: d1.x, y: d1.y });
