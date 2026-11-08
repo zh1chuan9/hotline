@@ -1667,6 +1667,28 @@
     check('挑战模式回归（mode=' + H.g.mode + '）', H.g.mode === 'challenge');
     check('挑战模式有刷怪点（' + H.world.spawnPoints.length + '）', H.world.spawnPoints.length >= 4);
 
+    // ============ 24. 点「剧情模式 / 挑战模式」不会自动开一枪 ============
+    // 点按钮那一下左键往往还按着（mousedown 会把 mouse.down 置 true），
+    // 旧代码进战斗第一帧就当成"按住扳机"，一发打出去（ammo 8→7）。
+    H.goTitle();
+    H.holdFire(true);                 // 模拟按钮按下还没松开
+    H.tap(320, 188);                  // 标题页「剧情模式」按钮中心
+    const gTp = H.g, pTp = gTp.player;
+    const ammoTp = pTp ? pTp.ammo : -1;
+    H.step(3);
+    check('点「剧情模式」不会自动开一枪（mode=' + gTp.mode + '，ammo ' + ammoTp + '→' + pTp.ammo + '）',
+      gTp.mode === 'story' && pTp.ammo === ammoTp);
+    H.holdFire(false);
+    H.goTitle();
+    H.holdFire(true);
+    H.tap(320, 236);                  // 「挑战模式」按钮中心
+    const gTc = H.g, pTc = gTc.player;
+    const ammoTc = pTc ? pTc.ammo : -1;
+    H.step(3);
+    check('点「挑战模式」不会自动开一枪（mode=' + gTc.mode + '，ammo ' + ammoTc + '→' + pTc.ammo + '）',
+      gTc.mode === 'challenge' && pTc.ammo === ammoTc);
+    H.holdFire(false);
+
     report();
   }
 

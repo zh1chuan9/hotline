@@ -1055,8 +1055,13 @@
       beginLayoutDrag();
       return;
     }
-    if (e.button === 0) mouse.down = true;
-    if (e.button === 2) { mouse.right = true; e.preventDefault(); }   // 右键 = 抬枪瞄准
+    // 只在"真在战斗"的时候才把按键记成"按住了扳机/抬枪"。
+    // 标题页/结算页/商店/暂停菜单上按下的左键，松开之前游戏可能已经切回 play，
+    // 这时 mouse.down 还是 true，进战斗第一帧就会被当成"按住不放"打出一枪
+    // ——点「剧情模式」「挑战模式」「继续游戏」都中招过。
+    const inPlay = !!G && G.state === 'play' && !G.paused;
+    if (e.button === 0) mouse.down = inPlay;
+    if (e.button === 2) { mouse.right = inPlay; e.preventDefault(); }   // 右键 = 抬枪瞄准
     // 菜单按钮统一走 click 事件（桌面鼠标与移动 tap 都可靠触发），这里不再调 onPointerDown。
   });
   window.addEventListener('mouseup', (e) => {
@@ -4153,6 +4158,7 @@
   function closeUpgrade() {
     G.state = 'play';
     pressed = Object.create(null);
+    resetFireInput();                 // 点「退出」的那一下左键别带进战斗
   }
 
   /** 升级站底部「购买」「退出」按钮布局，供绘制与点击复用。 */
@@ -4473,10 +4479,19 @@
     }
   }
 
+  /** 开局那一下鼠标：点按钮时按下的左键（以及可能记下的 fireTap）不能带进战斗。 */
+  function resetFireInput() {
+    mouse.down = false;
+    mouse.right = false;
+    if (G) G.fireTap = false;
+  }
+
   function startGame(opts) {
     // opts.mode: 'challenge'（默认，无限波次生存）| 'story'（剧情模式，逐关推进）
     // opts.prep: false 时跳过开局准备期（测试/调试用）
     const mode = (opts && opts.mode) || 'challenge';
+    // 点「剧情模式 / 挑战模式」的那一下左键此刻可能还按着，不清掉进战斗第一帧就打出一枪
+    resetFireInput();
     const withPrep = !(opts && opts.prep === false);
     // 剧情关序号（调试/测试用，默认第 0 关）
     const lvl = (mode === 'story' && opts && opts.storyLevel)
@@ -4635,6 +4650,7 @@
     G.storyComboBest = 0;
     G.storyHits = 0;
     G.storyStartT = performance.now();
+    resetFireInput();                 // 点「下一关」的那一下左键别带进新关卡
     const lv = STORY_LEVELS[next];
     W = buildLevel(next, lv);
     G.levelIndex = next;
@@ -4670,6 +4686,7 @@
     G.storyComboBest = 0;
     G.storyHits = 0;
     G.storyStartT = performance.now();
+    resetFireInput();                 // 点「重来」的那一下左键别带进新开局
     const lv = STORY_LEVELS[idx];
     W = buildLevel(idx, lv);
     G.player.x = W.spawn.x;
@@ -4777,7 +4794,7 @@
       const ry = VIEW_H / 2 + 34; // 返回主菜单按钮中心
       const bx = VIEW_W / 2 - 80, bw = 160, bh = 28;
       const inBox = (y) => mouse.x >= bx && mouse.x <= bx + bw && mouse.y >= y - 14 && mouse.y <= y - 14 + bh;
-      if (inBox(cy)) G.paused = false;
+      if (inBox(cy)) { G.paused = false; resetFireInput(); }   // 点「继续游戏」别顺手打一枪
       else if (inBox(sy)) openSettings('pause');
       else if (inBox(ry)) goTitle();
       return;
@@ -7768,6 +7785,7 @@
     G.slotState = null;
     // 同上：关店的按键不能留到下一帧，否则下一帧又把它当成"开商店"
     pressed = Object.create(null);
+    resetFireInput();                 // 点「退出」的那一下左键别带进战斗
   }
 
   // ---------------------------------------------------------------- 启动
@@ -7866,7 +7884,7 @@
       // 否则标题/结算页点「开始游戏/下一关」按钮的 mousedown 会残留 fireTap，
       // 进战斗后第一帧被消费而误开一枪。
       canvas.addEventListener('mousedown', (e) => {
-        if (e.button === 0 && G.state === 'play') G.fireTap = true;
+        if (e.button === 0 && G.state === 'play' && !G.paused) G.fireTap = true;
       });
       // ?autostart=1 直接进第一波，方便截图和自动化测试；?prep=1 保留开局 30 秒准备期
       // ?story=1 直接进剧情模式第一关（截图/调试用）
