@@ -1307,15 +1307,25 @@
       storyEnemies.every(e => e.state === 'idle' || e.state === 'patrol' || e.state === 'investigate'));
     check('剧情敌人开局未设 hunt 标记', storyEnemies.every(e => !e.hunt));
 
-    // 门机制：房间布局有门、门初始关闭、破门后打开
+    // 门机制：房间布局有门、门初始关闭、四种破坏方式（子弹打开/近战打碎/霰弹打碎/撞倒）
     const doors = wSt.doors || [];
     check('剧情第一关有门（' + doors.length + ' 扇）', doors.length >= 3);
     check('门初始全部关闭', doors.every(d => !d.open));
     if (doors.length) {
       const d0 = doors[0];
       H.breakDoor(d0);
-      check('破门后门打开', d0.open === true);
+      check('子弹破门后门打开（open=' + d0.open + '）', d0.open === true && !d0.broken);
       check('破门后门不再挡路（_solidDirty 置位）', wSt._solidDirty === true);
+      // 近战打碎：门直接碎掉（broken 置位）
+      const d1 = doors[1];
+      H.shatterDoor(d1, { x: d1.x, y: d1.y });
+      check('近战打碎门（broken=' + d1.broken + '）', d1.broken === true && d1.open === true);
+      // 撞倒：门板飞出，进入 flyingDoors
+      const d2 = doors[2];
+      const flyBefore = H.flyingDoors.length;
+      H.knockDoor(d2, 1, 0);
+      check('撞倒门（flying=' + d2.flying + '）', d2.flying === true && d2.open === true);
+      check('撞倒后门板进入飞行队列（' + flyBefore + ' → ' + H.flyingDoors.length + '）', H.flyingDoors.length === flyBefore + 1);
     }
 
     // 制造近距离噪声 → 直接惊动追击（chase）
@@ -1330,6 +1340,19 @@
       e1.state = 'idle';                       // 重置回放松
       H.noise(e1.x + 300, e1.y, 700);          // 声源在远处（300px：只进了传播半径，够不上"贴脸"阈值）
       check('远距离噪声让敌人怀疑（state=' + e1.state + '，应 investigate）', e1.state === 'investigate');
+    }
+
+    // 门撞死门后敌人：独立造一个敌人摆在门板飞行路径上，撞倒门后 step 推进验证撞死
+    if (doors.length) {
+      const dK = doors[0];
+      dK.open = false; dK.broken = false; dK.flying = false;   // 重置（前面测试可能已经动过这扇门）
+      // 第一关的门都是横墙门（dir='h'），门板沿法线（y 方向）飞出不会撞墙
+      const victim = H.makeEnemy('gun', dK.x, dK.y + 30);
+      victim.hp = victim.maxHp = 1000;   // 拉高血量，确保只有门板那一击能打死
+      wSt.enemies.push(victim);
+      H.knockDoor(dK, 0, 1);
+      H.step(30);   // 门板 260px/s × 0.5s，足够飞过 30px 撞上敌人
+      check('门板撞死门后敌人（alive=' + victim.alive + '）', victim.alive === false);
     }
 
     // 终点机制：剧情关卡有出口、清场后走到终点才结算
@@ -1377,13 +1400,13 @@
     H.startGame({ mode: 'story' });
     const w3 = H.world, g3 = H.g;
 
-    // 撞门：玩家不靠子弹也能把门推开/撞开（否则子弹打光就进不了楼）
+    // 撞门：玩家不靠子弹也能用身体把门撞倒（否则子弹打光就进不了楼）
     const dEnt = w3.doors[0];
     if (dEnt) {
       g3.player.x = dEnt.x;
       g3.player.y = dEnt.y + 16;
       H.step(1);
-      check('玩家走到门口会自动撞开门（open=' + dEnt.open + '）', dEnt.open === true);
+      check('玩家走到门口会把门撞倒（flying=' + dEnt.flying + '）', dEnt.flying === true && dEnt.open === true);
     }
 
     const pkBefore = w3.pickups.length;

@@ -9,8 +9,22 @@
   // ---------------------------------------------------------------- 常量
   const VIEW_W = 640, VIEW_H = 360, ZOOM = 2;
   const TILE = 24;
+  // 墙体厚度：墙砖贴图/碰撞矩形都从整格 TILE 收窄到这条，室内走廊显得更宽。
+  // 横向墙瘦高度、纵向墙瘦宽度，统一居中（每侧留 (TILE-WALL_THICK)/2 的地板边）。
+  const WALL_THICK = 18;
   const PLAYER_SPEED = 134;
   const ACTOR_R = 8;
+
+  // ---------------------------------------------------------------- 门
+  // 门有四种被破坏的方式（迈阿密式突入）：
+  //   撞倒：玩家身体直接撞上门 → 门板脱离铰链、沿玩家方向飞出去，飞行途中撞到敌人会撞死
+  //   近战：挥砍命中 → 门被打碎（木屑）
+  //   子弹（手枪/冲锋枪）：命中 → 门弹开（绕铰链打开）
+  //   霰弹：命中 → 门直接打碎
+  const DOOR_FLY_SPEED = 260;   // 撞倒的门板初速
+  const DOOR_FLY_DMG = 200;     // 门板撞人的伤害（普通敌人一击必杀）
+  const DOOR_FLY_RANGE = 150;   // 门板飞行距离（超出即落地）
+  const DOOR_FLY_LIFE = 0.6;    // 门板落地后残留时间（淡出）
 
   // ---------------------------------------------------------------- 瞄准（ADS）
   // 按住右键抬枪：散射收紧、准心收拢、**画面拉远**（视野反而比腰射大）+ 相机顺着
@@ -1891,6 +1905,7 @@
       covers: [],       // 掩体（木箱），碰撞上算墙，渲染单独一层
       barrels: [],      // 油桶：同样算墙，但能被子弹打爆
       doors: [],
+      flyingDoors: [],  // 撞倒后飞出去的门板（飞行中会撞死门后敌人）
       pickups: [],
       thrown: [],       // 飞行中的投掷武器（剧情模式把枪扔出去砸人）
       enemies: [],
@@ -1910,14 +1925,28 @@
     world.decals.width = world.pxW;
     world.decals.height = world.pxH;
 
-    // 墙：按行合并连续格子
+    // 墙：按行合并连续格子，再按"横墙/纵墙"方向收窄。
+    // 横向连续一段（长度>1）是横墙 → 瘦高度；单格且上下有墙是纵墙 → 瘦宽度；
+    // 单格孤立墙默认按横墙瘦高。矩形上挂 dir('h'/'v') 给渲染区分方向。
+    const inset = (TILE - WALL_THICK) / 2;
     for (let y = 0; y < h; y++) {
       let start = -1;
       for (let x = 0; x <= w; x++) {
         const isWall = x < w && rows[y][x] === '#';
         if (isWall && start < 0) start = x;
         if (!isWall && start >= 0) {
-          world.walls.push({ x: start * TILE, y: y * TILE, w: (x - start) * TILE, h: TILE });
+          const len = x - start;
+          const rc = { x: start * TILE, y: y * TILE, w: len * TILE, h: TILE, dir: 'h' };
+          // 纵墙判定：单格，且上下至少有一格也是墙（说明它是一列竖墙的一节）
+          const vertical = len === 1 &&
+            ((y > 0 && rows[y - 1][start] === '#') || (y + 1 < h && rows[y + 1][start] === '#'));
+          if (vertical) {
+            rc.dir = 'v';
+            rc.x += inset; rc.w = WALL_THICK;
+          } else {
+            rc.y += inset; rc.h = WALL_THICK;
+          }
+          world.walls.push(rc);
           start = -1;
         }
       }
@@ -1928,7 +1957,14 @@
         const ch = rows[y][x];
         const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
         if (ch === 'P') { world.spawn.x = cx; world.spawn.y = cy; }
-        else if (ch === 'D') world.doors.push({ x: cx, y: cy, open: false, t: 0 });
+        else if (ch === 'D') {
+          // 门的方向跟它所在的墙一致：左右是墙 → 横墙门（瘦高）；上下是墙 → 纵墙门（瘦宽）
+          const vDoor = (y > 0 && rows[y - 1][x] === '#') || (y + 1 < h && rows[y + 1][x] === '#');
+          world.doors.push({
+            x: cx, y: cy, open: false, broken: false, flying: false, t: 0,
+            dir: vDoor ? 'v' : 'h'
+          });
+        }
         else if (ch === 'o') {
           // 掩体：挡人、挡子弹、挡视线，但是木箱不是墙，渲染另画
           const rc = { x: x * TILE, y: y * TILE, w: TILE, h: TILE };
@@ -1988,6 +2024,7 @@
       bob: Math.random() * 6.28,
       deadT: 0,
       deathDir: 0,
+      deathVel: null,   // 死亡冲击速度：被门板撞死等场合，尸体沿冲击方向飞出一段
       // 断肢标记：gibbed = 头被打飞（尸体连头都不画）；dismember = 两只胳膊都被砍飞；
       // dismTop / dismBottom = 只砍飞上面那只手 / 下面那只手（单独左/右手）
       gibbed: false,
@@ -2032,7 +2069,14 @@
     if (!world._solidDirty) return world._solid;
     const out = world.walls.slice();
     for (const d of world.doors) {
-      if (!d.open) out.push({ x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, door: d });
+      if (d.open || d.broken || d.flying) continue;
+      const inset = (TILE - WALL_THICK) / 2;
+      // 门碰撞矩形跟着墙的方向收窄（横墙门瘦高、纵墙门瘦宽），与墙体对齐
+      const rc = d.dir === 'v'
+        ? { x: d.x - TILE / 2 + inset, y: d.y - TILE / 2, w: WALL_THICK, h: TILE }
+        : { x: d.x - TILE / 2, y: d.y - TILE / 2 + inset, w: TILE, h: WALL_THICK };
+      rc.door = d;
+      out.push(rc);
     }
     world._solid = out;
     world._solidDirty = false;
@@ -2244,20 +2288,66 @@
   /** 追击时把挡路的门推开——不然敌人会一直对着门撞。 */
   function pushDoor(e) {
     for (const d of W.doors) {
-      if (d.open) continue;
+      if (d.open || d.broken || d.flying) continue;
       if (dist2(e.x, e.y, d.x, d.y) < 34 * 34) {
-        d.open = true;
-        d.t = 0;
-        W._solidDirty = true;
-        Sfx.play('door');
+        openDoor(d);
       }
     }
   }
 
-  /** 玩家射击破门：迈阿密式突入。门瞬间弹开（带一个摆动的开门动画）、飞出木屑、
-   *  并发出噪音惊动门后房间里的敌人——破门后敌人会涌向门口。 */
+  /** 门弹开（绕铰链打开，迈阿密式破门）。子弹（手枪/冲锋枪）命中、敌人推门都用这个。 */
+  function openDoor(d) {
+    if (!d || d.open || d.broken || d.flying) return;
+    d.open = true;
+    d.t = 0;
+    W._solidDirty = true;
+    Sfx.play('door');
+  }
+
+  /** 门被打碎（近战/霰弹）：整扇门碎成木屑，直接消失，不再挡路。 */
+  function shatterDoor(d, hitPos) {
+    if (!d || d.broken || d.flying) return;
+    d.broken = true;
+    d.open = true;
+    d.t = 0;
+    W._solidDirty = true;
+    Sfx.play('door');
+    // 碎门木屑：一大团飞散的浅色木片，比"弹开"的粒子更碎、更多
+    const px = hitPos ? hitPos.x : d.x, py = hitPos ? hitPos.y : d.y;
+    FX.addParticles(px, py, 18, '#a8a08a', 210, 0.4);
+    FX.addParticles(px, py, 12, '#c8c8d0', 160, 0.32);
+    FX.addParticles(px, py, 6, '#7a6a52', 120, 0.28);
+    FX.kick(3.5, 0.15);
+    // 碎门也惊动门后敌人
+    emitNoise(d.x, d.y, 320);
+  }
+
+  /** 门被撞倒：门板脱离铰链、沿撞击方向飞出去，飞行中撞到敌人就撞死。
+   *  dirX/dirY 是门板飞行的方向（玩家撞门时的移动方向）。 */
+  function knockDoor(d, dirX, dirY) {
+    if (!d || d.open || d.broken || d.flying) return;
+    const dl = Math.hypot(dirX, dirY);
+    const nx = dl > 0.001 ? dirX / dl : 1, ny = dl > 0.001 ? dirY / dl : 0;
+    d.flying = true;
+    d.open = true;
+    d.t = 0;
+    W._solidDirty = true;
+    W.flyingDoors.push({
+      door: d,
+      x: d.x, y: d.y,
+      sx: d.x, sy: d.y,
+      vx: nx * DOOR_FLY_SPEED, vy: ny * DOOR_FLY_SPEED,
+      rot: 0, rotV: (Math.random() < 0.5 ? -1 : 1) * (9 + Math.random() * 5),
+      dist: 0, life: DOOR_FLY_LIFE, hit: false
+    });
+    Sfx.play('door');
+    FX.kick(5, 0.18);
+    emitNoise(d.x, d.y, 320);
+  }
+
+  /** 玩家射击破门：迈阿密式突入。普通子弹把门弹开（带摆动开门动画）、飞出木屑、惊动门后敌人。 */
   function breakDoor(d, hitPos) {
-    if (!d || d.open) return;
+    if (!d || d.open || d.broken || d.flying) return;
     d.open = true;
     d.t = 0;
     W._solidDirty = true;
@@ -3065,9 +3155,14 @@
       FX.hitstop = headshot ? 0.08 : 0.05;
       FX.kick(headshot ? 5.5 : 3.5, 0.14);
     } else if (hitDoor) {
-      // 打在门上：玩家射击可破门突入（迈阿密式），敌人不主动破门（他们撞门会自动推开）
+      // 打在门上：玩家射击破门（迈阿密式），敌人不主动破门（他们撞门会自动推开）
       if (shooter === G.player) {
-        breakDoor(hitDoor, end);
+        // 霰弹枪一枪把门轰碎；手枪/冲锋枪只是把门弹开
+        if (shooter.weapon === 'shotgun') {
+          shatterDoor(hitDoor, end);
+        } else {
+          breakDoor(hitDoor, end);
+        }
       } else {
         FX.addParticles(end.x, end.y, 4, '#8a8a90', 90, 0.18);
       }
@@ -3133,6 +3228,19 @@
     if (hitAny) {
       const blade = def && (def.name === '武士刀' || def.kind === 'knife');
       if (blade) Sfx.play('knife_hit'); else Sfx.play('hit');
+    }
+    // 近战打门：挥击命中门（在扇形内、距离够）就把门打碎
+    if (isPlayer) {
+      for (const d of W.doors) {
+        if (d.open || d.broken || d.flying) continue;
+        const dd = Math.hypot(d.x - actor.x, d.y - actor.y);
+        if (dd > reach + 14) continue;
+        const da = Math.atan2(d.y - actor.y, d.x - actor.x);
+        if (Math.abs(angDiff(da, facing)) > halfArc) continue;
+        shatterDoor(d, { x: d.x, y: d.y });
+        Sfx.play('hit');
+        hitAny = true;
+      }
     }
     FX.kick(def.shake + (hitAny ? 2 : 0), 0.16);
     emitNoise(actor.x, actor.y, 130);
@@ -3619,12 +3727,22 @@
     p.y += p.vy * dt;
     resolveCircle(W, p, ACTOR_R, solidRects(W, true));
 
-    // 撞门：走到门口自动把门撞开（迈阿密式突入）。不这么做的话，子弹打光就
-    // 连楼门都进不去了 —— 玩家必须永远能用身体推门，而不是只能开枪打门。
+    // 撞门：走到门口直接用身体把门撞倒（门板飞出，砸到门后敌人就撞死）。
+    // 不这么做的话，子弹打光就连楼门都进不去了 —— 玩家必须永远能用身体破门。
     for (const d of W.doors) {
-      if (d.open) continue;
+      if (d.open || d.broken || d.flying) continue;
       if (dist2(p.x, p.y, d.x, d.y) < 26 * 26) {
-        breakDoor(d, { x: d.x, y: d.y });
+        // 门板朝门法线方向飞出（横墙门沿 y、纵墙门沿 x），方向取玩家所在那一侧的反方向，
+        // 即"穿过门飞向门后"——这样门板总能砸到门后的敌人，而不是沿墙飞出去撞墙。
+        let mvx, mvy;
+        if (d.dir === 'v') {
+          mvx = p.x < d.x ? 1 : -1;   // 玩家在门左侧 → 门板朝右飞进门后
+          mvy = 0;
+        } else {
+          mvx = 0;
+          mvy = p.y < d.y ? 1 : -1;   // 玩家在门上方 → 门板朝下飞进门后
+        }
+        knockDoor(d, mvx, mvy);
         break;
       }
     }
@@ -4244,27 +4362,63 @@
   }
 
   function updateDoors(dt) {
-    const p = G.player;
+    // 门 open 状态的动画时间推进
     for (const d of W.doors) {
-      if (d.open) { d.t += dt; continue; }
-      const dx = d.x - p.x, dy = d.y - p.y;
-      const dd = Math.hypot(dx, dy);
-      if (dd > 34) continue;
-      const spd = Math.hypot(p.vx, p.vy);
-      if (spd < 20) continue;
-      const dot = (p.vx / spd) * (dx / dd) + (p.vy / spd) * (dy / dd);
-      if (dot < 0.55) continue;
-      d.open = true;
-      d.t = 0;
-      W._solidDirty = true;
-      Sfx.play('door');
-      emitNoise(d.x, d.y, 210);
+      if (d.open) d.t += dt;
+    }
+    // 撞飞的门板：飞行、撞敌人（撞死）、撞墙反弹、落地淡出
+    const rects = solidRects(W, false);   // 门已 open，不再挡路；只跟真墙碰撞
+    for (let i = W.flyingDoors.length - 1; i >= 0; i--) {
+      const f = W.flyingDoors[i];
+      f.x += f.vx * dt;
+      f.y += f.vy * dt;
+      f.dist += Math.hypot(f.vx, f.vy) * dt;
+      f.rot += f.rotV * dt;
+      // 撞墙：反弹减速（门板别穿墙飞出去）
+      if (pointSolid(W, f.x, f.y, 6)) {
+        f.x -= f.vx * dt; f.y -= f.vy * dt;
+        f.vx *= -0.45; f.vy *= -0.45;
+        f.rotV *= 0.6;
+      }
+      // 撞到敌人：门板把门后的敌人撞死（高伤害 + 击飞）
+      if (!f.hit) {
+        for (const e of W.enemies) {
+          if (!e.alive) continue;
+          if (dist2(f.x, f.y, e.x, e.y) < (ACTOR_R + 10) * (ACTOR_R + 10)) {
+            f.hit = true;
+            const a = Math.atan2(e.y - f.y, e.x - f.x);
+            damageEnemy(e, DOOR_FLY_DMG, a, true, false);
+            // 尸体沿门板飞行方向被带飞，视觉上"人被门撞飞出去"
+            e.deathVel = { x: f.vx * 0.8, y: f.vy * 0.8 };
+            // 撞到人就大幅减速，门板不再继续飞远
+            f.vx *= 0.25; f.vy *= 0.25;
+            break;
+          }
+        }
+      }
+      // 门板自己撞到敌人后也会把敌人往后带（击飞）
+      // 阻尼 + 落地：飞出射程或速度耗尽就停
+      const damp = Math.pow(0.02, dt);
+      f.vx *= damp; f.vy *= damp;
+      if (f.dist > DOOR_FLY_RANGE) f.vx *= 0.5, f.vy *= 0.5;
+      f.life -= dt;
+      if (f.life <= 0) W.flyingDoors.splice(i, 1);
     }
   }
 
   // ---------------------------------------------------------------- 敌人更新
   function updateEnemy(e, dt) {
-    if (!e.alive) { e.deadT += dt; return; }
+    if (!e.alive) {
+      e.deadT += dt;
+      // 死亡冲击：尸体沿 deathVel 飞出一小段（门板撞死时把人带飞），落地减速
+      if (e.deathVel) {
+        e.x += e.deathVel.x * dt;
+        e.y += e.deathVel.y * dt;
+        if (pointSolid(W, e.x, e.y, 4)) { e.x -= e.deathVel.x * dt; e.y -= e.deathVel.y * dt; e.deathVel = null; }
+        else { const d = Math.pow(0.02, dt); e.deathVel.x *= d; e.deathVel.y *= d; }
+      }
+      return;
+    }
     const K = ENEMY_KIND[e.kind];
     const p = G.player;
     if (e.stun > 0) {
@@ -5692,12 +5846,18 @@
 
   function drawWalls() {
     const r = visibleTileRange();
+    // 内墙用 buildLevel 收窄好的矩形画（横墙瘦高、纵墙瘦宽，方向和碰撞完全一致）
+    for (const rc of W.walls) {
+      if (rc.x + rc.w < r.x0 * TILE || rc.x > (r.x1 + 1) * TILE) continue;
+      if (rc.y + rc.h < r.y0 * TILE || rc.y > (r.y1 + 1) * TILE) continue;
+      ctx.drawImage(IMG.wall, rc.x, rc.y, rc.w, rc.h);
+    }
+    // 地图外一律当墙：外圈本来就是 '#',继续铺出去视觉上就是更厚的楼体（整格，不瘦）
     for (let y = r.y0; y <= r.y1; y++) {
       for (let x = r.x0; x <= r.x1; x++) {
-        // 地图外一律当墙：外圈本来就是 '#',继续铺出去视觉上就是更厚的楼体
-        const solid = (x < 0 || y < 0 || x >= W.w || y >= W.h) || W.rows[y][x] === '#';
-        if (!solid) continue;
-        ctx.drawImage(IMG.wall, x * TILE, y * TILE, TILE, TILE);
+        if (x < 0 || y < 0 || x >= W.w || y >= W.h) {
+          ctx.drawImage(IMG.wall, x * TILE, y * TILE, TILE, TILE);
+        }
       }
     }
   }
@@ -5807,14 +5967,31 @@
 
   function drawDoors() {
     for (const d of W.doors) {
+      if (d.broken || d.flying) continue;   // 打碎/撞飞的门不在原位画
       ctx.save();
       ctx.translate(d.x, d.y);
+      const vertical = d.dir === 'v';
       if (d.open) {
         const a = clamp(d.t * 3, 0, 1);
         ctx.globalAlpha = 1 - a * 0.75;
         ctx.rotate(a * 1.1);
         ctx.translate(-a * 8, 0);
       }
+      // 门板跟墙体一起收窄：横墙门瘦高、纵墙门瘦宽（竖门转 90° 让门把手朝外）
+      if (vertical) {
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, WALL_THICK, TILE);
+      } else {
+        ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, TILE, WALL_THICK);
+      }
+      ctx.restore();
+    }
+    // 撞飞的门板：单独画（带旋转、沿飞行方向翻滚），撞到人/落地后渐隐
+    for (const f of W.flyingDoors) {
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.rotate(f.rot);
+      ctx.globalAlpha = clamp(f.life / 0.5, 0, 1);
       ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, TILE, TILE);
       ctx.restore();
     }
@@ -9031,6 +9208,9 @@
     hitEnemy(e, dmg) { return damageEnemy(e, dmg || 999, 0, true, false); },
     /** 破门（测试用） */
     breakDoor(d, hitPos) { return breakDoor(d, hitPos || { x: d.x, y: d.y }); },
+    /** 门的四种破坏方式（测试用）：打开 / 打碎 / 撞倒 */
+    openDoor, shatterDoor, knockDoor,
+    get flyingDoors() { return W ? W.flyingDoors : []; },
     /** 剧情模式：把手上的枪扔出去（测试用） */
     throwWeapon() { return throwWeapon(); },
     get thrown() { return W ? W.thrown : []; },
