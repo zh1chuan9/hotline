@@ -280,105 +280,108 @@
   // 玩家靠近/射击破门突入，敌人在房间内。
   // enemy：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
   // 房间格坐标：上排 (1-8,1-5) / (11-18,1-5) / (21-28,1-5)，下排 (1-8,12-16) / (11-18,12-16) / (21-28,12-16)。
-    const STORY_LEVELS = [
+      const STORY_LEVELS = [
     {
       title: '序章 · 破门',
       rows: [
         '##############################',
-        '#............................#',
-        '#............................#',
-        '#..o..................o......#',
-        '#............................#',
-        '#.P..........................#',
-        '#............................#',
-        '#............o...............#',
-        '#..........................E.#',
+        '#........#.........#.........#',
+        '#........#..o......#..o......#',
+        '#..o.....#......o..#......o..#',
+        '#.....o..#.........#.........#',
+        '#........#.........#.........#',
+        '#.o......#...o.....#...o.....#',
+        '#......o.#.......o.#.......o.#',
+        '#........#.........#.........#',
         '####D#########D#########D#####',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
-        '#........#.........#.........#',
+        '#............................#',
+        '#......o..............o......#',
+        '#..........................E.#',
+        '#.P...........o..............#',
+        '#............................#',
+        '#............................#',
+        '#............................#',
         '##############################',
       ],
       enemies: [
-        { kind: 'melee', pos: [4, 12] },
-        { kind: 'melee', pos: [14, 12] },
-        { kind: 'melee', pos: [24, 12] },
-        { kind: 'melee', pos: [4, 15] },
-        { kind: 'melee', pos: [14, 15] },
-        { kind: 'melee', pos: [24, 15] },
+        { kind: 'melee', pos: [3, 2] },
+        { kind: 'melee', pos: [14, 2] },
+        { kind: 'melee', pos: [24, 2] },
+        { kind: 'melee', pos: [5, 5] },
+        { kind: 'melee', pos: [15, 5] },
+        { kind: 'melee', pos: [25, 5] },
       ]
     },
     {
       title: '第二章 · 猎犬',
       rows: [
         '##############################',
-        '#.............#..............#',
-        '#.............#..............#',
-        '#.............#..............#',
-        '#.............#..............#',
-        '######D###############D#######',
+        '#.........#........#.........#',
+        '#..o...o..#..o...o.#...o.....#',
+        '#.........#........#.........#',
+        '#####D#########D########D#####',
         '#............................#',
-        '#.P..........................#',
-        '#.........o.......o........E.#',
+        '#.......o.......o............#',
         '#.............o..............#',
+        '#.P....o..............o......#',
+        '#...........o....o.........E.#',
         '#............................#',
+        '#..............o.............#',
         '#............................#',
-        '######D###############D#######',
-        '#.............#..............#',
-        '#.............#..............#',
-        '#.............#..............#',
-        '#.............#..............#',
+        '#####D#########D########D#####',
+        '#.........#........#.........#',
+        '#..o...o..#..o...o.#...o.....#',
+        '#.........#........#.........#',
         '##############################',
       ],
       enemies: [
         { kind: 'melee', pos: [4, 2] },
-        { kind: 'gun', pos: [10, 2] },
-        { kind: 'gun', pos: [19, 2] },
-        { kind: 'melee', pos: [25, 2] },
+        { kind: 'gun', pos: [11, 2] },
+        { kind: 'gun', pos: [20, 2] },
+        { kind: 'melee', pos: [27, 2] },
+        { kind: 'gun', pos: [5, 6] },
+        { kind: 'melee', pos: [11, 6] },
+        { kind: 'gun', pos: [20, 6] },
+        { kind: 'melee', pos: [25, 6] },
         { kind: 'melee', pos: [4, 15] },
-        { kind: 'gun', pos: [10, 15] },
-        { kind: 'gun', pos: [19, 15] },
-        { kind: 'melee', pos: [25, 15] },
-        { kind: 'melee', pos: [15, 8] },
+        { kind: 'gun', pos: [11, 15] },
+        { kind: 'gun', pos: [20, 15] },
+        { kind: 'melee', pos: [27, 15] },
       ]
     },
     {
       title: '第三章 · 破晓',
       rows: [
         '##############################',
-        '#...........#....#...........#',
-        '#.P.........#.X..#...........#',
-        '#...........D....D...........#',
-        '#...........#....#...........#',
-        '#...........#....#...........#',
-        '#############....#############',
-        '#...........#....#...........#',
-        '#...........#....#...........#',
-        '#...........D....D...........#',
-        '#...........#....#...........#',
-        '#...........#....#...........#',
-        '#############....#############',
-        '#...........#....#...........#',
-        '#...........D....D...........#',
-        '#...........#..X.#.........E.#',
-        '#...........#....#...........#',
+        '#............#..#............#',
+        '#.P..........#X.#............#',
+        '#......o.....D..D......o.....#',
+        '#............#..#............#',
+        '#............#..#............#',
+        '##############..##############',
+        '#............#..#............#',
+        '#............#..#............#',
+        '#......o.....D..D......o.....#',
+        '#............#..#............#',
+        '##############..##############',
+        '##############..##############',
+        '#............#..#............#',
+        '#......o.....D..D......o.....#',
+        '#............#.X#..........E.#',
+        '#............#..#............#',
         '##############################',
       ],
       enemies: [
-        { kind: 'melee', pos: [4, 3] },
-        { kind: 'gun', pos: [8, 3] },
+        { kind: 'melee', pos: [5, 3] },
+        { kind: 'gun', pos: [9, 3] },
         { kind: 'gun', pos: [21, 3] },
         { kind: 'melee', pos: [25, 3] },
-        { kind: 'melee', pos: [4, 9] },
-        { kind: 'shotgun', pos: [8, 9] },
-        { kind: 'gun', pos: [21, 9] },
-        { kind: 'melee', pos: [25, 9] },
-        { kind: 'gun', pos: [4, 14] },
-        { kind: 'melee', pos: [8, 14] },
+        { kind: 'gun', pos: [5, 9] },
+        { kind: 'shotgun', pos: [9, 9] },
+        { kind: 'shotgun', pos: [21, 9] },
+        { kind: 'gun', pos: [25, 9] },
+        { kind: 'gun', pos: [5, 14] },
+        { kind: 'melee', pos: [9, 14] },
         { kind: 'melee', pos: [21, 14] },
         { kind: 'gun', pos: [25, 14] },
       ]
@@ -387,39 +390,39 @@
       title: '终章 · 炽线',
       rows: [
         '##############################',
+        '#..o......................o..#',
+        '#.P..........................#',
+        '#.....###D##########D###.....#',
+        '#..o..#................#..o..#',
+        '#.....#................#...E.#',
+        '#.....#................#.....#',
+        '#.....#..o..o....o..o..#.....#',
+        '#.....D.......Xo.......#.....#',
+        '#.....#........X.......D.....#',
+        '#.....#..o..o.o..o..o..#.....#',
+        '#.....#................#.....#',
+        '#.....#................#.....#',
+        '#..o..#................#..o..#',
+        '#.....###D##########D###.....#',
         '#............................#',
-        '#............................#',
-        '#########D##########D#########',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#.P..D.....o......o...E.#....#',
-        '#....#..X.....oo.....X..D....#',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#....#..................#....#',
-        '#########D##########D#########',
-        '#............................#',
-        '#............................#',
+        '#..o......................o..#',
         '##############################',
       ],
       enemies: [
-        { kind: 'shotgun', pos: [5, 2] },
-        { kind: 'gun', pos: [11, 2] },
+        { kind: 'shotgun', pos: [4, 2] },
+        { kind: 'gun', pos: [12, 2] },
         { kind: 'gun', pos: [20, 2] },
-        { kind: 'shotgun', pos: [26, 2] },
-        { kind: 'melee', pos: [3, 8] },
+        { kind: 'shotgun', pos: [27, 2] },
+        { kind: 'melee', pos: [4, 8] },
         { kind: 'melee', pos: [27, 8] },
-        { kind: 'gun', pos: [8, 8] },
-        { kind: 'melee', pos: [14, 11] },
-        { kind: 'melee', pos: [21, 8] },
-        { kind: 'gun', pos: [15, 11] },
-        { kind: 'shotgun', pos: [5, 15] },
-        { kind: 'gun', pos: [11, 15] },
+        { kind: 'gun', pos: [8, 6] },
+        { kind: 'gun', pos: [14, 12] },
+        { kind: 'melee', pos: [21, 6] },
+        { kind: 'shotgun', pos: [15, 12] },
+        { kind: 'gun', pos: [5, 15] },
+        { kind: 'shotgun', pos: [12, 15] },
         { kind: 'gun', pos: [20, 15] },
-        { kind: 'shotgun', pos: [26, 15] },
+        { kind: 'shotgun', pos: [27, 15] },
       ]
     },
   ];
@@ -2375,7 +2378,8 @@
       let gained = Math.round((base + Math.round(base * (G.combo - 1) * 0.25)) * (G.doubleScore > 0 ? 2 : 1));
       if (headshot) gained = Math.round(gained * HEADSHOT_SCORE);
       G.score += gained;
-      G.cash += gained;   // 积分即货币
+      // 积分即货币，但剧情模式没有商店/金钱系统，不累加现金
+      if (G.mode !== 'story') G.cash += gained;
       FX.addText(e.x, e.y - 12,
         (headshot ? '爆头 ' : '') + '+' + gained + (G.combo > 1 ? ' x' + G.combo : ''),
         headshot ? '#e02929' : (G.combo > 1 ? '#e02929' : '#ffffff'));
@@ -5130,13 +5134,15 @@
     ctx.fillStyle = G.mode === 'story' ? '#e02929' : '#c8c8d0';
     ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
-    // 右上：现金（击杀所得，商店货币）
-    ctx.textAlign = 'right';
-    ctx.font = 'bold 13px "Microsoft YaHei", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
-    ctx.fillStyle = '#e02929';
-    ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
+    // 右上：现金（击杀所得，商店货币）。剧情模式无金钱系统，不显示。
+    if (G.mode !== 'story') {
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
+      ctx.fillStyle = '#e02929';
+      ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
+    }
 
     // 左下：血量 + 护甲（只给条和格，不标数值）
     drawBodyHUD();
@@ -5904,9 +5910,139 @@
   const _MIAMI_ALIAS = { pink: MIAMI.red, pinkHot: MIAMI.redHot, purple: MIAMI.gray, cyan: MIAMI.grayLight, cyanHot: MIAMI.white, yellow: MIAMI.red, white: MIAMI.white, dim: MIAMI.dim };
   for (const k in _MIAMI_ALIAS) { if (!(k in MIAMI)) MIAMI[k] = _MIAMI_ALIAS[k]; }
 
-  function drawTitle() {
+  // ---------------------------------------------------------------- CRT 电视效果
+  // 主页（标题 / 设置）用离屏缓冲做一次后处理：把已经画好的画面塞进一台老式显像管电视里，
+  // 加圆角管面、球面暗角、扫描线、荧光晕、缓慢上滚的亮带、电子束色散和轻微闪烁。
+  // 画面按 1:1 绘制、不缩放，按钮命中区和视觉严格对齐，不会点歪。
+  const crtBuf = document.createElement('canvas');
+  crtBuf.width = VIEW_W; crtBuf.height = VIEW_H;
+  const crtBufCtx = crtBuf.getContext('2d');
+
+  /** 圆角矩形路径（老浏览器没有 roundRect 时手绘）。 */
+  function crtRoundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  /** 把当前画布内容套上 CRT 电视效果后重绘回画布。t 为秒，用来驱动滚动亮带和闪烁。 */
+  function applyCRT(t) {
+    // 1) 先把刚画好的画面存进缓冲
+    crtBufCtx.setTransform(1, 0, 0, 1, 0, 0);
+    crtBufCtx.clearRect(0, 0, VIEW_W, VIEW_H);
+    crtBufCtx.drawImage(canvas, 0, 0);
+
     ctx.save();
-    // 红灰白黑背景：纯黑底 + 红色斜向光带 + 扫描线
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // 2) 铺机身底色（管面之外是黑色机身）
+    ctx.fillStyle = '#050506';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    // 3) 裁成圆角管面：四角被切黑，就是老显像管的味道
+    const R = 20;
+    ctx.save();
+    crtRoundRect(0, 0, VIEW_W, VIEW_H, R);
+    ctx.clip();
+
+    // 4) 画面本体（1:1，不缩放）
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.drawImage(crtBuf, 0, 0);
+
+    // 5) 荧光晕：模糊画面叠加，模拟显像管余辉
+    if ('filter' in ctx) {
+      ctx.save();
+      try { ctx.filter = 'blur(2.2px)'; } catch (err) { /* 老浏览器直接跳过 */ }
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.20;
+      ctx.drawImage(crtBuf, 0, 0);
+      ctx.restore();
+    }
+
+    // 6) 电子束色散：左右各一次极轻偏移叠加，边缘出现细微彩边
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.07;
+    ctx.drawImage(crtBuf, -1.5, 0);
+    ctx.drawImage(crtBuf, 1.5, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+
+    // 7) 扫描线
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
+    for (let y = 0; y < VIEW_H; y += 3) ctx.fillRect(0, y, VIEW_W, 1);
+
+    // 8) 缓慢上滚的荧光亮带（老电视的场同步漂移感）
+    const rollY = ((t * 0.11) % 1.25 - 0.12) * VIEW_H;
+    const rg = ctx.createLinearGradient(0, rollY - 30, 0, rollY + 30);
+    rg.addColorStop(0, 'rgba(255,255,255,0)');
+    rg.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, rollY - 30, VIEW_W, 60);
+
+    // 9) 球面暗角：越靠边越暗，读起来像凸起的玻璃管面
+    const vg = ctx.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.30, VIEW_W / 2, VIEW_H / 2, VIEW_W * 0.68);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(0.70, 'rgba(0,0,0,0.13)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.62)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    // 10) 管面曲率：左右两侧再加一层竖向暗边
+    for (const side of [-1, 1]) {
+      const gx0 = side < 0 ? 0 : VIEW_W;
+      const gx1 = side < 0 ? 34 : VIEW_W - 34;
+      const eg = ctx.createLinearGradient(gx0, 0, gx1, 0);
+      eg.addColorStop(0, 'rgba(0,0,0,0.38)');
+      eg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = eg;
+      ctx.fillRect(Math.min(gx0, gx1), 0, 34, VIEW_H);
+    }
+
+    // 11) 玻璃反光：左上角一道柔和高光
+    const hl = ctx.createLinearGradient(0, 0, VIEW_W * 0.55, VIEW_H * 0.85);
+    hl.addColorStop(0, 'rgba(255,255,255,0.065)');
+    hl.addColorStop(0.30, 'rgba(255,255,255,0.014)');
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hl;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    // 12) 亮度闪烁：极轻，别看着像在抽搐
+    const flick = 0.018 + 0.016 * (0.5 + 0.5 * Math.sin(t * 23.0)) + 0.008 * Math.sin(t * 61.0);
+    ctx.fillStyle = 'rgba(0,0,0,' + flick.toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    ctx.restore();   // 退出管面裁剪
+
+    // 13) 管面描边 + 右下角红色电源指示灯（呼吸起伏）
+    crtRoundRect(0.5, 0.5, VIEW_W - 1, VIEW_H - 1, R);
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const led = 0.55 + 0.45 * Math.sin(t * 2.0);
+    ctx.beginPath();
+    ctx.arc(VIEW_W - 13, VIEW_H - 10, 4.2, 0, 6.283);
+    ctx.fillStyle = 'rgba(224,41,41,' + (0.14 * led).toFixed(2) + ')';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(VIEW_W - 13, VIEW_H - 10, 1.9, 0, 6.283);
+    ctx.fillStyle = 'rgba(224,41,41,' + led.toFixed(2) + ')';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawTitle() {
+    const t = performance.now() / 1000;
+    ctx.save();
+    // 红灰白黑背景：纯黑底 + 红色斜向光带
     const bg = ctx.createLinearGradient(0, 0, VIEW_W, VIEW_H);
     bg.addColorStop(0, '#120a0a');
     bg.addColorStop(0.5, '#0a0a0c');
@@ -5925,22 +6061,28 @@
     ctx.moveTo(VIEW_W * 0.35, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 8); ctx.lineTo(VIEW_W * 0.55, VIEW_H + 8);
     ctx.closePath(); ctx.fill();
     ctx.restore();
-    // 扫描线
-    ctx.globalAlpha = 0.06;
-    ctx.fillStyle = '#000';
-    for (let y = 0; y < VIEW_H; y += 3) ctx.fillRect(0, y, VIEW_W, 1);
-    ctx.globalAlpha = 1;
+    // 扫描线不在这里画：统一交给 applyCRT() 后处理，避免叠两层
 
     ctx.textAlign = 'center';
-    // 主标题：红黑像素感（双层发光）
+    // 主标题：红黑像素感（双层发光 + 荧光辉光，像电子束打出来的）
+    ctx.save();
     ctx.font = 'bold 46px Consolas, "Microsoft YaHei", monospace';
+    ctx.shadowColor = 'rgba(224,41,41,0.9)';
+    ctx.shadowBlur = 26;
     ctx.fillStyle = 'rgba(224,41,41,0.35)';
     ctx.fillText('HOTLINE', VIEW_W / 2 + 3, 93);
     ctx.fillStyle = MIAMI.red;
     ctx.fillText('HOTLINE', VIEW_W / 2, 90);
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = 'rgba(255,120,120,0.45)';
+    ctx.fillText('HOTLINE', VIEW_W / 2, 90);
+    ctx.restore();
     ctx.font = 'bold 16px Consolas, "Microsoft YaHei", monospace';
     ctx.fillStyle = MIAMI.white;
+    ctx.shadowColor = 'rgba(242,242,244,0.6)';
+    ctx.shadowBlur = 8;
     ctx.fillText('2 . 5 D', VIEW_W / 2, 112);
+    ctx.shadowBlur = 0;
 
     // 三个按钮：剧情模式（红）/ 挑战模式（白）/ 设置（灰）
     drawMenuButton(TITLE_BTN.story, '剧情模式', MIAMI.red);
@@ -5954,6 +6096,9 @@
       ? '左摇杆移动 · 右摇杆瞄准 · 瞄准键抬枪 · 交互键交互'
       : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 326);
     ctx.restore();
+
+    // 整页套一层 CRT 电视效果（圆角管面 / 暗角 / 扫描线 / 荧光 / 闪烁）
+    applyCRT(t);
   }
 
   /** 绘制一个菜单按钮（霓虹描边 + 文字），hover 发光高亮。 */
@@ -6122,6 +6267,8 @@
     // 返回按钮
     drawMenuButton(SETTINGS_BTN.back, '返回', '#c8c8d0');
     ctx.restore();
+    // 设置页同属"主页面"，一起套 CRT 效果，切换时不跳味
+    applyCRT(performance.now() / 1000);
   }
 
   /**
