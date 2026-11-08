@@ -6065,13 +6065,31 @@
       }
       ctx.restore();
     }
-    // 撞倒的门板：脱离铰链飞出去，是"方形贴图的门"（带旋转翻滚）
+    // 撞倒的门板：脱离铰链飞出去，是"方形门板"（带旋转翻滚），配色跟站立门一致
     for (const f of W.flyingDoors) {
       ctx.save();
       ctx.translate(f.x, f.y);
       ctx.rotate(f.rot);
       ctx.globalAlpha = clamp(f.life / 0.5, 0, 1);
-      ctx.drawImage(IMG.door, -TILE / 2, -TILE / 2, TILE, TILE);
+      // 亮棕色方形门板
+      ctx.fillStyle = '#8a5420';
+      ctx.fillRect(-TILE / 2, -TILE / 2, TILE, TILE);
+      ctx.fillStyle = '#a56a2e';                       // 受光面（亮棕）
+      ctx.fillRect(-TILE / 2, -TILE / 2, TILE, TILE * 0.42);
+      // 两颗金色门把手（门板两端）
+      for (const sx of [-1, 1]) {
+        const hx = sx * (TILE / 2 - 3.2);
+        ctx.fillStyle = '#6b4e10';
+        ctx.beginPath(); ctx.arc(hx, 0, 3.4, 0, 6.283); ctx.fill();
+        ctx.fillStyle = '#e8b923';
+        ctx.beginPath(); ctx.arc(hx, 0, 2.5, 0, 6.283); ctx.fill();
+        ctx.fillStyle = '#fff2b0';
+        ctx.beginPath(); ctx.arc(hx - 0.7, -0.8, 1.0, 0, 6.283); ctx.fill();
+      }
+      // 暗棕描边，让门板有一点厚度
+      ctx.strokeStyle = '#5c3611';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-TILE / 2 + 0.5, -TILE / 2 + 0.5, TILE - 1, TILE - 1);
       ctx.restore();
     }
   }
