@@ -1165,11 +1165,25 @@
     touchPressed = Object.create(null);
   });
 
-  // ---------------------------------------------------------------- 音效（程序合成）
+  // ---------------------------------------------------------------- 音效
+  // 手枪枪声用真实录音（`js/pistol_sfx.js` 里内嵌的 base64 MP3，用户提供），
+  // 其余音效仍是程序合成。录音本身的起手有 ~140ms 的爬坡（现场录的，带房间混响），
+  // 直接放会显得"闷"、按下扳机不跟手，所以叠一层几毫秒的合噪爆点补打击感。
+  // 采样开头 0.30s 是静音，播放时直接跳过（trim），否则扣扳机半天没声。
+  const GUNSHOT = {
+    trim: 0.30,        // 跳过开头静音
+    len: 0.50,         // 播放长度（0.30 → 0.80，之后只剩底噪）
+    gain: 1.20,        // 采样整体音量（原始峰值只有 0.294，录音偏小，放大到和其他音效一个量级）
+    maxVoices: 4       // 最多同时 4 个声部，0.15s 射速连打也不会糊成一团
+  };
   const Sfx = {
     ac: null,
     noiseBuf: null,
     muted: false,
+    pistolBuf: null,
+    pistolState: 0,    // 0 未开始 / 1 解码中 / 2 就绪 / 3 失败（失败就一直用合成音）
+    pistolEnds: [],    // 正在播放的声部各自的结束时刻
+    get pistolVoices() { return this.pistolEnds.length; },
     init() {
       if (this.ac) return;
       try {
@@ -1180,9 +1194,56 @@
         const d = buf.getChannelData(0);
         for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
         this.noiseBuf = buf;
+        this.loadGunshot();
       } catch (err) {
         this.ac = null;
       }
+    },
+    // 解码内嵌的枪声采样。Context 处于 suspended 也能解码，所以页面一加载就把它准备好，
+    // 第一次扣扳机就是真枪声，不会先听到一声合成的再切过去。
+    loadGunshot() {
+      if (this.pistolState || !this.ac) return;
+      const b64 = window.PISTOL_SFX_B64;
+      if (!b64) { this.pistolState = 3; return; }
+      this.pistolState = 1;
+      const self = this;
+      try {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const done = function (buf) { self.pistolBuf = buf; self.pistolState = 2; };
+        const p = this.ac.decodeAudioData(bytes.buffer, done, function () { self.pistolState = 3; });
+        if (p && typeof p.catch === 'function') p.catch(function () { self.pistolState = 3; });
+      } catch (err) {
+        this.pistolState = 3;
+      }
+    },
+    // 采样声部：跳过静音、按射速收尾（尾部只保留 0.5s，不然连射会糊），
+    // 每个声部微调音高，避免同一声反复播放听出"机关枪复读"。
+    // 声部占用按"结束时间"记账而不是 onended 回调：万一音频上下文被浏览器挂起，
+    // currentTime 不前进，计数也就不会漏放；靠 onended 则会永远卡在上限导致哑火。
+    gunshot(gain, rate) {
+      const ac = this.ac;
+      if (!ac || !this.pistolBuf) return false;
+      const t = ac.currentTime;
+      const ends = this.pistolEnds;
+      while (ends.length && ends[0] <= t) ends.shift();
+      if (ends.length >= GUNSHOT.maxVoices) return false;
+      const src = ac.createBufferSource();
+      src.buffer = this.pistolBuf;
+      src.playbackRate.value = rate || 1;
+      const g = ac.createGain();
+      const peak = gain * GUNSHOT.gain;
+      // 只做"掐头去尾"：6ms 起手保护 + 尾段 40% 处收一点 + 末尾淡出到 0。
+      // 中间那段不许压——采样自己的峰值在 0.16s 处才出现，压早了整枪就没劲了。
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(peak * 0.8, t + GUNSHOT.len * 0.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + GUNSHOT.len);
+      src.connect(g).connect(ac.destination);
+      src.start(t, GUNSHOT.trim, GUNSHOT.len / src.playbackRate.value + 0.02);
+      ends.push(t + GUNSHOT.len);
+      return true;
     },
     noise(dur, freq, q, gain, decay, type) {
       const ac = this.ac; if (!ac) return;
@@ -1223,7 +1284,16 @@
       if (!this.ac) return;
       if (this.ac.state === 'suspended') this.ac.resume();
       switch (name) {
-        case 'shoot': this.noise(0.10, 2200, 1.2, 0.32, 0.2); this.tone(320, 90, 0.07, 0.10, 'square'); break;
+        case 'shoot':
+          // 真枪声采样 + 极短的合成爆点（补起手）；采样没准备好就退回纯合成音。
+          if (this.gunshot(0.9, 0.96 + Math.random() * 0.08)) {
+            this.noise(0.035, 3400, 0.9, 0.18, 0.05);
+            this.tone(190, 62, 0.05, 0.08, 'square');
+          } else {
+            this.noise(0.10, 2200, 1.2, 0.32, 0.2);
+            this.tone(320, 90, 0.07, 0.10, 'square');
+          }
+          break;
         case 'smg': this.noise(0.07, 1800, 1.0, 0.26, 0.15); this.tone(280, 80, 0.05, 0.08, 'square'); break;
         case 'shotgun': this.noise(0.30, 1200, 0.8, 0.45, 0.3); this.tone(160, 45, 0.18, 0.16, 'sawtooth'); break;
         case 'swing': this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
@@ -1252,6 +1322,10 @@
       }
     }
   };
+
+  // 先建好 AudioContext 并把枪声采样解码出来（此时处于 suspended 也不影响解码），
+  // 这样玩家按下"开始游戏"后的第一枪就是真枪声。
+  Sfx.init();
 
   // ---------------------------------------------------------------- 几何工具
   function rayRect(ox, oy, dx, dy, rc) {
@@ -7493,6 +7567,8 @@
     get arena() { return ARENA; },
     get shop() { return SHOP; },
     get slotSymbols() { return SLOT_SYMBOLS; },
+    /** 音效系统（测试"枪声采样有没有解码成功"用） */
+    get sfx() { return Sfx; },
     /** 敌人数值表（前摇 / 精度等难度参数的测试断言用） */
     get enemyKind() { return ENEMY_KIND; },
     enemyWindup, enemyAimErr,

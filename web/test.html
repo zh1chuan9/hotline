@@ -13,6 +13,7 @@
 <body>
 <canvas id="game" width="640" height="360"></canvas>
 <pre id="result">running…</pre>
+<script src="js/pistol_sfx.js"></script>
 <script src="js/game.js"></script>
 <script>
 (function () {
@@ -1418,6 +1419,28 @@
       }
     }
     check('各关敌人生成后不贴门（' + ecnt + ' 人，最近 ' + minDoor.toFixed(0) + 'px > 20）', minDoor > 20);
+
+    // ============ 29.6 手枪枪声采样（内嵌 base64 的真实录音） ============
+    // 注意：解码是异步的，这里只验证"资源在、没坏、调用不炸"；实际解码结果由
+    // 浏览器控制台里的 pistolState 反映（2=就绪），失败会自动退回合成枪声。
+    const b64 = window.PISTOL_SFX_B64 || '';
+    check('枪声采样已内嵌（' + (b64.length / 1024).toFixed(0) + 'KB base64）', b64.length > 20000);
+    let mp3Head = '', mp3Len = 0;
+    try {
+      const raw = atob(b64);
+      mp3Len = raw.length;
+      mp3Head = raw.slice(0, 3);
+    } catch (err) { mp3Head = 'err'; }
+    check('采样是完整 MP3（' + mp3Len + ' 字节，头=' + mp3Head + '，原文件 27217）', mp3Head === 'ID3' && mp3Len > 20000);
+    check('音效系统已挂上（ac=' + !!H.sfx.ac + '，state=' + H.sfx.pistolState + '=' + (H.sfx.pistolState === 3 ? '解码失败' : '正常/就绪') + '）',
+      !!H.sfx.ac && H.sfx.pistolState !== 3);
+    let shotErr = '';
+    try {
+      for (let i = 0; i < 6; i++) H.sfx.play('shoot');   // 连打，含解码未完成时的降级路径
+      H.sfx.muted = true; H.sfx.play('shoot'); H.sfx.muted = false;
+    } catch (err) { shotErr = err.message; }
+    check('连打 6 枪 + 静音反复切换都不报错' + (shotErr ? '（' + shotErr + '）' : ''),
+      shotErr === '' && H.sfx.pistolVoices <= 4);
 
     // ============ 30.4 地图：更小 / 房间更多 / 敌人更多 ============
     const lvls = H.storyLevels;
