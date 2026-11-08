@@ -1,26 +1,30 @@
 # -*- coding: utf-8 -*-
-"""把手枪枪声 MP3 转成游戏内嵌的 base64 资源。
+"""把枪械音效 MP3 转成游戏内嵌的 base64 资源。
 
 用法：
-    python tools/make_sfx.py "E:/视频/11月8日.MP3"
+    python tools/make_sfx.py            # 用 tools/sfx_src/ 里的源文件重新生成全部采样
+    python tools/make_sfx.py pistol=新枪声.mp3   # 临时替换某一个（不覆盖 sfx_src）
 
-产出 web/js/pistol_sfx.js（`window.PISTOL_SFX_B64`），由 index.html / test.html 在
-game.js 之前引入。之所以内嵌而不是丢 assets 里让 fetch 去读：双击打开 index.html 时
-是 file:// 协议，fetch/XHR 读本地文件会被浏览器按跨域拦掉，<script src> 不会。
+产出 web/js/sfx_samples.js（`window.SFX_SAMPLES = { 名字: 'base64', ... }`），由
+index.html / test.html 在 game.js 之前引入。之所以内嵌而不是丢 assets 里让 fetch 去读：
+双击打开 index.html 是 file:// 协议，fetch/XHR 读本地文件会被浏览器按跨域拦掉，
+<script src> 不会。
 
-换音效时只需要重跑这个脚本，游戏里 GUNSHOT 的 trim/len 参数可能要跟着调：
-脚本会把"从第几秒开始有声"打出来，trim 取比它稍大一点的数即可。
+游戏里 `SAMPLES` 表（web/js/game.js）写着每个采样的 trim/len/gain，都是按这里的
+实测结果对的：脚本会打印"多长、峰值在哪、前多少秒是静音"，换录音后照着改。
 """
 import base64
+import glob
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', 'web', 'js', 'pistol_sfx.js')
+SRC_DIR = os.path.join(HERE, 'sfx_src')
+OUT = os.path.join(HERE, '..', 'web', 'js', 'sfx_samples.js')
 
 
 def mp3_info(raw):
-    """粗解析 MP3 帧头：返回 (采样率, 时长秒, 帧数)。没 ffmpeg 时够用了。"""
+    """粗解析 MP3 帧头：返回 (采样率, 时长秒, 帧数)。没有 ffmpeg 时够用了。"""
     i = 0
     if raw[:3] == b'ID3':
         sz = (raw[6] << 21) | (raw[7] << 14) | (raw[8] << 7) | raw[9]
@@ -54,31 +58,53 @@ def mp3_info(raw):
     return sr, (total / sr if sr else 0), frames
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
+def collect(argv):
+    """名字 -> 源文件。默认把 sfx_src/*.mp3 全收（文件名即采样名）。"""
+    pairs = {}
+    for arg in argv:
+        if '=' in arg:
+            name, path = arg.split('=', 1)
+            pairs[name.strip()] = path
+    if not pairs:
+        for path in sorted(glob.glob(os.path.join(SRC_DIR, '*.mp3'))):
+            pairs[os.path.splitext(os.path.basename(path))[0]] = path
+    return pairs
+
+
+def main(argv):
+    pairs = collect(argv)
+    if not pairs:
+        print('没有找到源文件，请把 mp3 放进 %s' % SRC_DIR)
         return 1
-    src = sys.argv[1]
-    raw = open(src, 'rb').read()
-    sr, dur, frames = mp3_info(raw)
-    b64 = base64.b64encode(raw).decode()
+
+    chunks = []
+    for name in sorted(pairs):
+        path = pairs[name]
+        raw = open(path, 'rb').read()
+        sr, dur, frames = mp3_info(raw)
+        b64 = base64.b64encode(raw).decode()
+        chunks.append((name, raw, sr, dur, frames, b64))
+        print('%-8s %-28s %6d 字节  %.2fs @ %dHz  %d 帧' % (name, os.path.basename(path), len(raw), dur, sr, frames))
+
     lines = [
-        '// 手枪枪声采样（源文件：%s）\n' % os.path.basename(src),
-        '// %d 帧 / %.2fs / %d 字节；由 tools/make_sfx.py 生成，改音效请重跑脚本。\n' % (frames, dur, len(raw)),
+        '// 枪械音效采样（源文件在 tools/sfx_src/，由 tools/make_sfx.py 生成，别手改）\n',
         '// 以 base64 内嵌，避免 file:// 下 fetch 被 CORS 拦掉——双击 index.html 也能出声。\n',
-        'window.PISTOL_SFX_B64 =\n',
+        '// 换音效：把新 mp3 丢进 tools/sfx_src/（同名覆盖），重跑 python tools/make_sfx.py。\n',
+        'window.SFX_SAMPLES = {\n',
     ]
-    for i in range(0, len(b64), 120):
-        lines.append("  '" + b64[i:i + 120] + "' +\n")
-    lines.append("  '';\n")
+    for name, raw, sr, dur, frames, b64 in chunks:
+        lines.append("  // %s：%.2fs / %d 字节 / %d 帧\n" % (name, dur, len(raw), frames))
+        lines.append("  %s:\n" % name)
+        for i in range(0, len(b64), 120):
+            lines.append("    '" + b64[i:i + 120] + "' +\n")
+        lines.append("    '',\n")
+    lines.append('};\n')
     with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
         f.write(''.join(lines))
-    print('源文件 %s' % src)
-    print('  %d 字节, %.2fs @ %dHz, %d 帧' % (len(raw), dur, sr, frames))
-    print('  已写出 %s (%.0fKB)' % (os.path.relpath(OUT, HERE), os.path.getsize(OUT) / 1024))
-    print('提示：游戏里的 GUNSHOT.trim 是"跳过开头静音"的秒数，采样实际起声点约 0.30s。')
+    print('\n已写出 %s (%.0fKB, %d 个采样)' % (os.path.relpath(OUT, HERE), os.path.getsize(OUT) / 1024, len(chunks)))
+    print('记得对一下 web/js/game.js 里 SAMPLES 表的 trim/len/gain。')
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

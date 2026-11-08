@@ -1166,24 +1166,26 @@
   });
 
   // ---------------------------------------------------------------- 音效
-  // 手枪枪声用真实录音（`js/pistol_sfx.js` 里内嵌的 base64 MP3，用户提供），
-  // 其余音效仍是程序合成。录音本身的起手有 ~140ms 的爬坡（现场录的，带房间混响），
-  // 直接放会显得"闷"、按下扳机不跟手，所以叠一层几毫秒的合噪爆点补打击感。
-  // 采样开头 0.30s 是静音，播放时直接跳过（trim），否则扣扳机半天没声。
-  const GUNSHOT = {
-    trim: 0.30,        // 跳过开头静音
-    len: 0.50,         // 播放长度（0.30 → 0.80，之后只剩底噪）
-    gain: 1.20,        // 采样整体音量（原始峰值只有 0.294，录音偏小，放大到和其他音效一个量级）
-    maxVoices: 4       // 最多同时 4 个声部，0.15s 射速连打也不会糊成一团
+  // 枪声 / 换弹声用真实录音（`js/sfx_samples.js` 里内嵌的 base64 MP3，用户提供），
+  // 其余音效仍是程序合成。每个采样单独描述"跳过开头多少静音 / 放多长 / 放大多少"，
+  // 这些数都是按录音实测出来的（tools/make_sfx.py 会打印时长和静音段），换录音要重新对。
+  const SAMPLES = {
+    // 手枪：1.70s，前 0.30s 纯静音，峰值在 0.47s（原始峰值只有 0.294，录音偏小），尾巴到 1.28s。
+    // 0.15s 的射速下最多叠 4 个声部，再往上就糊成一团。
+    pistol: { trim: 0.30, len: 0.50, gain: 1.20, maxVoices: 4 },
+    // 换弹：1.23s，前 0.19s 静音，0.19~0.55 是一串拔弹匣/摸弹匣的机械小响，
+    // 0.71s 弹匣拍到位（最响，样本峰值 0.663），尾巴到 1.0s。整段放完正好盖住手枪 0.9s 的换弹时间。
+    // steal：换弹声必须响（玩家按了 R 没声音会以为卡了），声部占满就抢掉最早那个，而不是哑火。
+    // gain 只给 0.38：这段录音峰值 0.663（比枪声的 0.294 响一倍多），不压的话换弹比开枪还吵。
+    reload: { trim: 0.18, len: 0.85, gain: 0.38, maxVoices: 2, steal: true }
   };
   const Sfx = {
     ac: null,
     noiseBuf: null,
     muted: false,
-    pistolBuf: null,
-    pistolState: 0,    // 0 未开始 / 1 解码中 / 2 就绪 / 3 失败（失败就一直用合成音）
-    pistolEnds: [],    // 正在播放的声部各自的结束时刻
-    get pistolVoices() { return this.pistolEnds.length; },
+    samples: null,     // 名字 -> AudioBuffer
+    sampleState: 0,    // 0 未开始 / 1 解码中 / 2 就绪 / 3 失败（失败就一直用合成音）
+    voices: {},        // 名字 -> 各声部的结束时刻
     init() {
       if (this.ac) return;
       try {
@@ -1194,55 +1196,81 @@
         const d = buf.getChannelData(0);
         for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
         this.noiseBuf = buf;
-        this.loadGunshot();
+        this.loadSamples();
       } catch (err) {
         this.ac = null;
       }
     },
-    // 解码内嵌的枪声采样。Context 处于 suspended 也能解码，所以页面一加载就把它准备好，
-    // 第一次扣扳机就是真枪声，不会先听到一声合成的再切过去。
-    loadGunshot() {
-      if (this.pistolState || !this.ac) return;
-      const b64 = window.PISTOL_SFX_B64;
-      if (!b64) { this.pistolState = 3; return; }
-      this.pistolState = 1;
+    // 解码内嵌采样。Context 处于 suspended 也能解码，所以页面一加载就准备好，
+    // 第一枪/第一次换弹就是真录音，不会先听到合成的再切过去。
+    loadSamples() {
+      if (this.sampleState || !this.ac) return;
+      const all = window.SFX_SAMPLES;
+      if (!all) { this.sampleState = 3; return; }
       const self = this;
-      try {
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        const done = function (buf) { self.pistolBuf = buf; self.pistolState = 2; };
-        const p = this.ac.decodeAudioData(bytes.buffer, done, function () { self.pistolState = 3; });
-        if (p && typeof p.catch === 'function') p.catch(function () { self.pistolState = 3; });
-      } catch (err) {
-        this.pistolState = 3;
-      }
+      const names = Object.keys(all).filter(function (n) { return !!SAMPLES[n]; });
+      if (!names.length) { this.sampleState = 3; return; }
+      this.sampleState = 1;
+      const out = {};
+      let left = names.length;
+      const finishAll = function () {
+        self.samples = out;
+        self.sampleState = Object.keys(out).length ? 2 : 3;
+      };
+      names.forEach(function (n) {
+        let settled = false;
+        const finish = function (buf, ok) {
+          if (settled) return;               // 回调和 Promise 会各来一次，只认第一个
+          settled = true;
+          if (ok && buf) out[n] = buf;
+          if (--left === 0) finishAll();
+        };
+        try {
+          const bin = atob(all[n]);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const p = self.ac.decodeAudioData(bytes.buffer,
+            function (buf) { finish(buf, true); },
+            function () { finish(null, false); });
+          if (p && typeof p.catch === 'function') p.catch(function () { finish(null, false); });
+        } catch (err) { finish(null, false); }
+      });
     },
-    // 采样声部：跳过静音、按射速收尾（尾部只保留 0.5s，不然连射会糊），
-    // 每个声部微调音高，避免同一声反复播放听出"机关枪复读"。
-    // 声部占用按"结束时间"记账而不是 onended 回调：万一音频上下文被浏览器挂起，
-    // currentTime 不前进，计数也就不会漏放；靠 onended 则会永远卡在上限导致哑火。
-    gunshot(gain, rate) {
+    /** 有没有这个采样的声部在响 / 采样是否可用（测试与降级判断用） */
+    sampleReady(name) { return !!(this.samples && this.samples[name]); },
+    /**
+     * 播一个采样：跳过开头静音、末尾淡出、限制同时声部数。
+     * 返回 true 表示"这一声真的用采样放了"，调用方据此决定要不要补合成音兜底。
+     * 声部占用按"结束时刻"记账而不是 onended 回调：万一音频上下文被浏览器挂起，
+     * currentTime 不前进，计数也就不会漏放；靠 onended 则会永远卡在上限导致哑火。
+     */
+    sample(name, gain, rate) {
+      const cfg = SAMPLES[name];
       const ac = this.ac;
-      if (!ac || !this.pistolBuf) return false;
+      if (!ac || !cfg || !this.sampleReady(name)) return false;
       const t = ac.currentTime;
-      const ends = this.pistolEnds;
+      const ends = this.voices[name] || (this.voices[name] = []);
       while (ends.length && ends[0] <= t) ends.shift();
-      if (ends.length >= GUNSHOT.maxVoices) return false;
+      if (ends.length >= cfg.maxVoices) {
+        // 枪声连打时宁可少一声（不糊），换弹声则宁可抢掉最早那个声部（不能哑火）
+        if (!cfg.steal) return false;
+        ends.shift();
+      }
       const src = ac.createBufferSource();
-      src.buffer = this.pistolBuf;
+      src.buffer = this.samples[name];
       src.playbackRate.value = rate || 1;
       const g = ac.createGain();
-      const peak = gain * GUNSHOT.gain;
-      // 只做"掐头去尾"：6ms 起手保护 + 尾段 40% 处收一点 + 末尾淡出到 0。
-      // 中间那段不许压——采样自己的峰值在 0.16s 处才出现，压早了整枪就没劲了。
+      const peak = gain * cfg.gain;
+      // 只做"掐头去尾"：6ms 起手保护 → 中间整段保持原样 → 最后 0.10s 线性淡出。
+      // 中间千万别用指数衰减——录音最响的那一下往往在片段靠后（换弹声里"弹匣拍进去"
+      // 在 0.72s 处），一衰减就把最该有劲的那一拍压没了。
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(peak, t + 0.006);
-      g.gain.exponentialRampToValueAtTime(peak * 0.8, t + GUNSHOT.len * 0.6);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + GUNSHOT.len);
+      g.gain.setValueAtTime(peak, t + Math.max(0.02, cfg.len - 0.10));
+      g.gain.linearRampToValueAtTime(0.0001, t + cfg.len);
       src.connect(g).connect(ac.destination);
-      src.start(t, GUNSHOT.trim, GUNSHOT.len / src.playbackRate.value + 0.02);
-      ends.push(t + GUNSHOT.len);
+      src.start(t, cfg.trim, cfg.len / src.playbackRate.value + 0.02);
+      ends.push(t + cfg.len);
       return true;
     },
     noise(dur, freq, q, gain, decay, type) {
@@ -1279,21 +1307,24 @@
       o.stop(t + dur + 0.02);
     },
     play(name) {
-      if (this.muted) return;
+      if (this.muted) return false;
       this.init();
-      if (!this.ac) return;
+      if (!this.ac) return false;
       if (this.ac.state === 'suspended') this.ac.resume();
       switch (name) {
         case 'shoot':
           // 真枪声采样 + 极短的合成爆点（补起手）；采样没准备好就退回纯合成音。
-          if (this.gunshot(0.9, 0.96 + Math.random() * 0.08)) {
+          if (this.sample('pistol', 0.9, 0.96 + Math.random() * 0.08)) {
             this.noise(0.035, 3400, 0.9, 0.18, 0.05);
             this.tone(190, 62, 0.05, 0.08, 'square');
-          } else {
-            this.noise(0.10, 2200, 1.2, 0.32, 0.2);
-            this.tone(320, 90, 0.07, 0.10, 'square');
+            return true;
           }
-          break;
+          this.noise(0.10, 2200, 1.2, 0.32, 0.2);
+          this.tone(320, 90, 0.07, 0.10, 'square');
+          return false;
+        // 换弹：整段录音（拔弹匣 → 拍上新弹匣）一次性放完，比拆成两声合成的更像真的。
+        // 返回 false 表示采样不可用，调用方用 'magout'/'magin' 两声兜底。
+        case 'reload': return this.sample('reload', 1.0, 1.0);
         case 'smg': this.noise(0.07, 1800, 1.0, 0.26, 0.15); this.tone(280, 80, 0.05, 0.08, 'square'); break;
         case 'shotgun': this.noise(0.30, 1200, 0.8, 0.45, 0.3); this.tone(160, 45, 0.18, 0.16, 'sawtooth'); break;
         case 'swing': this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
@@ -1967,7 +1998,9 @@
       punchT: 0,
       // 散弹枪逐发装填：shellReload > 0 表示正在塞当前这一发
       shellReload: 0,
-      shellTotal: 0
+      shellTotal: 0,
+      // 这次换弹有没有用真录音放（用了就不再补合成的"弹匣拍进去"声）
+      reloadSampled: false
     };
   }
 
@@ -2808,8 +2841,9 @@
           const take = Math.min(need, p.reserve);
           p.ammo += take;
           p.reserve -= take;
-          // 弹匣拍到位那一拍：闷响 + 机匣位置崩出两点火星
-          Sfx.play('magin');
+          // 弹匣拍到位那一拍：闷响 + 机匣位置崩出两点火星。
+          // 真录音里本来就含"拍进去"这一下，用录音时就不再叠合成的"咔"。
+          if (!p.reloadSampled) Sfx.play('magin');
           FX.kick(1.1, 0.06);
           FX.addParticles(p.x + p.facing.x * 12, p.y + p.facing.y * 12, 3, '#cfd6e2', 26, 0.16);
         }
@@ -2915,15 +2949,20 @@
    * 换弹动画的"拔弹匣"那一拍（上单装填不涉及退壳，散弹枪这里不甩任何东西）。
    * 手枪/冲锋枪甩一整个旧弹匣；散弹枪逐发塞弹时只播"咔"塞弹声，空壳在开火那一下已经退掉了。
    * 手动换弹和打空自动换弹共用，不然两条路只有一条有动画。
+   *
+   * 声音：能用真录音就整段放完（拔弹匣 + 拍上新弹匣一次到位，`p.reloadSampled` 记下来，
+   * 换弹结束那一拍就不再补合成的"咔"）；采样没准备好才退回两声合成的。
    */
   function reloadFx(p) {
     const ang = Math.atan2(p.facing.y, p.facing.x);
     if (p.weapon === 'shotgun') {
       Sfx.play('shellin');   // 塞弹的"咔"一声，不退壳（壳在开火时已退）
+      p.reloadSampled = false;
     } else {
       FX.addClip(p.x + p.facing.x * 9 + Math.cos(ang + Math.PI / 2) * 4,
                  p.y + p.facing.y * 9 + Math.sin(ang + Math.PI / 2) * 4, ang);
-      Sfx.play('magout');
+      p.reloadSampled = Sfx.play('reload') === true;
+      if (!p.reloadSampled) Sfx.play('magout');
     }
   }
 

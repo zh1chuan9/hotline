@@ -13,7 +13,7 @@
 <body>
 <canvas id="game" width="640" height="360"></canvas>
 <pre id="result">running…</pre>
-<script src="js/pistol_sfx.js"></script>
+<script src="js/sfx_samples.js"></script>
 <script src="js/game.js"></script>
 <script>
 (function () {
@@ -1420,27 +1420,47 @@
     }
     check('各关敌人生成后不贴门（' + ecnt + ' 人，最近 ' + minDoor.toFixed(0) + 'px > 20）', minDoor > 20);
 
-    // ============ 29.6 手枪枪声采样（内嵌 base64 的真实录音） ============
-    // 注意：解码是异步的，这里只验证"资源在、没坏、调用不炸"；实际解码结果由
-    // 浏览器控制台里的 pistolState 反映（2=就绪），失败会自动退回合成枪声。
-    const b64 = window.PISTOL_SFX_B64 || '';
-    check('枪声采样已内嵌（' + (b64.length / 1024).toFixed(0) + 'KB base64）', b64.length > 20000);
-    let mp3Head = '', mp3Len = 0;
-    try {
-      const raw = atob(b64);
-      mp3Len = raw.length;
-      mp3Head = raw.slice(0, 3);
-    } catch (err) { mp3Head = 'err'; }
-    check('采样是完整 MP3（' + mp3Len + ' 字节，头=' + mp3Head + '，原文件 27217）', mp3Head === 'ID3' && mp3Len > 20000);
-    check('音效系统已挂上（ac=' + !!H.sfx.ac + '，state=' + H.sfx.pistolState + '=' + (H.sfx.pistolState === 3 ? '解码失败' : '正常/就绪') + '）',
-      !!H.sfx.ac && H.sfx.pistolState !== 3);
+    // ============ 29.6 枪械音效采样（内嵌 base64 的真实录音） ============
+    // 注意：解码是异步的，这里只验证"资源在、没坏、调用不炸"；实际解码结果看
+    // Sfx.sampleState（2=就绪 / 3=失败，失败会自动退回合成音）。
+    const SAMP = window.SFX_SAMPLES || {};
+    let totalB64 = 0, badMp3 = [];
+    for (const nm of ['pistol', 'reload']) {
+      const s = SAMP[nm] || '';
+      totalB64 += s.length;
+      let ok = false;
+      try {
+        const raw = atob(s);
+        ok = raw.slice(0, 3) === 'ID3' && raw.length > 15000;
+      } catch (e) { ok = false; }
+      if (!ok) badMp3.push(nm);
+    }
+    check('枪声 + 换弹声采样都已内嵌（' + (totalB64 / 1024).toFixed(0) + 'KB base64）', totalB64 > 40000);
+    check('两个采样都是完整 MP3（' + (badMp3.length ? '坏：' + badMp3.join(',') : '头=ID3、各 >15KB') + '）', badMp3.length === 0);
+    check('音效系统已挂上（ac=' + !!H.sfx.ac + '，state=' + H.sfx.sampleState + '=' + (H.sfx.sampleState === 3 ? '解码失败' : '正常/就绪') + '）',
+      !!H.sfx.ac && H.sfx.sampleState !== 3);
     let shotErr = '';
     try {
       for (let i = 0; i < 6; i++) H.sfx.play('shoot');   // 连打，含解码未完成时的降级路径
       H.sfx.muted = true; H.sfx.play('shoot'); H.sfx.muted = false;
     } catch (err) { shotErr = err.message; }
-    check('连打 6 枪 + 静音反复切换都不报错' + (shotErr ? '（' + shotErr + '）' : ''),
-      shotErr === '' && H.sfx.pistolVoices <= 4);
+    const pv = (H.sfx.voices.pistol || []).length;
+    check('连打 6 枪 + 静音反复切换都不报错（声部 ' + pv + ' ≤ 4）', shotErr === '' && pv <= 4);
+
+    // 换弹：真录音整段放完，换弹结束就不该再补合成的"咔"
+    H.startGame({ mode: 'challenge' });
+    const gR = H.g, pR = gR.player;
+    pR.weapon = 'pistol'; pR.ammo = 2; pR.reserve = 40; pR.cooldown = 0; pR.reload = 0;
+    let reloadErr = '';
+    try { H.reload(); } catch (err) { reloadErr = err.message; }
+    check('换弹能触发且不报错（reload=' + (pR.reload || 0).toFixed(2) + 's，用录音=' + pR.reloadSampled + '）',
+      reloadErr === '' && pR.reload > 0 && typeof pR.reloadSampled === 'boolean');
+    if (H.sfx.sampleReady('reload')) {
+      check('采样就绪时换弹走录音（reloadSampled=' + pR.reloadSampled + '）', pR.reloadSampled === true);
+      check('换弹声有 2 声部上限（' + (H.sfx.voices.reload || []).length + ' ≤ 2）',
+        (H.sfx.voices.reload || []).length <= 2);
+    }
+    H.step(60);   // 让换弹走完，别把状态留给后面的用例
 
     // ============ 30.4 地图：更小 / 房间更多 / 敌人更多 ============
     const lvls = H.storyLevels;
