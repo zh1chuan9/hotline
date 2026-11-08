@@ -768,13 +768,13 @@
     H.holdAim(false);
     p23.weapon = 'pistol'; p23.ammo = 12;
 
-    // 丢武器系统已经删掉：没有接口，按 X 也不掉枪
+    // 挑战模式不提供扔枪（只有剧情模式有，绑 F）
     const pk23 = H.world.pickups.length;
     H.key('x', true);
     for (let i = 0; i < 3; i++) { H.step(1); H.frameEnd(true); }
     H.key('x', false);
-    check('丢武器系统已移除（throwWeapon=' + typeof H.throwWeapon + '，按 X 不掉枪）',
-      typeof H.throwWeapon === 'undefined' && p23.weapon === 'pistol' && H.world.pickups.length === pk23);
+    check('挑战模式按 X 不掉枪', p23.weapon === 'pistol' && H.world.pickups.length === pk23);
+    check('挑战模式直接调用扔枪被拒（throwWeapon 返回 false）', H.throwWeapon() === false);
     H.clearPressed();
 
     // ============ 24. 老虎机保底 ============
@@ -1303,6 +1303,9 @@
     check('剧情第一关有出口（exit=' + (wSt.exit ? wSt.exit.x + ',' + wSt.exit.y : 'null') + '）', !!wSt.exit);
 
     // 清空敌人 → 不应立即结算，而是进入「清场等出口」状态
+    // （终点就是出生点，所以先把玩家挪进楼里，否则站在门口清完会直接判定为已返回）
+    gSt.player.x = 15 * 24;
+    gSt.player.y = 8 * 24;
     for (const e of wSt.enemies) H.hitEnemy(e, 9999);
     H.step(1);  // 推进一帧触发清场判定
     check('剧情清空后敌人全灭', wSt.enemies.every(e => !e.alive));
@@ -1320,6 +1323,41 @@
     // 评分函数可用
     const grade = H.storyGrade ? H.storyGrade() : null;
     check('剧情评分函数可用（grade=' + grade + '）', grade !== null);
+
+    // ============ 30.2 剧情：一击必杀 / 无备弹 / 门外出生成 / 扔枪 ============
+    H.startGame({ mode: 'story' });
+    const w2 = H.world, g2 = H.g;
+    check('剧情出生点就是终点（迈阿密式原路返回）',
+      !!w2.exit && Math.abs(w2.exit.x - w2.spawn.x) < 0.01 && Math.abs(w2.exit.y - w2.spawn.y) < 0.01);
+    check('出生点在楼外街道（y=' + g2.player.y.toFixed(0) + '，需 > ' + (14 * 24) + '）', g2.player.y > 14 * 24);
+    check('剧情手枪没有备弹（reserve=' + g2.player.reserve + '）', g2.player.reserve === 0);
+    check('剧情满匣手枪（ammo=' + g2.player.ammo + '）', g2.player.ammo > 0);
+    const e0s = w2.enemies[0];
+    H.hitEnemy(e0s, 1);
+    check('剧情敌人一击必杀（1 点伤害也打死）', e0s.alive === false);
+    H.hurt(3);
+    check('剧情模式一击必杀（hp=' + g2.player.hp + '，alive=' + g2.player.alive + '）', g2.player.alive === false);
+
+    // 扔枪：手上这把飞出去 → 落地变成可捡的枪
+    H.startGame({ mode: 'story' });
+    const w3 = H.world, g3 = H.g;
+
+    // 撞门：玩家不靠子弹也能把门推开/撞开（否则子弹打光就进不了楼）
+    const dEnt = w3.doors[0];
+    if (dEnt) {
+      g3.player.x = dEnt.x;
+      g3.player.y = dEnt.y + 16;
+      H.step(1);
+      check('玩家走到门口会自动撞开门（open=' + dEnt.open + '）', dEnt.open === true);
+    }
+
+    const pkBefore = w3.pickups.length;
+    g3.player.facing = { x: 1, y: 0 };
+    const threw = H.throwWeapon();
+    check('剧情模式可以扔枪（thrown=' + H.thrown.length + '）', threw === true && H.thrown.length === 1);
+    check('扔出去后手上空了（weapon=' + g3.player.weapon + '）', !g3.player.weapon);
+    H.step(90);
+    check('扔出的枪落地变成拾取物（' + pkBefore + ' → ' + w3.pickups.length + '）', w3.pickups.length > pkBefore);
 
     // 挑战模式回归：仍走波次
     H.startGame({ mode: 'challenge' });

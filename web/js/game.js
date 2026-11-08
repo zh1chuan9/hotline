@@ -272,81 +272,76 @@
   const BARREL_RADIUS = 68;      // 爆炸半径
   const BARREL_DMG = 110;        // 中心伤害（按距离衰减到 30%）
   const BARREL_DELAY = 0.16;     // 中弹到炸开的引信时间：留一帧让人看见"我打中了"
-
-  // ---------------------------------------------------------------- 剧情模式关卡
-  // 参照迈阿密热线：逐关推进，每关一张"多房间 + 门 + 走廊"的地图，玩家从中央走廊逐个
-  // 破门突入房间清场，全部敌人清空即过关。每关记录击杀/连击/受伤，通关按迈阿密式评分结算。
-  // 地图 30×18：上排 3 房 + 中间走廊 + 下排 3 房，共 6 房、6 扇门（D）。门默认关闭，
-  // 玩家靠近/射击破门突入，敌人在房间内。
+  // 地图 30×18，但结构按迈阿密热线来：15/16 行是楼外街道，14 行是楼体正面（只留一扇入口门 D），
+  // 0-13 行才是室内。玩家出生在街道上（P），从门口打进去，杀完人再原路走回出生点即结算。
   // enemy：kind 用 ENEMY_KIND 键（melee/gun/shotgun），pos 为 [列, 行]（地图格坐标）。
-  // 房间格坐标：上排 (1-8,1-5) / (11-18,1-5) / (21-28,1-5)，下排 (1-8,12-16) / (11-18,12-16) / (21-28,12-16)。
-      const STORY_LEVELS = [
+  const STORY_LEVELS = [
     {
       title: '序章 · 破门',
       rows: [
         '##############################',
-        '#........#.........#.........#',
-        '#........#..o......#..o......#',
-        '#..o.....#......o..#......o..#',
-        '#.....o..#.........#.........#',
-        '#........#.........#.........#',
-        '#.o......#...o.....#...o.....#',
-        '#......o.#.......o.#.......o.#',
-        '#........#.........#.........#',
-        '####D#########D#########D#####',
+        '#.........#.........#........#',
+        '#....o....#.......o.#.....o..#',
+        '#.........#.o.......#........#',
+        '#.......o.#.........#.o......#',
+        '#.........#.........#........#',
+        '#.........#.........#........#',
+        '####D##########D#########D####',
+        '#............................#',
         '#............................#',
         '#......o..............o......#',
-        '#..........................E.#',
-        '#.P...........o..............#',
         '#............................#',
+        '#.............o..............#',
         '#............................#',
-        '#............................#',
+        '####D#########################',
+        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
         '##############################',
       ],
       enemies: [
         { kind: 'melee', pos: [3, 2] },
-        { kind: 'melee', pos: [14, 2] },
-        { kind: 'melee', pos: [24, 2] },
-        { kind: 'melee', pos: [5, 5] },
-        { kind: 'melee', pos: [15, 5] },
-        { kind: 'melee', pos: [25, 5] },
+        { kind: 'melee', pos: [6, 4] },
+        { kind: 'melee', pos: [13, 2] },
+        { kind: 'melee', pos: [17, 4] },
+        { kind: 'melee', pos: [23, 2] },
+        { kind: 'melee', pos: [27, 4] },
       ]
     },
     {
       title: '第二章 · 猎犬',
       rows: [
         '##############################',
-        '#.........#........#.........#',
-        '#..o...o..#..o...o.#...o.....#',
-        '#.........#........#.........#',
-        '#####D#########D########D#####',
-        '#............................#',
-        '#.......o.......o............#',
-        '#.............o..............#',
-        '#.P....o..............o......#',
-        '#...........o....o.........E.#',
-        '#............................#',
-        '#..............o.............#',
-        '#............................#',
-        '#####D#########D########D#####',
-        '#.........#........#.........#',
-        '#..o...o..#..o...o.#...o.....#',
-        '#.........#........#.........#',
+        '#.........#.........#........#',
+        '#.....o...#.........#......o.#',
+        '#.o.......#..o.....o#.o......#',
+        '#.........#.........#........#',
+        '####D##########D#########D####',
+        '#.......#............#.......#',
+        '#.......#............#.......#',
+        '#.......#............#.......#',
+        '#...o...#....o.......#...o...#',
+        '#.......D............D.......#',
+        '#.......#............#.......#',
+        '#...o...#........o...#...o...#',
+        '#.......#............#.......#',
+        '###############D##############',
+        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
         '##############################',
       ],
       enemies: [
         { kind: 'melee', pos: [4, 2] },
-        { kind: 'gun', pos: [11, 2] },
-        { kind: 'gun', pos: [20, 2] },
-        { kind: 'melee', pos: [27, 2] },
-        { kind: 'gun', pos: [5, 6] },
-        { kind: 'melee', pos: [11, 6] },
-        { kind: 'gun', pos: [20, 6] },
-        { kind: 'melee', pos: [25, 6] },
-        { kind: 'melee', pos: [4, 15] },
-        { kind: 'gun', pos: [11, 15] },
-        { kind: 'gun', pos: [20, 15] },
-        { kind: 'melee', pos: [27, 15] },
+        { kind: 'gun', pos: [12, 2] },
+        { kind: 'gun', pos: [17, 3] },
+        { kind: 'melee', pos: [26, 3] },
+        { kind: 'gun', pos: [5, 7] },
+        { kind: 'melee', pos: [6, 11] },
+        { kind: 'gun', pos: [24, 7] },
+        { kind: 'melee', pos: [23, 11] },
+        { kind: 'melee', pos: [12, 8] },
+        { kind: 'gun', pos: [17, 8] },
+        { kind: 'gun', pos: [15, 11] },
+        { kind: 'melee', pos: [19, 12] },
       ]
     },
     {
@@ -354,21 +349,21 @@
       rows: [
         '##############################',
         '#............#..#............#',
-        '#.P..........#X.#............#',
-        '#......o.....D..D......o.....#',
-        '#............#..#............#',
-        '#............#..#............#',
-        '##############..##############',
-        '#............#..#............#',
-        '#............#..#............#',
-        '#......o.....D..D......o.....#',
+        '#..o.....o...#..#...o.....o..#',
+        '#............D..D............#',
         '#............#..#............#',
         '##############..##############',
+        '#............#X.#............#',
+        '#........o...#..#...o........#',
+        '#..o.........D..D.........o..#',
+        '#............#..#............#',
         '##############..##############',
+        '#........o...#..#...o........#',
+        '#..o.........D.XD.........o..#',
         '#............#..#............#',
-        '#......o.....D..D......o.....#',
-        '#............#.X#..........E.#',
-        '#............#..#............#',
+        '##############D###############',
+        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
         '##############################',
       ],
       enemies: [
@@ -376,55 +371,55 @@
         { kind: 'gun', pos: [9, 3] },
         { kind: 'gun', pos: [21, 3] },
         { kind: 'melee', pos: [25, 3] },
-        { kind: 'gun', pos: [5, 9] },
-        { kind: 'shotgun', pos: [9, 9] },
-        { kind: 'shotgun', pos: [21, 9] },
-        { kind: 'gun', pos: [25, 9] },
-        { kind: 'gun', pos: [5, 14] },
-        { kind: 'melee', pos: [9, 14] },
-        { kind: 'melee', pos: [21, 14] },
-        { kind: 'gun', pos: [25, 14] },
+        { kind: 'gun', pos: [5, 8] },
+        { kind: 'shotgun', pos: [9, 8] },
+        { kind: 'shotgun', pos: [21, 8] },
+        { kind: 'gun', pos: [25, 8] },
+        { kind: 'gun', pos: [5, 12] },
+        { kind: 'melee', pos: [9, 12] },
+        { kind: 'melee', pos: [21, 12] },
+        { kind: 'gun', pos: [25, 12] },
       ]
     },
     {
       title: '终章 · 炽线',
       rows: [
         '##############################',
-        '#..o......................o..#',
-        '#.P..........................#',
-        '#.....###D##########D###.....#',
-        '#..o..#................#..o..#',
-        '#.....#................#...E.#',
-        '#.....#................#.....#',
-        '#.....#..o..o....o..o..#.....#',
-        '#.....D.......Xo.......#.....#',
-        '#.....#........X.......D.....#',
-        '#.....#..o..o.o..o..o..#.....#',
-        '#.....#................#.....#',
-        '#.....#................#.....#',
-        '#..o..#................#..o..#',
-        '#.....###D##########D###.....#',
         '#............................#',
-        '#..o......................o..#',
+        '#............................#',
+        '#......####D######D####......#',
+        '#..o...#..............#...o..#',
+        '#......#..o..o....o...#......#',
+        '#......D.......X......D......#',
+        '#......#..o..o..X...o.#......#',
+        '#..o...#..............#...o..#',
+        '#......####D######D####......#',
+        '#............................#',
+        '#..o.........o...o........o..#',
+        '#............................#',
+        '#............................#',
+        '###############D##############',
+        '#rrrrrrrrrrrrrrrrrrrrrrrrrrrr#',
+        '#rPrrrrrrrrrrrrrrrrrrrrrrrrrr#',
         '##############################',
       ],
       enemies: [
         { kind: 'shotgun', pos: [4, 2] },
-        { kind: 'gun', pos: [12, 2] },
-        { kind: 'gun', pos: [20, 2] },
-        { kind: 'shotgun', pos: [27, 2] },
-        { kind: 'melee', pos: [4, 8] },
-        { kind: 'melee', pos: [27, 8] },
-        { kind: 'gun', pos: [8, 6] },
-        { kind: 'gun', pos: [14, 12] },
-        { kind: 'melee', pos: [21, 6] },
-        { kind: 'shotgun', pos: [15, 12] },
-        { kind: 'gun', pos: [5, 15] },
-        { kind: 'shotgun', pos: [12, 15] },
-        { kind: 'gun', pos: [20, 15] },
-        { kind: 'shotgun', pos: [27, 15] },
+        { kind: 'gun', pos: [10, 2] },
+        { kind: 'gun', pos: [19, 2] },
+        { kind: 'shotgun', pos: [25, 2] },
+        { kind: 'gun', pos: [9, 5] },
+        { kind: 'melee', pos: [12, 7] },
+        { kind: 'melee', pos: [17, 5] },
+        { kind: 'gun', pos: [20, 8] },
+        { kind: 'melee', pos: [3, 6] },
+        { kind: 'gun', pos: [26, 6] },
+        { kind: 'gun', pos: [5, 12] },
+        { kind: 'shotgun', pos: [9, 12] },
+        { kind: 'melee', pos: [20, 12] },
+        { kind: 'gun', pos: [26, 12] },
       ]
-    },
+    }
   ];
 
   const ENEMY_KIND = {
@@ -509,14 +504,15 @@
     fireBtn: { x: VIEW_W - 176, y: VIEW_H - 150, r: 30 },
     // 独立瞄准键：右摇杆右上（按住抬枪 ADS）
     aimBtn: { x: VIEW_W - 176, y: VIEW_H - 210, r: 30 },
-    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互
+    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互 / 扔枪（仅剧情）
     buttons: [
       { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 236 },
       { key: 'q', label: '换枪', x: VIEW_W - 30, y: VIEW_H - 198 },
       { key: 'g', label: '手雷', x: VIEW_W - 30, y: VIEW_H - 160 },
       { key: '3', label: '医疗包', x: VIEW_W - 30, y: VIEW_H - 122 },
       { key: '4', label: '护甲板', x: VIEW_W - 30, y: VIEW_H - 84 },
-      { key: 'e', label: '交互', x: VIEW_W - 30, y: VIEW_H - 46 }
+      { key: 'e', label: '交互', x: VIEW_W - 30, y: VIEW_H - 46 },
+      { key: 'f', label: '扔枪', x: VIEW_W - 30, y: VIEW_H - 274 }
     ],
     btnR: 22
   };
@@ -538,6 +534,7 @@
     { id: '3',     label: '医疗包', ref: TOUCH_LAYOUT.buttons[3], kind: 'small' },
     { id: '4',     label: '护甲板', ref: TOUCH_LAYOUT.buttons[4], kind: 'small' },
     { id: 'e',     label: '交互',  ref: TOUCH_LAYOUT.buttons[5], kind: 'small' },
+    { id: 'f',     label: '扔枪',  ref: TOUCH_LAYOUT.buttons[6], kind: 'small' },
     { id: 'pause', label: '暂停',  ref: TOUCH_PAUSE, kind: 'small' },
     { id: 'skip',  label: '跳过',  ref: TOUCH_SKIP,  kind: 'rect' }
   ];
@@ -826,6 +823,9 @@
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
     // 动作按钮
     for (const b of L.buttons) {
+      // 剧情模式没有换弹（没有备弹），挑战模式没有扔枪：不放按了没反应的键
+      if (b.key === 'r' && G.mode === 'story') continue;
+      if (b.key === 'f' && G.mode !== 'story') continue;
       if (near(b, L.btnR * 1.2)) return 'btn:' + b.key;
     }
     if (near(TOUCH_PAUSE, TOUCH_PAUSE.r * 1.4)) return 'pause';
@@ -1298,6 +1298,7 @@
       barrels: [],      // 油桶：同样算墙，但能被子弹打爆
       doors: [],
       pickups: [],
+      thrown: [],       // 飞行中的投掷武器（剧情模式把枪扔出去砸人）
       enemies: [],
       spawnPoints: [],  // 刷怪点（M 字符）
       supplies: [],     // 补给点（S 字符）
@@ -2124,6 +2125,109 @@
     }
   }
 
+  /**
+   * 把手上这把家伙扔出去（剧情模式 F / 触屏"扔枪"）。
+   * 迈阿密热线式操作：子弹打光就把空枪砸出去 —— 砸中人直接砸死，枪落地还能再捡。
+   * 扔出去后手上空了：背上有枪就自动掏出来，没有就空手（去捡敌人的枪）。
+   */
+  const THROW_SPEED = 560;
+
+  function throwWeapon() {
+    const p = G.player;
+    if (!p || !p.alive || !W) return false;
+    if (G.mode !== 'story') return false;   // 挑战模式不给扔枪（会把商店买来的枪白扔了）
+    if (!p.weapon) return false;
+    if (p.reload > 0) return false;
+    const def = WEAPONS[p.weapon];
+    const a = Math.atan2(p.facing.y, p.facing.x);
+    W.thrown.push({
+      def: p.weapon,
+      ammo: def.melee ? 0 : p.ammo,     // 枪里剩多少子弹就带着飞
+      x: p.x + p.facing.x * 10,
+      y: p.y + p.facing.y * 10,
+      vx: Math.cos(a) * THROW_SPEED,
+      vy: Math.sin(a) * THROW_SPEED,
+      rot: a,
+      spin: 26 * (Math.random() < 0.5 ? -1 : 1),
+      life: 1.1
+    });
+    // 手上清空：先看背上有没有，有就顺手掏出来
+    p.weapon = null;
+    p.ammo = 0;
+    p.reserve = 0;
+    p.reload = 0;
+    p.reloadTotal = 0;
+    p.cooldown = Math.max(p.cooldown, 0.18);
+    if (p.side) {
+      p.weapon = p.side.weapon;
+      p.ammo = p.side.ammo;
+      p.reserve = G.mode === 'story' ? 0 : (p.side.reserve || 0);
+      p.side = null;
+      p.curSlot = 'main';
+    }
+    Sfx.play('swing');
+    emitNoise(p.x, p.y, 150);           // 扔东西有点动静，但不至于惊动整层楼
+    return true;
+  }
+
+  /** 投掷物飞行：撞墙/撞人就落地变成可捡的枪。 */
+  function updateThrown(dt) {
+    if (!W || !W.thrown) return;
+    const list = W.thrown;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const t = list[i];
+      t.life -= dt;
+      t.rot += t.spin * dt;
+      // 分两小步推进，避免一帧穿过薄墙
+      let landed = false;
+      for (let s = 0; s < 2 && !landed; s++) {
+        const nx = t.x + t.vx * dt * 0.5;
+        const ny = t.y + t.vy * dt * 0.5;
+        // 砸到敌人：一击必杀，枪掉在他身上
+        for (const e of W.enemies) {
+          if (!e.alive) continue;
+          const r = ACTOR_R + 6 + (e.scale ? e.scale * 2 : 0);
+          if (Math.hypot(nx - e.x, ny - e.y) <= r) {
+            damageEnemy(e, 9999, t.rot, true, false);
+            Sfx.play('hit');
+            emitNoise(nx, ny, 260);
+            landed = true;
+            break;
+          }
+        }
+        if (landed) break;
+        // 撞墙/门/掩体
+        if (pointSolid(W, nx, ny, 2)) { landed = true; break; }
+        t.x = nx; t.y = ny;
+      }
+      if (!landed && t.life > 0) continue;
+      // 落地：变成地上的枪（带着剩下的子弹）
+      const pk = makePickup(t.def, t.x, t.y);
+      pk.ammo = t.ammo;
+      pk.reserve = 0;
+      W.pickups.push(pk);
+      Sfx.play('step');
+      list.splice(i, 1);
+    }
+  }
+
+  /** 飞行中的投掷武器：旋转的枪影 + 地面小影子。 */
+  function drawThrown() {
+    if (!W || !W.thrown) return;
+    for (const t of W.thrown) {
+      const img = IMG[WEAPONS[t.def].icon];
+      if (!img) continue;
+      ctx.save();
+      ctx.translate(t.x, t.y);
+      ctx.globalAlpha = 0.30;
+      ctx.drawImage(IMG.shadow, -14, -12, 28, 28);
+      ctx.globalAlpha = 1;
+      ctx.rotate(t.rot);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      ctx.restore();
+    }
+  }
+
   function castShot(origin, angle, range, shooter) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
     let best = range, hitActor = null, hitBarrel = null, hitDoor = null;
@@ -2273,6 +2377,19 @@
   function damagePlayer(dmg, dirAngle) {
     const p = G.player;
     if (!p.alive) return true;
+    // 剧情模式：迈阿密式一击必杀 —— 不设血量，挨一下就死（护甲/血包都不参与）
+    if (G.mode === 'story') {
+      G.storyHits = (G.storyHits || 0) + 1;
+      FX.addBlood(p.x, p.y, { x: Math.cos(dirAngle), y: Math.sin(dirAngle) }, 4, 0.7);
+      p.hp = 0;
+      p.alive = false;
+      p.deathDir = dirAngle;
+      p.grenadeHeld = false;
+      FX.flash = 0.6;
+      FX.kick(4, 0.15);
+      Sfx.play('hit');
+      return true;
+    }
     let remaining = dmg;
     // 剧情模式评分统计：每次受击（掉了护甲或血）都记一次
     if (G.mode === 'story' && remaining > 0) G.storyHits = (G.storyHits || 0) + 1;
@@ -2304,6 +2421,8 @@
   /** 对敌人造成伤害，返回是否死亡。精英先扣护甲：护甲打光前只碎甲不掉血。 */
   function damageEnemy(e, dmg, dirAngle, byPlayer, headshot) {
     if (!e.alive) return true;
+    // 剧情模式：迈阿密式一击必杀 —— 不管什么枪、打中哪，一下就死（护甲也不顶）
+    if (G.mode === 'story') { dmg = 9999; }
     // 护甲先扣（仅精英有）。击中护甲时给准心护甲反馈，护甲被打空那一下给破碎反馈。
     if (e.armor > 0) {
       const absorbed = Math.min(e.armor, dmg);
@@ -2353,12 +2472,13 @@
     }
     Sfx.play('die');
     e.deadT = 0;
-    // 掉枪：近战武器不掉（匕首/球棍满地都是没意义，还会盖住血包和子弹）
-    if (e.weapon && !WEAPONS[e.weapon].melee) {
+    // 掉枪：挑战模式近战武器不掉（匕首/球棍满地都是没意义，还会盖住血包和子弹）；
+    // 剧情模式没有备弹，近战也得掉 —— 子弹打光只能靠捡刀接着打
+    if (e.weapon && (!WEAPONS[e.weapon].melee || G.mode === 'story')) {
       const pk = makePickup(e.weapon, e.x, e.y);
-      pk.ammo = e.ammo;
-      // 掉落的枪自带一份备弹（约 1/3 满额），否则捡起来只有枪里剩的那几发
-      pk.reserve = Math.max(6, Math.round(WEAPONS[e.weapon].reserveMax * 0.35));
+      pk.ammo = WEAPONS[e.weapon].melee ? 0 : e.ammo;
+      // 挑战模式：掉落的枪自带一份备弹；剧情模式没有备弹，就枪里剩的那几发
+      pk.reserve = G.mode === 'story' ? 0 : Math.max(6, Math.round(WEAPONS[e.weapon].reserveMax * 0.35));
       W.pickups.push(pk);
     }
     e.weapon = null;
@@ -2381,10 +2501,11 @@
       // 积分即货币，但剧情模式没有商店/金钱系统，不累加现金
       if (G.mode !== 'story') G.cash += gained;
       FX.addText(e.x, e.y - 12,
-        (headshot ? '爆头 ' : '') + '+' + gained + (G.combo > 1 ? ' x' + G.combo : ''),
+        G.mode === 'story' ? '+' + gained
+          : (headshot ? '爆头 ' : '') + '+' + gained + (G.combo > 1 ? ' x' + G.combo : ''),
         headshot ? '#e02929' : (G.combo > 1 ? '#e02929' : '#ffffff'));
-      // 概率掉落：血包 / 子弹
-      rollDrop(e);
+      // 概率掉落：血包 / 子弹（剧情模式用不上，掉了反而是干扰）
+      if (G.mode !== 'story') rollDrop(e);
       // 精英/BOSS：直接给稀有资源，掉在地上反而容易漏捡
       if (e.elite || e.boss) {
         killer.grenades = Math.min(GRENADE_MAX, killer.grenades + 1);
@@ -2528,6 +2649,16 @@
     p.y += p.vy * dt;
     resolveCircle(W, p, ACTOR_R, solidRects(W, true));
 
+    // 撞门：走到门口自动把门撞开（迈阿密式突入）。不这么做的话，子弹打光就
+    // 连楼门都进不去了 —— 玩家必须永远能用身体推门，而不是只能开枪打门。
+    for (const d of W.doors) {
+      if (d.open) continue;
+      if (dist2(p.x, p.y, d.x, d.y) < 26 * 26) {
+        breakDoor(d, { x: d.x, y: d.y });
+        break;
+      }
+    }
+
     // 脚步
     if (il > 0 && p.stun <= 0) {
       p.stepTimer -= dt;
@@ -2599,6 +2730,9 @@
 
     // 手雷（G）：切换手持手雷，切出后左键丢、右键瞄准
     if (pressed['g']) toggleGrenade();
+
+    // 扔枪（F）：剧情模式把手上这把砸出去（砸中人直接死，落地还能捡回来）
+    if (pressed['f'] && G.mode === 'story') throwWeapon();
 
     // 攻击（按住/单击）
     const fireHeld = mouse.down || keys['j'];
@@ -2870,6 +3004,20 @@
     if (!def || def.melee) return false;
     const slot = toSide ? p.side : p;
     if (!slot) return false;
+    // 剧情模式没有备弹：同型号的枪只能"把子弹并进弹匣"，捡完这枪就空了
+    if (G.mode === 'story') {
+      const mag = gunStat(pk.def, 'mag');
+      const clip = pk.ammo !== undefined ? pk.ammo : mag;
+      const cur = slot.ammo || 0;
+      if (cur >= mag) return false;
+      const add = Math.min(mag - cur, clip);
+      if (add <= 0) return false;
+      slot.ammo = cur + add;
+      W.pickups.splice(W.pickups.indexOf(pk), 1);
+      FX.addText(p.x, p.y - 12, '+' + add, '#e02929');
+      Sfx.play('pickup');
+      return true;
+    }
     const have = slot.reserve || 0;
     if (have >= def.reserveMax) return false;
     // 枪里剩多少给多少，再加它自带的那份备弹（敌人掉的枪已在掉落时带上备弹）
@@ -2907,6 +3055,32 @@
     const def = WEAPONS[best.def];
     if (!def) return;
 
+    // 剧情模式只有"手上这一把"：走过去不会自动抢（免得踩过一把空枪就把满弹的换掉），
+    // 同型号自动把子弹并进弹匣；换别的枪要按 E。
+    if (G.mode === 'story') {
+      if (p.weapon === best.def) { absorbAmmo(p, best, false); return; }
+      if (p.weapon && !explicit) return;
+      const magS = gunStat(best.def, 'mag');
+      const ammoS = best.ammo !== undefined ? best.ammo : magS;
+      if (p.weapon) {
+        const oldPk = makePickup(p.weapon, p.x, p.y);
+        oldPk.ammo = p.ammo;
+        oldPk.reserve = 0;
+        W.pickups.push(oldPk);
+      }
+      p.weapon = best.def;
+      p.ammo = ammoS;
+      p.reserve = 0;
+      p.side = null;
+      p.curSlot = 'main';
+      p.reload = 0;
+      p.reloadTotal = 0;
+      p.cooldown = 0;
+      W.pickups.splice(W.pickups.indexOf(best), 1);
+      Sfx.play('pickup');
+      return;
+    }
+
     // 同型号：优先并成备弹；备弹已经满了就让它进空槽位（两把同款也能背一把）
     if (p.weapon === best.def && absorbAmmo(p, best, false)) return;
     if (p.side && p.side.weapon === best.def && absorbAmmo(p, best, true)) return;
@@ -2918,7 +3092,8 @@
     const mag = gunStat(best.def, 'mag');
     const ammo = best.ammo !== undefined ? best.ammo : mag;
     const spare = best.reserve !== undefined ? best.reserve : 0;
-    const reserve = Math.min(def.reserveMax, spare);
+    // 剧情模式没有备弹（枪里剩多少就是多少），挑战模式照旧带走那份备弹
+    const reserve = G.mode === 'story' ? 0 : Math.min(def.reserveMax, spare);
     if (!p.weapon) {
       p.weapon = best.def;
       p.ammo = ammo;
@@ -3817,7 +3992,7 @@
       BLASTS.length = 0;
       G.player.weapon = 'pistol';
       G.player.ammo = WEAPONS.pistol.mag;
-      G.player.reserve = WEAPONS.pistol.reserveMax;
+      G.player.reserve = 0;          // 剧情模式没有备弹
       G.cam.x = clamp(G.player.x - VIEW_W / ZOOM / 2, 0, Math.max(0, W.pxW - VIEW_W / ZOOM));
       G.cam.y = clamp(G.player.y - VIEW_H / ZOOM / 2, 0, Math.max(0, W.pxH - VIEW_H / ZOOM));
       G.camV.x = 0;
@@ -3899,6 +4074,8 @@
       W.enemies.push(e);
     }
     W.cleared = false;
+    // 迈阿密规则：从哪里进来就从哪里出去 —— 终点就是出生点（门外街道上的那格）
+    W.exit = { x: W.spawn.x, y: W.spawn.y };
   }
 
   /** 剧情模式评分：迈阿密式等级（A+ 最高，D 最低），综合连击、受伤、用时。 */
@@ -3938,6 +4115,13 @@
     G.player.alive = true;
     G.player.hp = HP_MAX;
     G.player.deadT = 0;
+    // 每关重新发一把满匣手枪（没有备弹，子弹打光就去捡地上的）
+    G.player.weapon = 'pistol';
+    G.player.ammo = WEAPONS.pistol.mag;
+    G.player.reserve = 0;
+    G.player.side = null;
+    G.player.reload = 0;
+    G.player.reloadTotal = 0;
     G.combo = 0;
     G.comboTimer = 0;
     G.state = 'play';
@@ -3967,7 +4151,8 @@
     G.player.deadT = 0;
     G.player.weapon = 'pistol';
     G.player.ammo = WEAPONS.pistol.mag;
-    G.player.reserve = WEAPONS.pistol.reserveMax;
+    G.player.reserve = 0;
+    G.player.side = null;
     G.combo = 0;
     G.comboTimer = 0;
     G.state = 'play';
@@ -4209,6 +4394,7 @@
       updatePlayer(dt);
       updateBarrels(dt);
       updateGrenades(dt);
+      updateThrown(dt);
       for (const e of W.enemies) updateEnemy(e, dt);
       updatePickups(dt);
       // 清场判定
@@ -4218,10 +4404,9 @@
         if (alive === 0) {
           W.cleared = true;
           if (G.mode === 'story') {
-            // 剧情模式：清空敌人后激活终点，走到终点才过关结算
-            G.centerText = '已清场 · 前往出口';
-            G.centerColor = MIAMI.white;
-            G.centerTimer = 2.0;
+            // 剧情模式：清空敌人后门口亮起（终点 = 出生点），走回去才结算。
+            // HUD 只允许数字，这里不给文字提示，靠门口那圈红光引导。
+            G.centerText = '';
             Sfx.play('clear');
           } else {
             G.intermission = INTERMISSION_TIME;
@@ -4302,6 +4487,11 @@
         if (ch2 === '#') continue;
         const img = ((x * 7 + y * 13) % 5 === 0) ? IMG.floor2 : IMG.floor;
         ctx.drawImage(img, x * TILE, y * TILE, TILE, TILE);
+        // 'r' = 楼外街道：压暗成柏油路面，一眼看出"这是门外"
+        if (ch2 === 'r') {
+          ctx.fillStyle = 'rgba(4,4,6,0.66)';
+          ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        }
       }
     }
   }
@@ -4528,17 +4718,25 @@
     ctx.arc(0, 0, 14 + Math.sin(t * 2) * 1.5, 0, 6.283);
     ctx.fill();
     ctx.globalAlpha = 1;
-    // 出口门形图标：一个向上的箭头 / 门框
+    // 出口门形图标：一个门框（不放文字，HUD/画面里都只用图形和数字）
     ctx.strokeStyle = active ? MIAMI.white : '#9a9aa2';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(-8, 8); ctx.lineTo(-8, -4); ctx.lineTo(0, -10); ctx.lineTo(8, -4); ctx.lineTo(8, 8);
     ctx.stroke();
-    // 文字：清场后红色提示「出口」，清场前灰色「出口」+ 提示先清场
-    ctx.font = 'bold 9px "Microsoft YaHei", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = active ? MIAMI.white : '#9a9aa2';
-    ctx.fillText(active ? '出口' : '出口 · 清场后开放', 0, 22);
+    // 清场后：往外扩的红色脉冲圈，远处也能一眼看到门口亮了
+    if (active) {
+      for (let i = 0; i < 2; i++) {
+        const ph = ((t * 0.8 + i * 0.5) % 1);
+        ctx.globalAlpha = (1 - ph) * 0.5;
+        ctx.strokeStyle = MIAMI.red;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 14 + ph * 26, 0, 6.283);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -5061,6 +5259,9 @@
 
     // ---- 动作按钮 ----
     for (const b of L.buttons) {
+      // 「扔枪」只有剧情模式有；「换弹」只有挑战模式有（剧情没有备弹）
+      if (b.key === 'f' && G.mode !== 'story') continue;
+      if (b.key === 'r' && G.mode === 'story') continue;
       const act = !!touchPressed[b.key];
       ctx.globalAlpha = act ? 0.55 : 0.30;
       ctx.fillStyle = act ? '#c8c8d0' : '#3a3a40';
@@ -5123,38 +5324,39 @@
     ctx.save();
     ctx.textBaseline = 'top';
 
-    // 左上：模式标签（剧情模式显示"关卡 X/Y"，挑战模式显示波次）
-    ctx.font = 'bold 12px "Microsoft YaHei", monospace';
-    ctx.textAlign = 'left';
-    const waveLabel = G.mode === 'story'
-      ? '关卡 ' + (G.storyLevel + 1) + ' / ' + STORY_LEVELS.length
-      : (G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中');
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillText(waveLabel, 11 + HUD_OFF.wave.x, 11 + HUD_OFF.wave.y);
-    ctx.fillStyle = G.mode === 'story' ? '#e02929' : '#c8c8d0';
-    ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
+    // 剧情模式：极简 HUD —— 只有数字（右上剩余人数/分数、左下武器+子弹）
+    if (G.mode === 'story') {
+      drawStoryHUD();
+    } else {
+      // 左上：模式标签（挑战模式显示波次）
+      ctx.font = 'bold 12px "Microsoft YaHei", monospace';
+      ctx.textAlign = 'left';
+      const waveLabel = G.wave > 0 ? '第 ' + G.wave + ' 波' : '准备中';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText(waveLabel, 11 + HUD_OFF.wave.x, 11 + HUD_OFF.wave.y);
+      ctx.fillStyle = '#c8c8d0';
+      ctx.fillText(waveLabel, 10 + HUD_OFF.wave.x, 10 + HUD_OFF.wave.y);
 
-    // 右上：现金（击杀所得，商店货币）。剧情模式无金钱系统，不显示。
-    if (G.mode !== 'story') {
+      // 右上：现金（击杀所得，商店货币）
       ctx.textAlign = 'right';
       ctx.font = 'bold 13px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.fillText('$' + G.cash, VIEW_W - 9 + HUD_OFF.cash.x, 11 + HUD_OFF.cash.y);
       ctx.fillStyle = '#e02929';
       ctx.fillText('$' + G.cash, VIEW_W - 10 + HUD_OFF.cash.x, 10 + HUD_OFF.cash.y);
+
+      // 左下：血量 + 护甲（只给条和格，不标数值）
+      drawBodyHUD();
+
+      // 右下：主副武器 / 消耗品，每行挂上对应按键
+      drawLoadoutHUD();
+
+      // 正下方：只剩小半匣时提示按 R
+      drawReloadHint();
     }
 
-    // 左下：血量 + 护甲（只给条和格，不标数值）
-    drawBodyHUD();
-
-    // 右下：主副武器 / 消耗品，每行挂上对应按键
-    drawLoadoutHUD();
-
-    // 正下方：只剩小半匣（≤1/2 黄、≤1/3 红）时提示按 R
-    drawReloadHint();
-
-    // 连击（挪到现金下面，把底部整排让给装备栏）
-    if (G.combo > 1 && G.comboTimer > 0) {
+    // 连击（挑战模式才显示；剧情模式 HUD 只允许数字）
+    if (G.mode !== 'story' && G.combo > 1 && G.comboTimer > 0) {
       ctx.textAlign = 'right';
       ctx.font = 'bold 14px "Microsoft YaHei", monospace';
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -5163,8 +5365,8 @@
       ctx.fillText('x' + G.combo, VIEW_W - 10 + HUD_OFF.combo.x, 28 + HUD_OFF.combo.y);
     }
 
-    // 中下：提示
-    if (G.toastTimer > 0 && G.toast) {
+    // 中下：提示（剧情模式不放文字提示）
+    if (G.mode !== 'story' && G.toastTimer > 0 && G.toast) {
       ctx.globalAlpha = clamp(G.toastTimer, 0, 1);
       ctx.textAlign = 'center';
       ctx.font = 'bold 11px "Microsoft YaHei", monospace';
@@ -5220,13 +5422,15 @@
       }
     }
 
-    // 正下方小灰字：版本号（低调地贴在底部中间，不影响操作）
-    ctx.textAlign = 'center';
-    ctx.font = '9px Consolas, "Microsoft YaHei", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillText('v0.01', VIEW_W / 2 + 1, VIEW_H - 10);
-    ctx.fillStyle = 'rgba(185, 178, 194, 0.8)';
-    ctx.fillText('v0.01', VIEW_W / 2, VIEW_H - 11);
+    // 正下方小灰字：版本号（剧情模式 HUD 不放文字，只在挑战模式显示）
+    if (G.mode !== 'story') {
+      ctx.textAlign = 'center';
+      ctx.font = '9px Consolas, "Microsoft YaHei", monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillText('v0.01', VIEW_W / 2 + 1, VIEW_H - 10);
+      ctx.fillStyle = 'rgba(185, 178, 194, 0.8)';
+      ctx.fillText('v0.01', VIEW_W / 2, VIEW_H - 11);
+    }
 
     ctx.restore();
   }
@@ -5432,6 +5636,60 @@
    * 之前是在右下角备弹左边贴一个 [R] 小方框：那块地方被弹药数字、图标和键位标
    * 挤满，11px 的小框既看不清、又让人以为是 UI 错位，所以整条挪到画面正中偏下。
    */
+  /**
+   * 剧情模式 HUD：只允许数字，不出现任何文字。
+   *   右上：上排 = 场上剩余人数（红），下排 = 分数（白）
+   *   左下：手上那把枪的剪影 + 弹匣剩弹
+   * 不显示血量（一击必杀）、备弹（剧情没有备弹）、关卡名、连击、现金。
+   */
+  function drawStoryHUD() {
+    const p = G.player;
+    let alive = 0;
+    for (const e of W.enemies) if (e.alive) alive++;
+
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    // 剩余人数
+    ctx.font = 'bold 22px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillText('' + alive, VIEW_W - 9, 9);
+    ctx.fillStyle = alive > 0 ? '#e02929' : '#5a5a60';
+    ctx.fillText('' + alive, VIEW_W - 10, 8);
+    // 分数
+    ctx.font = 'bold 13px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillText('' + (G.score || 0), VIEW_W - 9, 33);
+    ctx.fillStyle = '#c8c8d0';
+    ctx.fillText('' + (G.score || 0), VIEW_W - 10, 32);
+
+    if (!p) return;
+    // 左下：武器剪影 + 弹匣内子弹（近战没子弹，就只画枪）
+    const def = p.weapon ? WEAPONS[p.weapon] : null;
+    const bx = 8, by = VIEW_H - 34;
+    if (def) {
+      drawWeaponSprite(def.icon, bx + 28, by - 12, 54, 26, 0.95);
+      if (!def.melee) {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = 'bold 22px Consolas, monospace';
+        const txt = '' + p.ammo;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillText(txt, bx + 61, by + 1);
+        ctx.fillStyle = p.ammo <= 0 ? '#e05a4a' : '#f6f0e4';
+        ctx.fillText(txt, bx + 60, by);
+      }
+    } else {
+      // 空手：一个空心圆圈，表示没家伙了（去捡或去扔）
+      ctx.strokeStyle = 'rgba(200,200,208,0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(bx + 28, by - 12, 11, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+  }
+
   function drawReloadHint() {
     if (G.state !== 'play') return;             // 死了 / 结算 / 商店里别催
     const p = G.player;
@@ -6089,7 +6347,7 @@
     ctx.font = '11px "Microsoft YaHei", monospace';
     ctx.fillText(inputMode === 'touch'
       ? '左摇杆移动 · 右摇杆瞄准 · 瞄准键抬枪 · 交互键交互'
-      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取', VIEW_W / 2, 326);
+      : 'WASD 移动 · 左键开火 · 右键瞄准 · G 手雷 · E 交互/拾取 · F 扔枪', VIEW_W / 2, 326);
     ctx.restore();
 
     // 整页套一层 CRT 电视效果（圆角管面 / 暗角 / 扫描线 / 荧光 / 闪烁）
@@ -6482,6 +6740,7 @@
     drawLaser();
 
     drawGrenades();
+    drawThrown();
     drawEffects();
     drawBlasts();
     drawWorldTexts();
@@ -6760,7 +7019,7 @@
       }
     }
     // R：手动换弹（重置关卡功能已去掉，死了会自动重来）
-    if (pressed['r'] && G.state === 'play') startReload();
+    if (pressed['r'] && G.state === 'play' && G.mode !== 'story') startReload();
     // 整备期间：空格/回车跳过，立即进下一波
     if (G.state === 'play' && W.cleared && G.intermission > 0 &&
         (pressed[' '] || pressed['enter'])) {
@@ -7206,6 +7465,9 @@
     hitEnemy(e, dmg) { return damageEnemy(e, dmg || 999, 0, true, false); },
     /** 破门（测试用） */
     breakDoor(d, hitPos) { return breakDoor(d, hitPos || { x: d.x, y: d.y }); },
+    /** 剧情模式：把手上的枪扔出去（测试用） */
+    throwWeapon() { return throwWeapon(); },
+    get thrown() { return W ? W.thrown : []; },
     /** 剧情模式：评分 / 下一关 / 重开（测试用） */
     storyGrade,
     nextStoryLevel,
