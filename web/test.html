@@ -1600,6 +1600,19 @@
     check('武士刀砍死人有概率断肢（40 次里 ' + knifeGib + ' 次）', knifeGib > 10);
     // 断过肢的尸体要标成残躯：胳膊飞了就不能再贴一张"手还长在身上"的完整尸体图
     check('砍飞胳膊时尸体标记成残躯（40 次里 ' + dismemberHeads + ' 次，头还在）', dismemberHeads > 8);
+    // 残缺版尸体贴图（原图擦掉手/头）要真的加载了，否则 drawActor 会退回完整版 = 白改了
+    const imgs = H.images;
+    const texOk = ['corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun'].every(function (n) {
+      return imgs[n + '_noarms'] && imgs[n + '_noarms'].width === 32 &&
+             imgs[n + '_torso'] && imgs[n + '_torso'].width === 32;
+    });
+    check('残缺版尸体贴图已加载（6 张 32x32）', texOk);
+    // 选图逻辑：完整 / 只少胳膊 / 头也没了 三种情况各贴哪张
+    const pickFull = H.corpseTextureOf({ dismember: false, gibbed: false }, 'corpse_enemy_gun');
+    const pickArms = H.corpseTextureOf({ dismember: true, gibbed: false }, 'corpse_enemy_gun');
+    const pickHead = H.corpseTextureOf({ dismember: true, gibbed: true }, 'corpse_enemy_gun');
+    check('尸体选图：完整→原图 / 断臂→_noarms / 断头→_torso（' + pickFull + ' / ' + pickArms + ' / ' + pickHead + '）',
+      pickFull === 'corpse_enemy_gun' && pickArms === 'corpse_enemy_gun_noarms' && pickHead === 'corpse_enemy_gun_torso');
 
     // 剧情模式玩家移速加成（对比同一帧输入下两种模式的水平速度）
     H.startGame({ mode: 'story' });

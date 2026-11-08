@@ -66,12 +66,18 @@
 
   // ---------------------------------------------------------------- 资源
   const SPRITE_DIR = 'assets/sprites/';
-  // 活人造型不用贴图（一个头 + 两只圆手，实时画），这里只留场景、血、尸体和武器
+  // 活人造型不用贴图（一个头 + 两只圆手，实时画），这里只留场景、血、尸体和武器。
+  // 每张敌人尸体还配两份"残缺版"（tools/make_corpse_variants.py 直接从原图擦掉手/头再补描边）：
+  //   *_noarms  两只手没了，头还在 —— 胳膊被砍飞时用
+  //   *_torso   手和头都没了，只剩躯干 —— 头被打飞时用
+  // 这样残缺版和完整版是同一张图、同一套笔触，摆在一起不会像两种画风。
   const SPRITE_NAMES = [
     'wall', 'floor', 'floor2', 'door', 'cover', 'shadow', 'spark', 'dot',
     'blood_1', 'blood_2', 'blood_3', 'blood_4', 'blood_5', 'blood_6',
     'blood_streak_1', 'blood_streak_2', 'blood_streak_3',
     'corpse_player', 'corpse_enemy_melee', 'corpse_enemy_gun', 'corpse_enemy_shotgun',
+    'corpse_enemy_melee_noarms', 'corpse_enemy_gun_noarms', 'corpse_enemy_shotgun_noarms',
+    'corpse_enemy_melee_torso', 'corpse_enemy_gun_torso', 'corpse_enemy_shotgun_torso',
     'w_pistol', 'w_shotgun', 'w_smg', 'w_bat', 'w_knife'
   ];
   const IMG = {};
@@ -5494,51 +5500,16 @@
   }
 
   /**
-   * 断肢之后躺在地上的"剩下的那一坨"：一截压扁的布 + （头还在的话）脑袋 + 两处暗红断口。
-   * 贴图版尸体（32px 面朝下）里手和头是长在身上的，胳膊被砍飞以后再原样贴回去，
-   * 就成了"地上躺着一只手、身上还长着一只手"。所以断过肢的尸体不用贴图，改画这套残骸。
-   * 局部坐标和尸体贴图一致：原点在身体中心，长边沿 x（调用前已经按 deathDir 转过）。
+   * 这具尸体该贴哪张图。
+   * 断过肢的不另画一套残骸（笔触跟贴图对不上，一眼两种画风），
+   * 而是用原贴图擦掉手/头的那两份：头飞了用 _torso，只少了胳膊用 _noarms。
+   * 贴图缺失时退回完整版，不至于画成空白。
    */
-  function drawRemains(pal, headless) {
-    const cloth = shade(pal.head, 0.58);
-    const dark = shade(pal.head, 0.4);
-    const rim = 'rgba(0,0,0,0.62)';
-    const blood = 'rgba(150,18,32,0.9)';
-    ctx.lineCap = 'round';
-    // 腿：先从躯干后面拖出去一小截（先画，被躯干盖住根部），轮廓才不是个圆饼
-    ctx.strokeStyle = rim;
-    ctx.lineWidth = 7.4;
-    ctx.beginPath(); ctx.moveTo(-6.6, 0); ctx.lineTo(-9.6, 0); ctx.stroke();
-    ctx.strokeStyle = dark;
-    ctx.lineWidth = 5.6;
-    ctx.beginPath(); ctx.moveTo(-6.6, 0); ctx.lineTo(-9.6, 0); ctx.stroke();
-    // 躯干：一段压扁的圆头胶囊（长边沿 x），先黑描边再压布色
-    ctx.strokeStyle = rim;
-    ctx.lineWidth = 10.6;
-    ctx.beginPath(); ctx.moveTo(-5.4, 0); ctx.lineTo(2.0, 0); ctx.stroke();
-    ctx.strokeStyle = cloth;
-    ctx.lineWidth = 8.6;
-    ctx.beginPath(); ctx.moveTo(-5.4, 0); ctx.lineTo(2.0, 0); ctx.stroke();
-    // 头：还在就画在 +x 那头（面朝下，露后脑 + 一点侧脸）
-    if (!headless) {
-      ctx.fillStyle = rim;
-      ctx.beginPath(); ctx.arc(6.4, 0, 5.0, 0, 6.283); ctx.fill();
-      ctx.fillStyle = pal.head;
-      ctx.beginPath(); ctx.arc(6.4, 0, 4.4, 0, 6.283); ctx.fill();
-      ctx.fillStyle = pal.skin;
-      ctx.beginPath(); ctx.arc(7.9, 0.5, 2.7, 0, 6.283); ctx.fill();
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';            // 一只闭着的眼：读成"侧着躺"而不是一张正脸
-      ctx.beginPath(); ctx.ellipse(7.6, -1.6, 1.5, 0.5, 0.5, 0, 6.283); ctx.fill();
-      ctx.fillStyle = blood;                          // 脖子一圈血
-      ctx.beginPath(); ctx.ellipse(2.9, 0, 1.3, 2.1, 0, 0, 6.283); ctx.fill();
-    } else {
-      ctx.fillStyle = blood;                          // 头没了：只剩脖子断口
-      ctx.beginPath(); ctx.ellipse(3.4, 0, 2.0, 2.4, 0, 0, 6.283); ctx.fill();
-    }
-    // 肩两侧的断口（两条胳膊被砍飞的地方）
-    ctx.fillStyle = blood;
-    ctx.beginPath(); ctx.ellipse(-1.4, -3.8, 1.7, 1.1, 0.4, 0, 6.283); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(-1.0, 3.8, 1.6, 1.0, -0.4, 0, 6.283); ctx.fill();
+  function corpseTexture(a, corpse) {
+    const base = corpse || 'corpse_player';
+    if (a.gibbed && IMG[base + '_torso']) return base + '_torso';
+    if (a.dismember && IMG[base + '_noarms']) return base + '_noarms';
+    return base;
   }
 
   function drawActor(a, tex, isPlayer, corpse) {
@@ -5567,12 +5538,7 @@
       // 尸体是单独画的贴图（面朝下摊开），不是把活人转个角度
       ctx.rotate(a.deathDir + 0.18);
       ctx.globalAlpha = 0.92;
-      if (a.gibbed || a.dismember) {
-        // 断肢之后：贴图里那两只手/那颗头已经飞出去了，不能再原样贴一遍
-        drawRemains(PALETTE[tex] || PALETTE.player, a.gibbed);
-      } else {
-        ctx.drawImage(IMG[corpse] || IMG.corpse_player, -16, -16, 32, 32);
-      }
+      ctx.drawImage(IMG[corpseTexture(a, corpse)] || IMG.corpse_player, -16, -16, 32, 32);
       ctx.restore();
       return;
     }
@@ -8160,6 +8126,10 @@
     get upGuns() { return UP_GUNS; },
     /** 图标调试：把武器剪影 / 消耗品图标画到外部 context 上（对比形状用） */
     drawWeaponSprite, drawItemIcon, whiteSprite,
+    /** 贴图表（测试用它确认残缺版尸体贴图真的加载了） */
+    images: IMG,
+    /** 某个敌人尸体实际会用哪张图（测试断肢/断头选贴图用） */
+    corpseTextureOf(e, corpse) { return corpseTexture(e, corpse); },
     freeze(on) { if (G) G.freeze = !!on; },
     /** 手动推进 n 个物理步（不渲染），用于无头测试 */
     step(n) { for (let i = 0; i < (n || 1); i++) update(STEP); },
