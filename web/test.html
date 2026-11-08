@@ -1481,6 +1481,50 @@
     check('每关至少 6 扇门/房间隔断（最少 ' + minDoors + ' 扇，四关共 ' + totalDoors + '）', minDoors >= 6);
     check('每关敌人更多（最少 ' + minEnemies + ' 人）', minEnemies >= 8);
 
+    // 木箱/油桶在碰撞上就是墙：不能正对着门（门只有一格宽，堵在那格这间房就彻底进不去），
+    // 也不能把某间房封死 —— 用"把箱子当墙"的 BFS 再走一遍，所有敌人得还够得着。
+    let blockedDoorAt = '', unreachableAt = '';
+    for (let di = 0; di < lvls.length; di++) {
+      const rows = lvls[di].rows, hh = rows.length, ww = rows[0].length;
+      const isSolid = (x, y) => {
+        if (x < 0 || y < 0 || x >= ww || y >= hh) return true;
+        const c = rows[y][x];
+        return c === '#' || c === 'o' || c === 'X';
+      };
+      for (let y = 0; y < hh; y++) {
+        for (let x = 0; x < ww; x++) {
+          if (rows[y][x] !== 'D') continue;
+          for (const n of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+            const c = (n[0] >= 0 && n[1] >= 0 && n[0] < ww && n[1] < hh) ? rows[n[1]][n[0]] : '#';
+            if (c === 'o' || c === 'X') {
+              blockedDoorAt += (blockedDoorAt ? '，' : '') + '第' + (di + 1) + '关门(' + x + ',' + y + ')前有' + c;
+            }
+          }
+        }
+      }
+      let sx = -1, sy = -1;
+      for (let y = 0; y < hh && sx < 0; y++) {
+        for (let x = 0; x < ww; x++) if (rows[y][x] === 'P') { sx = x; sy = y; break; }
+      }
+      const reach = new Set([sx + ',' + sy]);
+      const qq = [[sx, sy]];
+      while (qq.length) {
+        const cur = qq.shift();
+        for (const n of [[cur[0] + 1, cur[1]], [cur[0] - 1, cur[1]], [cur[0], cur[1] + 1], [cur[0], cur[1] - 1]]) {
+          const k = n[0] + ',' + n[1];
+          if (reach.has(k) || isSolid(n[0], n[1])) continue;
+          reach.add(k); qq.push(n);
+        }
+      }
+      for (const en of lvls[di].enemies) {
+        if (!reach.has(en.pos[0] + ',' + en.pos[1])) {
+          unreachableAt += (unreachableAt ? '，' : '') + '第' + (di + 1) + '关(' + en.pos[0] + ',' + en.pos[1] + ')';
+        }
+      }
+    }
+    check('没有木箱/油桶堵在门口（' + (blockedDoorAt || '四关都干净') + '）', blockedDoorAt === '');
+    check('把木箱当墙走一遍，所有敌人都还够得着（' + (unreachableAt || '全部可达') + '）', unreachableAt === '');
+
     // ============ 30.5 空手拳头 ============
     H.startGame({ mode: 'story' });
     const w6 = H.world, g6 = H.g;

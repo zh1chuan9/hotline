@@ -79,7 +79,9 @@ def build(level):
 FURN = {
     0: [(4, 1), (1, 4), (13, 1), (7, 4), (22, 1), (15, 4), (4, 11), (6, 11), (12, 8), (22, 11), (14, 8)],
     1: [(4, 1), (1, 4), (9, 1), (6, 4), (14, 1), (11, 4), (22, 2), (16, 4), (6, 10), (1, 11), (14, 10), (8, 11), (22, 10), (16, 11)],
-    2: [(7, 1), (1, 3), (7, 6), (1, 7), (7, 10), (1, 11), (16, 1), (22, 3), (16, 6), (22, 7), (16, 10), (22, 11)],
+    # 第三关每间房的房门开在中间那行（y=2/6/10），木箱一律放在房间另一头（y=1/5/9 的内墙侧），
+    # 不能落在门的正对面 —— 木箱是实心格，堵在门口那格这间房就彻底进不去了。
+    2: [(7, 1), (1, 3), (7, 5), (1, 7), (7, 9), (1, 11), (16, 1), (22, 3), (16, 5), (22, 7), (16, 9), (22, 11)],
     3: [(6, 4), (17, 4), (6, 8), (17, 8), (10, 5), (13, 5), (2, 2), (21, 2), (2, 10), (21, 10)],
 }
 
@@ -104,6 +106,11 @@ ENEMIES = {
 }
 
 
+def solid(ch):
+    # 碰撞上和墙一样的东西：墙、木箱、油桶（game.js 里 covers / barrels 都塞进 world.walls）
+    return ch in '#oX'
+
+
 def check(level, g):
     errs = []
     for y, row in enumerate(g):
@@ -115,7 +122,7 @@ def check(level, g):
             if g[y][x] == 'P':
                 px, py = x, y
     assert px is not None, 'no P'
-    # BFS
+    # BFS（木箱/油桶算实心，别再用"能走过去"糊弄过去）
     seen = {(px, py)}
     q = deque([(px, py)])
     while q:
@@ -123,10 +130,16 @@ def check(level, g):
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, ny = x + dx, y + dy
             if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in seen:
-                if g[ny][nx] in '.rowXSPD':
+                if not solid(g[ny][nx]):
                     seen.add((nx, ny))
                     q.append((nx, ny))
     doors = [(x, y) for y in range(H) for x in range(W) if g[y][x] == 'D']
+    # 门口不能有木箱/油桶：门只有一格宽，正对门的那格是唯一进出口
+    for dx, dy in doors:
+        for ax, ay in ((dx - 1, dy), (dx + 1, dy), (dx, dy - 1), (dx, dy + 1)):
+            if 0 <= ax < W and 0 <= ay < H and solid(g[ay][ax]) and g[ay][ax] != '#':
+                errs.append('furniture %r blocks door at %d,%d (via %d,%d)'
+                            % (g[ay][ax], dx, dy, ax, ay))
     for kind, x, y in ENEMIES[level]:
         if g[y][x] != '.':
             errs.append('enemy on %r at %d,%d' % (g[y][x], x, y))
