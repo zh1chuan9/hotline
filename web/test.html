@@ -490,6 +490,9 @@
 
     // ============ 14. 爆头 ============
     H.startGame();
+    // 命中反馈 spy：临时接管 Sfx.play，记下这次开枪到底放了哪个音效
+    const zzOrigPlay = H.sfx.play, zzSnd = [];
+    H.sfx.play = function (n) { zzSnd.push(n); return zzOrigPlay.call(this, n); };
     const g14 = H.g, p14 = g14.player, w14 = H.world;
     p14.weapon = 'pistol'; p14.ammo = 12; p14.cooldown = 0;
     p14.facing = { x: 1, y: 0 };
@@ -504,6 +507,9 @@
     H.attack();
     const dmgHead = hp14 - e14.hp;
     check('准心在敌人头上 → 爆头伤害更高（' + dmgHead + ' > 30）', dmgHead > 30);
+    check('打中头部放 head_hit 脆响（不含 flesh_hit）',
+      zzSnd.indexOf('head_hit') >= 0 && zzSnd.indexOf('flesh_hit') < 0);
+    zzSnd.length = 0;
     // 准心挪开 30px（还在射线上但不在头上）→ 普通伤害
     e14.hp = 500;
     H.aim(40, 60);
@@ -517,6 +523,12 @@
     H.attack();
     const dmgBody = hp14b - e14.hp;
     check('准心偏开头部 → 普通伤害（' + dmgBody + '，应 ≤ 30）', dmgBody > 0 && dmgBody <= 30);
+    check('打中躯干放 flesh_hit 闷响（不含 head_hit）',
+      zzSnd.indexOf('flesh_hit') >= 0 && zzSnd.indexOf('head_hit') < 0);
+    H.sfx.play = zzOrigPlay;
+    const zzWav = window.SFX_SAMPLES || {};
+    check('身体/头部各有独立采样且内容不同（flesh_hit / head_hit）',
+      !!zzWav.flesh_hit && !!zzWav.head_hit && zzWav.flesh_hit !== zzWav.head_hit);
 
     // ============ 15. AI 移速下调 ============
     H.startGame();

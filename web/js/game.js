@@ -1360,6 +1360,10 @@
     body_drop: { trim: 0, len: 0.40, gain: 1.0, maxVoices: 3 },
     knife_hit: { trim: 0, len: 0.25, gain: 1.0, maxVoices: 3 },
     melee_swing:{ trim: 0, len: 0.18, gain: 0.7, maxVoices: 3 },
+    // 命中反馈：打躯干是闷"噗"、打头是脆"咔"。都很短，fade 必须显式调小，
+    // 否则默认 0.10s 的淡出会把整声都压掉（长度才 0.14/0.18s）。
+    flesh_hit: { trim: 0, len: 0.14, gain: 0.85, maxVoices: 6, fade: 0.035 },
+    head_hit:  { trim: 0, len: 0.18, gain: 0.90, maxVoices: 4, fade: 0.045 },
   };
   const Sfx = {
     ac: null,
@@ -1563,6 +1567,16 @@
         case 'melee_swing':
           if (this.sample('melee_swing', 0.9 + Math.random() * 0.2, 0.9 + Math.random() * 0.2)) return true;
           this.noise(0.14, 900, 2.5, 0.14, 0.15, 'bandpass'); break;
+        // 命中躯干：闷"噗"（低频主导）；采样没解码好时用同样的低频配方兜底
+        case 'flesh_hit':
+          if (this.sample('flesh_hit', 0.9 + Math.random() * 0.2, 0.96 + Math.random() * 0.08)) return true;
+          this.noise(0.10, 320, 0.9, 0.30, 0.04); this.tone(125, 58, 0.08, 0.16, 'sine'); break;
+        // 命中头部：脆"咔"（高频瞬态 + 骨裂中频），和身体的闷响一听就分得开
+        case 'head_hit':
+          if (this.sample('head_hit', 0.94 + Math.random() * 0.12, 0.97 + Math.random() * 0.06)) return true;
+          this.noise(0.02, 4200, 2.2, 0.24, 0.008);
+          this.noise(0.06, 1900, 1.6, 0.18, 0.02);
+          this.tone(950, 280, 0.05, 0.10, 'triangle'); break;
         // 换弹：拔弹匣是干涩的"哐"，拍上弹匣是闷一点的"咔"
         case 'magout': this.noise(0.06, 760, 2.2, 0.10, 0.05); this.tone(300, 190, 0.05, 0.05, 'square'); break;
         case 'magin': this.noise(0.09, 520, 1.6, 0.15, 0.07); this.tone(210, 120, 0.06, 0.09, 'square'); break;
@@ -3106,7 +3120,7 @@
             FX.addBlood(nx, ny, { x: Math.cos(t.rot) * 0.9, y: Math.sin(t.rot) * 0.9 }, 14, 1.0);
             FX.kick(2.8, 0.12);
             damageEnemy(e, dmg, t.rot, true, false);
-            Sfx.play('hit');
+            Sfx.play('flesh_hit');       // 砸中的是身子：闷"噗"（不是打头）
             emitNoise(nx, ny, 260);
             // 被砸中的敌人往受力方向倒
             e.deathDir = t.rot;
@@ -3206,7 +3220,11 @@
       if (isPlayerHit) {
         damagePlayer(dmg, dirAngle);
       } else {
+        const hadArmor = hitActor.armor > 0;   // 打在护甲上只该有金属声，别叠一层肉响
         damageEnemy(hitActor, dmg, dirAngle, isPlayerShot, headshot);
+        // 命中反馈：玩家打中躯干是闷"噗"、打中头是脆"咔"。
+        // 敌人互射不播（一群人同时开枪会糊成一片），玩家挨打走 damagePlayer 的受击声。
+        if (isPlayerShot && !hadArmor) Sfx.play(headshot ? 'head_hit' : 'flesh_hit');
       }
       FX.hitstop = headshot ? 0.08 : 0.05;
       FX.kick(headshot ? 5.5 : 3.5, 0.14);
@@ -3249,7 +3267,7 @@
     const targets = [];
     if (isPlayer) { for (const e of W.enemies) if (e.alive) targets.push(e); }
     else { if (G.player.alive) targets.push(G.player); }
-    let hitAny = false;
+    let hitAny = false, headAny = false, hurtEnemy = false;
     for (const t of targets) {
       const d = Math.hypot(t.x - actor.x, t.y - actor.y);
       if (d > reach + 10) continue;
@@ -3277,13 +3295,18 @@
         damagePlayer(dmg, dirAngle);
       } else {
         damageEnemy(t, dmg, dirAngle, isPlayer, headshot);
+        hurtEnemy = true;
+        if (headshot) headAny = true;
       }
       hitAny = true;
     }
-    // 命中音：刀具入肉（knife_hit 采样）和钝器砸击（hit）区分开
+    // 命中音：打头一律脆"咔"；刀砍身子是利刃入肉、钝器/拳头是闷"噗"；
+    // 敌人打玩家仍走通用受击声（不是"打中敌人"，别混进来）
     if (hitAny) {
       const blade = def && (def.name === '武士刀' || def.kind === 'knife');
-      if (blade) Sfx.play('knife_hit'); else Sfx.play('hit');
+      if (isPlayer && headAny) Sfx.play('head_hit');
+      else if (isPlayer && hurtEnemy) Sfx.play(blade ? 'knife_hit' : 'flesh_hit');
+      else Sfx.play('hit');
     }
     // 近战打门：挥击命中门（在扇形内、距离够）就把门打碎
     if (isPlayer) {

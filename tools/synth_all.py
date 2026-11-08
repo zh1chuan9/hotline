@@ -15,8 +15,15 @@
   body_drop    肢体落地（重物砸地 + 布料闷响）
   knife_hit    刀具砍中血肉（利刃入肉的"刷" + 湿闷一声）
   melee_swing  挥刀/挥棍破空声
+  flesh_hit    打中躯干：低沉湿黏的闷"噗"
+  head_hit     打中头部：又脆又硬的"咔"
 
 所有音效先在这里生成 wav，再跑 tools/make_sfx.py 内嵌进 web/js/sfx_samples.js。
+
+注意：只重做某几个音效时用 `python tools/synth_all.py --only=flesh_hit,head_hit`。
+全量重跑会让主 rng 的消耗顺序变化，导致后面所有音效的噪声都变（听感会飘）。
+新增挂在末尾的 flesh_hit/head_hit 用各自独立的固定 rng，不消耗主链，所以即使
+全量重跑，前面 10 个音效的输出也逐字节不变。
 """
 import math
 import os
@@ -321,7 +328,60 @@ def make_melee_swing(rng):
     return out, dur
 
 
-def main():
+def make_flesh_hit(rng=None):
+    """子弹 / 钝器打进躯干：低沉、湿黏、短促的一声闷"噗"。
+
+    刻意压掉 2kHz 以上的能量，跟 head_hit 的脆响拉开距离——闭着眼也能听出
+    "这一枪打在身子上"。独立随机种子，不碰主链 rng（见文件头注释）。
+    """
+    r = rng or random.Random(20261109)
+    dur = 0.14
+    n = int(SR * dur)
+    out = [0.0] * n
+    nz = noise(n, r)
+    # 皮肉被顶进去的低频"咚"
+    thump = sine(125, 58, 0.09, 0.9, rng=r)
+    add_into(out, mul(thump, env(len(thump), 0.002, 0.032)), 1.0)
+    # 湿黏主体（300Hz 上下）
+    meat = run_filter(nz, lambda i: biquad_bp(320, 0.9))
+    add_into(out, mul(meat, env(n, 0.003, 0.036)), 1.7)
+    # 更厚的一层低频，撑住"肉"的分量
+    low = run_filter(nz, lambda i: biquad_lp(170, 0.8))
+    add_into(out, mul(low, env(n, 0.004, 0.055)), 0.9)
+    # 一点点布料/皮肤擦过的质感，免得糊成一团纯低频
+    cloth = run_filter(nz, lambda i: biquad_bp(1050, 1.3))
+    add_into(out, mul(cloth, env(n, 0.0004, 0.010)), 0.35)
+    return out, dur
+
+
+def make_head_hit(rng=None):
+    """子弹打中脑袋：又脆又硬的"咔"，和打躯干的闷"噗"完全两码事。
+
+    高频瞬态（颅骨）→ 中高频骨裂 → 一小截湿尾巴（提醒这仍是血肉，不是钢板）。
+    比 headpop（击杀时脑袋炸开的湿响）短得多；爆头击杀时两者叠成"啪·噗"的层次。
+    """
+    r = rng or random.Random(20261110)
+    dur = 0.18
+    n = int(SR * dur)
+    out = [0.0] * n
+    nz = noise(n, r)
+    crack = run_filter(nz, lambda i: biquad_bp(4200, 2.2))
+    add_into(out, mul(crack, env(n, 0.0002, 0.007)), 2.4)
+    bone = run_filter(nz, lambda i: biquad_bp(1900, 1.6))
+    add_into(out, mul(bone, env(n, 0.0005, 0.020)), 1.4)
+    knock = sine(950, 280, 0.045, 0.55, rng=r)
+    add_into(out, mul(knock, env(len(knock), 0.001, 0.018)), 1.0, at=0.002)
+    wet = run_filter(nz, lambda i: biquad_lp(300, 1.0))
+    add_into(out, mul(wet, env(n, 0.006, 0.042)), 0.85)
+    return out, dur
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    only = None
+    for a in argv:
+        if a.startswith('--only='):
+            only = set(a.split('=', 1)[1].split(','))
     rng = random.Random(20261108)
     makers = {
         'smg': make_smg,
@@ -334,10 +394,14 @@ def main():
         'body_drop': make_body_drop,
         'knife_hit': make_knife_hit,
         'melee_swing': make_melee_swing,
+        # 新增的挂在最后，且用独立 rng —— 不影响上面这些的随机序列
+        'flesh_hit': make_flesh_hit,
+        'head_hit': make_head_hit,
     }
     if not os.path.isdir(OUT_DIR):
         os.makedirs(OUT_DIR)
     for name, fn in makers.items():
+        if only and name not in only: continue
         samples, dur = fn(rng)
         path = write_wav(name, samples, dur)
         print('%-14s %.2fs  %d 字节' % (name + '.wav', dur, os.path.getsize(path)))
