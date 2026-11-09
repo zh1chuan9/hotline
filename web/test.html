@@ -1991,6 +1991,7 @@
     // ============ 24. 点「剧情模式 / 挑战模式」不会自动开一枪 ============
     // 点按钮那一下左键往往还按着（mousedown 会把 mouse.down 置 true），
     // 旧代码进战斗第一帧就当成"按住扳机"，一发打出去（ammo 8→7）。
+    H.setSave({ storyAllClear: false });   // 保证剧情按钮仍走「点一下直接开打」老路径
     H.goTitle();
     H.holdFire(true);                 // 模拟按钮按下还没松开
     H.tap(320, 188);                  // 标题页「剧情模式」按钮中心
@@ -2002,11 +2003,13 @@
     H.holdFire(false);
     H.goTitle();
     H.holdFire(true);
-    H.tap(320, 236);                  // 「挑战模式」按钮中心
+    H.tap(320, 236);                  // 「挑战模式」→ 先进入启动页
+    check('点「挑战模式」进入启动页（state=' + H.g.state + '）', H.g.state === 'challengeIntro');
+    H.tap(320, 252);                  // 启动页「开始游戏」按钮中心
     const gTc = H.g, pTc = gTc.player;
     const ammoTc = pTc ? pTc.ammo : -1;
     H.step(3);
-    check('点「挑战模式」不会自动开一枪（mode=' + gTc.mode + '，ammo ' + ammoTc + '→' + pTc.ammo + '）',
+    check('从启动页开始挑战不会自动开一枪（mode=' + gTc.mode + '，ammo ' + ammoTc + '→' + pTc.ammo + '）',
       gTc.mode === 'challenge' && pTc.ammo === ammoTc);
     H.holdFire(false);
 
@@ -2188,6 +2191,131 @@
     H.startGame();
     H.resetTouchLayout(); H.resetHudLayout();
     H.setInputMode('pc');
+
+    // ============ 34. 手雷抛物线 ============
+    H.startGame();
+    const qaP = H.g.player, qaW = H.world;
+    qaW.enemies.length = 0;
+    qaP.grenades = 2; qaP.throwCd = 0;
+    H.aim(200, 0);
+    H.key('g', true); H.step(1); H.frameEnd(true); H.key('g', false); H.clearPressed();
+    H.key('j', true); H.step(1); H.frameEnd(true); H.key('j', false); H.clearPressed();
+    const qaG = H.grenades[0];
+    const qaVx0 = qaG ? Math.abs(qaG.vx) : 0;   // 记下初速，qaG.vx 后面每帧都会被摩擦改掉
+    check('手雷带离地高度与垂直速度（z=' + (qaG ? qaG.z.toFixed(1) : 'none') + '）',
+      !!qaG && qaG.z > 0 && qaG.vz > 0 && qaG.bounces === 0);
+    for (let i = 0; i < 8; i++) { qaW.enemies.length = 0; H.step(1); }
+    const qaG2 = H.grenades[0];
+    const qaZPeak = qaG2 ? qaG2.z : 0;   // 同样是引用，先存快照
+    check('抛出后形成明显弧线（z=' + (qaG2 ? qaZPeak.toFixed(1) : 'none') + '）',
+      !!qaG2 && qaZPeak > 8);
+    for (let i = 0; i < 52; i++) { qaW.enemies.length = 0; H.step(1); }
+    const qaG3 = H.grenades[0];
+    check('约 1 秒后已从弧线高点落回、水平速度被摩擦吃掉（z=' +
+      (qaG3 ? qaG3.z.toFixed(1) : 'gone') + '，vx=' + (qaG3 ? qaG3.vx.toFixed(1) : '-') + '）',
+      !!qaG3 && qaG3.z < qaZPeak && Math.abs(qaG3.vx) < qaVx0 * 0.9);
+    for (let i = 0; i < 150; i++) { qaW.enemies.length = 0; H.step(1); }
+    check('手雷最终会炸掉消失（飞行中=' + H.grenades.length + '）', H.grenades.length === 0);
+    const qaCover = qaW.covers[0];
+    if (qaCover) {
+      const qaCx = qaCover.x + qaCover.w / 2, qaCy = qaCover.y + qaCover.h / 2;
+      check('高处能越过木箱、贴地会被木箱挡住',
+        H.grenadeBlocked(qaW, qaCx, qaCy, 0) === true &&
+        H.grenadeBlocked(qaW, qaCx, qaCy, 24) === false);
+    }
+
+    // ============ 35. 尸体上限 + 逐渐淡出 ============
+    H.startGame();
+    const qaW2 = H.world;
+    H.startWave();
+    const qaTpl = qaW2.enemies[0];
+    qaW2.enemies.length = 0;
+    const qaTotal = H.corpseMax + 8;
+    for (let i = 0; i < qaTotal; i++) {
+      qaW2.enemies.push(Object.assign({}, qaTpl, {
+        alive: false, downed: false, deadT: (qaTotal - i) * 0.1, corpseFade: undefined
+      }));
+    }
+    check('尸体初始超出上限（' + H.corpses.length + ' 具 / 上限 ' + H.corpseMax + '）',
+      H.corpses.length === qaTotal);
+    H.updateCorpses(0.1);
+    const qaFading = H.corpses.filter(e => e.corpseFade !== undefined && e.corpseFade < 1);
+    check('只让超额的老尸体开始渐隐（' + qaFading.length + ' 具）', qaFading.length === 8);
+    for (let i = 0; i < 25; i++) H.updateCorpses(0.1);
+    check('淡出完成后移除、数量回到上限（' + H.corpses.length + ' 具）',
+      H.corpses.length === H.corpseMax);
+    check('保留下来的尸体不再渐隐', H.corpses.every(e => e.corpseFade === undefined));
+
+    // ============ 36. 剧情分数倍率 + 处决慢动作 ============
+    H.startGame({ mode: 'story' });
+    const qaS = H.g, qaSW = H.world;
+    check('剧情开局倍率为 1（x' + H.storyMult.toFixed(1) + '）', H.storyMult === 1);
+    const qaLive = qaSW.enemies.filter(e => e.alive);
+    for (let i = 3; i < qaLive.length; i++) qaLive[i].alive = false;
+    const qaScore0 = qaS.score;
+    H.hitEnemy(qaLive[0], 999);
+    check('剧情击杀推高分数倍率（x' + H.storyMult.toFixed(1) + '）', H.storyMult > 1);
+    check('剧情击杀按倍率给分（' + qaScore0 + '→' + qaS.score + '）', qaS.score > qaScore0);
+    check('本关最高倍率有记录（x' + H.storyMultBest.toFixed(1) + '）', H.storyMultBest > 1);
+    const qaMultBefore = H.storyMult;
+    H.hitEnemy(qaLive[1], 999);
+    H.hitEnemy(qaLive[2], 999);        // 最后一人 → 倒地待处决
+    const qaDown = qaSW.enemies.find(e => e.downed);
+    check('最后一人倒地待处决（downed=' + !!qaDown + '）', !!qaDown);
+    if (qaDown) {
+      qaS.player.x = qaDown.x; qaS.player.y = qaDown.y;
+      const qaTs0 = qaS.timeScale;
+      H.executeEnemy(qaDown);
+      check('处决触发慢动作（timeScale ' + qaTs0 + '→' + qaS.timeScale +
+        '，slowTimer=' + qaS.slowTimer.toFixed(2) + '）',
+        qaS.timeScale < 1 && qaS.slowTimer > 0 && qaS.timeScale === H.execSlow.scale);
+      check('处决额外加 0.5 倍率（x' + qaMultBefore.toFixed(1) + '→x' + H.storyMult.toFixed(1) + '）',
+        H.storyMult > qaMultBefore);
+    }
+    H.startGame({ mode: 'challenge' });
+    check('挑战模式倍率恒为 1、无慢镜残留（x' + H.storyMult.toFixed(1) +
+      '，timeScale=' + H.g.timeScale + '，slowTimer=' + H.g.slowTimer + '）',
+      H.storyMult === 1 && H.g.timeScale === 1 && H.g.slowTimer === 0);
+
+    // ============ 37. 挑战启动页 + 分数存档 ============
+    H.goTitle();
+    H.setSave({ lastScore: 1234, bestScore: 5678, bestWave: 9 });
+    H.tap(320, 236);
+    check('点「挑战模式」进入启动页（state=' + H.g.state + '）', H.g.state === 'challengeIntro');
+    check('启动页展示上次分数 / 最高分数 / 最高波次（' +
+      H.introSave.lastScore + ' / ' + H.introSave.bestScore + ' / ' + H.introSave.bestWave + '）',
+      H.introSave.lastScore === 1234 && H.introSave.bestScore === 5678 && H.introSave.bestWave === 9);
+    H.tap(H.introButtons.back.x + 5, H.introButtons.back.y + 5);
+    check('启动页「返回主菜单」回到标题（state=' + H.g.state + '）', H.g.state === 'title');
+    H.startGame({ mode: 'challenge' });
+    H.g.score = 999; H.g.wave = 3;
+    H.g.player.alive = false; H.g.player.hp = 0;
+    H.step(1);
+    check('挑战死亡后落盘：上次分数=999、最高分保持 5678、最高波次保持 9',
+      H.save.lastScore === 999 && H.save.bestScore === 5678 && H.save.bestWave === 9);
+
+    // ============ 38. 剧情选关（全通关后解锁） ============
+    H.goTitle();
+    H.setSave({ storyAllClear: false });
+    H.tap(320, 188);
+    check('未全通时点「剧情模式」仍直接开打（state=' + H.g.state + '，关=' + H.g.storyLevel + '）',
+      H.g.state === 'play' && H.g.mode === 'story' && H.g.storyLevel === 0);
+    H.goTitle();
+    H.setSave({ storyAllClear: true });
+    H.tap(320, 188);
+    check('全通后点「剧情模式」进入选关页（state=' + H.g.state + '）', H.g.state === 'storySelect');
+    check('选关页列出全部 ' + H.storyLevels.length + ' 关',
+      H.selectButtons.level.length === H.storyLevels.length);
+    const qaSel = H.selectButtons.level[2];
+    H.tap(qaSel.x + qaSel.w / 2, qaSel.y + qaSel.h / 2);
+    check('点第 3 关直接进入该关（关=' + H.g.storyLevel + '）',
+      H.g.state === 'play' && H.g.mode === 'story' && H.g.storyLevel === 2);
+    H.setSave({ storyAllClear: false });
+    H.startGame({ mode: 'story', storyLevel: H.storyLevels.length - 1 });
+    H.nextStoryLevel();
+    check('通关最后一关后解锁选关（allClear=' + H.save.storyAllClear + '）',
+      H.save.storyAllClear === true && H.g.state === 'title');
+    H.clearSave();
 
     report();
   }

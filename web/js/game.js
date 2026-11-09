@@ -3084,8 +3084,66 @@
     }
   }
 
+  // ---------------------------------------------------------------- 跨局存档
+  // 只存「上次分数 / 最高分数 / 剧情通关与每关最好成绩」，不存局面快照。
+  const SAVE_KEY = 'hotline.save.v1';
+  function loadSave() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); } catch (err) { d = null; }
+    if (!d || typeof d !== 'object') d = {};
+    return {
+      lastScore: Math.max(0, d.lastScore | 0),
+      bestScore: Math.max(0, d.bestScore | 0),
+      bestWave: Math.max(0, d.bestWave | 0),
+      storyAllClear: !!d.storyAllClear,
+      storyBest: (d.storyBest && typeof d.storyBest === 'object') ? d.storyBest : {}
+    };
+  }
+  function writeSave(patch) {
+    const cur = loadSave();
+    if (patch) for (const k in patch) cur[k] = patch[k];
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(cur)); } catch (err) { /* 隐私模式忽略 */ }
+    return cur;
+  }
+  /** 挑战模式一局结束（死亡 / 主动回标题）时把成绩落盘。剧情模式不写这里。 */
+  function commitChallengeScore() {
+    if (!G || G.mode !== 'challenge') return;
+    const score = Math.max(0, G.score | 0);
+    // 只是从标题/菜单回标题、压根没有一局在跑时，别把「上次分数」冲成 0
+    if (score === 0 && G.state !== 'play' && G.state !== 'dead') return;
+    const s = loadSave();
+    writeSave({
+      lastScore: score,
+      bestScore: Math.max(s.bestScore, score),
+      bestWave: Math.max(s.bestWave, G.wave | 0)
+    });
+  }
+  /** 剧情模式一关结算：只记该关最高分，供选关界面展示。 */
+  function commitStoryScore(levelIdx, score) {
+    const s = loadSave();
+    const best = Object.assign({}, s.storyBest);
+    const v = Math.max(0, score | 0);
+    if (!best[levelIdx] || v > best[levelIdx]) best[levelIdx] = v;
+    writeSave({ storyBest: best });
+  }
+
+  // 处决慢镜：最后一刀把时间钉住，再放开
+  const EXEC_SLOW_SCALE = 0.3;
+  const EXEC_SLOW_TIME = 0.55;
+  // 尸体常驻，但最多留这么多具；超出的按死亡先后逐渐淡出
+  const CORPSE_MAX = 24;
+  const CORPSE_FADE_TIME = 1.8;
+  // 剧情模式分数倍率：连杀 / 爆头 / 处决往上堆，断档往下掉
+  const STORY_MULT_MAX = 8;
+  const STORY_MULT_HOLD = 4.5;
+  const STORY_MULT_DECAY = 0.9;
+
   // ---------------------------------------------------------------- 手雷
   const GRENADE_SPEED = 300;
+  const GRENADE_TOSS_VZ = 165;    // 抛出去的垂直初速
+  const GRENADE_GRAVITY = 430;    // 重力：约 0.77 秒落地，最高约 32px
+  const GRENADE_BOUNCE = 0.3;     // 落地回弹系数（最多弹两下）
+  const GRENADE_COVER_CLEAR = 14; // z 高于它就从木箱上方飞过（砖墙照样挡）
   const GRENADE_FUSE = 3.0;     // 没砸到目标就 3 秒后炸；撞墙/撞桶/撞敌人立即炸
   const GRENADE_RADIUS = 76;
   const GRENADE_DMG = 135;
@@ -3133,11 +3191,23 @@
     G.grenades.push({
       x: p.x + aim.x * 11, y: p.y + aim.y * 11,
       vx: aim.x * GRENADE_SPEED, vy: aim.y * GRENADE_SPEED,
+      z: 0, vz: GRENADE_TOSS_VZ, bounces: 0,
       t: GRENADE_FUSE, spin: 0
     });
     Sfx.play('throw');
     emitNoise(p.x, p.y, 90);
     return true;
+  }
+
+  /** 手雷撞到什么：砖墙 / 油桶一律挡；木箱在抛物线高处可以从上方越过。 */
+  function grenadeBlocked(world, x, y, z) {
+    for (const rc of world.walls) {
+      if (x > rc.x && x < rc.x + rc.w && y > rc.y && y < rc.y + rc.h) {
+        if (z > GRENADE_COVER_CLEAR && !rc.barrel && world.covers.indexOf(rc) >= 0) continue;
+        return true;
+      }
+    }
+    return false;
   }
 
   function updateGrenades(dt) {
@@ -3146,12 +3216,22 @@
       const g = G.grenades[i];
       g.t -= dt;
       g.spin += dt * 16;
+      // 抛物线：z 是离地高度，vz 是垂直速度；落地后小幅弹两下，再贴地滑行减速。
+      g.vz -= GRENADE_GRAVITY * dt;
+      g.z += g.vz * dt;
+      if (g.z <= 0) {
+        g.z = 0;
+        if (g.vz < -45 && g.bounces < 2) { g.vz = -g.vz * GRENADE_BOUNCE; g.bounces++; }
+        else g.vz = 0;
+      }
+      const drag = Math.pow(g.z > 0 || g.vz > 0 ? 0.92 : 0.10, dt);
+      g.vx *= drag; g.vy *= drag;
       // 分两小步推进：速度 300px/s，一帧走 5px，单步可能直接穿进墙里
       let boom = g.t <= 0;
       for (let s = 0; s < 2 && !boom; s++) {
         g.x += g.vx * dt * 0.5;
         g.y += g.vy * dt * 0.5;
-        if (pointSolid(W, g.x, g.y, 0)) {
+        if (grenadeBlocked(W, g.x, g.y, g.z)) {
           // 撞墙或油桶：就地炸（撞桶会顺带引爆它，连锁）
           g.x -= g.vx * dt * 0.5;
           g.y -= g.vy * dt * 0.5;
@@ -3166,10 +3246,10 @@
         }
       }
       if (!boom) {
-        // 拖尾火星
+        // 拖尾火星跟着弹体的实际高度走
         if (Math.random() < 0.55) {
           FX.parts.push({
-            x: g.x, y: g.y, vx: (Math.random() - 0.5) * 30, vy: (Math.random() - 0.5) * 30,
+            x: g.x, y: g.y - g.z, vx: (Math.random() - 0.5) * 30, vy: (Math.random() - 0.5) * 30,
             life: 0.24, max: 0.24, color: 'rgba(255,190,120,0.85)', size: 1.2
           });
         }
@@ -3598,6 +3678,7 @@
     e.downed = false;
     e.alive = false;
     e.deathDir = ang;
+    e.wasExecuted = true;
     // 正常结算（noGib=true：断肢交给下面这次"必定打飞头"，别随机又甩一颗出来）
     onEnemyKilled(e, true, false, true);
     const pal = PALETTE['enemy_' + e.kind] || PALETTE.enemy_gun;
@@ -3610,6 +3691,14 @@
     Sfx.play('headpop');
     FX.kick(5, 0.20);
     FX.addText(e.x, e.y - 22, '处决', MIAMI.redHot);
+    // 处决慢镜：先顿一下再把时间钉在 0.3 倍，头飞出去那半秒看得清清楚楚。
+    // 只改剧情模式的时间缩放，不碰挑战模式；玩家若同时倒下，死亡慢镜会覆盖它（优先级更高）。
+    if (G.mode === 'story') {
+      G.timeScale = EXEC_SLOW_SCALE;
+      G.slowTimer = EXEC_SLOW_TIME;
+      FX.hitstop = Math.max(FX.hitstop, 0.07);
+      FX.flash = Math.max(FX.flash, 0.8);
+    }
     return true;
   }
 
@@ -3654,11 +3743,21 @@
       }
       let gained = Math.round((base + Math.round(base * (G.combo - 1) * 0.25)) * (G.doubleScore > 0 ? 2 : 1));
       if (headshot) gained = Math.round(gained * HEADSHOT_SCORE);
+      // 剧情模式分数倍率：连击 / 爆头 / 处决往上堆，停手一阵子再按秒掉回 1 倍。
+      if (G.mode === 'story') {
+        let add = 0.2 + Math.min(0.4, (G.combo - 1) * 0.05);
+        if (headshot) add += 0.3;
+        if (e.wasExecuted) add += 0.5;
+        G.storyMult = clamp((G.storyMult || 1) + add, 1, STORY_MULT_MAX);
+        G.storyMultT = STORY_MULT_HOLD;
+        if (G.storyMult > (G.storyMultBest || 1)) G.storyMultBest = G.storyMult;
+        gained = Math.round(gained * G.storyMult);
+      }
       G.score += gained;
       // 积分即货币，但剧情模式没有商店/金钱系统，不累加现金
       if (G.mode !== 'story') G.cash += gained;
       FX.addText(e.x, e.y - 12,
-        G.mode === 'story' ? '+' + gained
+        G.mode === 'story' ? '+' + gained + '  x' + (G.storyMult || 1).toFixed(1)
           : (headshot ? '爆头 ' : '') + '+' + gained + (G.combo > 1 ? ' x' + G.combo : ''),
         headshot ? '#e02929' : (G.combo > 1 ? '#e02929' : '#ffffff'));
       // 概率掉落：血包 / 子弹（剧情模式用不上，掉了反而是干扰）
@@ -5502,13 +5601,17 @@
     resetFireInput();
     const withPrep = !(opts && opts.prep === false);
     // 剧情关序号（调试/测试用，默认第 0 关）
-    const lvl = (mode === 'story' && opts && opts.storyLevel)
+    const lvl = (mode === 'story' && opts && opts.storyLevel !== undefined)
       ? clamp(opts.storyLevel | 0, 0, STORY_LEVELS.length - 1) : 0;
     G.mode = mode;
     G.storyLevel = lvl;
     G.storyKills = 0;
     G.storyComboBest = 0;
     G.storyHits = 0;        // 受击次数（评分用）
+    G.storyMult = 1;
+    G.storyMultBest = 1;
+    G.storyMultT = 0;
+    G.introSave = null;
     G.storyStartT = performance.now();
     // 开局就起 BGM：进入战斗的那一刻，狂躁的合成器摇滚压上来。
     Music.start();
@@ -5539,6 +5642,7 @@
       G.toast = '';
       G.toastTimer = 0;
       G.timeScale = 1;
+      G.slowTimer = 0;
       FX.reset();
       G.grenades = [];
       BLASTS.length = 0;
@@ -5584,6 +5688,7 @@
     G.toast = '';
     G.toastTimer = 0;
     G.timeScale = 1;
+    G.slowTimer = 0;
     FX.reset();
     G.grenades = [];
     BLASTS.length = 0;
@@ -5651,7 +5756,8 @@
   function nextStoryLevel() {
     const next = G.storyLevel + 1;
     if (next >= STORY_LEVELS.length) {
-      // 通关全部关卡：回标题
+      // 通关全部关卡：解锁选关，然后回标题
+      writeSave({ storyAllClear: true });
       goTitle();
       return;
     }
@@ -5659,6 +5765,9 @@
     G.storyKills = 0;
     G.storyComboBest = 0;
     G.storyHits = 0;
+    G.storyMult = 1;
+    G.storyMultBest = 1;
+    G.storyMultT = 0;
     G.storyStartT = performance.now();
     resetFireInput();                 // 点「下一关」的那一下左键别带进新关卡
     const lv = STORY_LEVELS[next];
@@ -5695,6 +5804,9 @@
     G.storyKills = 0;
     G.storyComboBest = 0;
     G.storyHits = 0;
+    G.storyMult = 1;
+    G.storyMultBest = 1;
+    G.storyMultT = 0;
     G.storyStartT = performance.now();
     resetFireInput();                 // 点「重来」的那一下左键别带进新开局
     const lv = STORY_LEVELS[idx];
@@ -5728,9 +5840,26 @@
     // 命中检测：判断点击落在哪个按钮上
     const hit = (b) => b && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
     if (G.state === 'title') {
-      if (hit(TITLE_BTN.story)) startGame({ mode: 'story' });
-      else if (hit(TITLE_BTN.challenge)) startGame({ mode: 'challenge' });
+      if (hit(TITLE_BTN.story)) {
+        // 全部关卡通关之后才开放选关；没通关时保持原来的「点一下直接开打」
+        if (loadSave().storyAllClear) openStorySelect();
+        else startGame({ mode: 'story' });
+      }
+      else if (hit(TITLE_BTN.challenge)) openChallengeIntro();
       else if (hit(TITLE_BTN.settings)) openSettings('title');
+      return;
+    }
+    if (G.state === 'challengeIntro') {
+      if (hit(INTRO_BTN.start)) { startGame({ mode: 'challenge' }); Sfx.play('hit'); }
+      else if (hit(INTRO_BTN.back)) goTitle();
+      return;
+    }
+    if (G.state === 'storySelect') {
+      for (let i = 0; i < SELECT_BTN.level.length; i++) {
+        if (hit(SELECT_BTN.level[i])) { startGame({ mode: 'story', storyLevel: i }); Sfx.play('hit'); return; }
+      }
+      if (hit(SELECT_BTN.fresh)) { startGame({ mode: 'story' }); Sfx.play('hit'); }
+      else if (hit(SELECT_BTN.back)) goTitle();
       return;
     }
     if (G.state === 'storyclear') {
@@ -5967,6 +6096,29 @@
   }
 
   // ---------------------------------------------------------------- 更新
+  /** 尸体常驻，但超过上限后最老的几具逐渐淡出，淡完才真正移出数组。
+   *  倒地待处决（downed）不算尸体，绝不能被清掉，否则剧情会卡在「最后一人」。 */
+  function updateCorpses(dt) {
+    if (!W || !W.enemies) return;
+    const dead = [];
+    for (const e of W.enemies) if (!e.alive && !e.downed) dead.push(e);
+    const over = dead.length - CORPSE_MAX;
+    if (over > 0) {
+      // deadT 由 updateEnemy 逐帧累加，越大越早倒下
+      dead.sort((a, b) => (b.deadT || 0) - (a.deadT || 0));
+      for (let i = 0; i < over; i++) {
+        const e = dead[i];
+        e.corpseFade = (e.corpseFade === undefined ? 1 : e.corpseFade) - dt / CORPSE_FADE_TIME;
+      }
+    }
+    for (let i = W.enemies.length - 1; i >= 0; i--) {
+      const e = W.enemies[i];
+      if (!e.alive && !e.downed && e.corpseFade !== undefined && e.corpseFade <= 0) {
+        W.enemies.splice(i, 1);
+      }
+    }
+  }
+
   function update(dt) {
     if (!W) return;
     // 连击衰减随倍率加快：combo 越高，窗口掉得越快，高倍率更难维持（也更有压迫感）。
@@ -5975,6 +6127,11 @@
     if (G.comboTimer > 0) {
       G.comboTimer -= dt * (1 + (G.combo - 1) * 0.18);
       if (G.comboTimer <= 0) G.combo = 0;
+    }
+    // 剧情分数倍率：连杀不断就一直挂着，停手 STORY_MULT_HOLD 秒后按秒回落。
+    if (G.mode === 'story' && (G.storyMult || 1) > 1) {
+      G.storyMultT -= dt;
+      if (G.storyMultT <= 0) G.storyMult = Math.max(1, G.storyMult - STORY_MULT_DECAY * dt);
     }
     if (G.state === 'play') {
       // 触屏模式：先把摇杆/按钮折算成 keys/mouse，再跑玩家逻辑（复用全部键鼠逻辑）
@@ -5987,6 +6144,7 @@
       updateBloodDecals(dt);
       updateAlertBatches(dt);   // 仅剧情模式生效（函数内部对挑战模式直接返回）
       for (const e of W.enemies) updateEnemy(e, dt);
+      updateCorpses(dt);
       updatePickups(dt);
       // BGM 战况强度：有敌人追过来（进入交火）就拉满，脱战/准备期回落。
       // 主旋律 riff 只在强度高时进来，低音+鼓始终垫着，节奏感不丢。
@@ -6038,10 +6196,12 @@
         if (dx * dx + dy * dy < TILE * TILE * 1.5) {
           G.state = 'storyclear';
           G.storyClearT = 0;
+          commitStoryScore(G.storyLevel, G.score);
           Sfx.play('clear');
         }
       }
       if (!G.player.alive) {
+        if (G.mode !== 'story') commitChallengeScore();   // 挑战模式：这一局的成绩落盘
         G.state = 'dead';
         G.deadTimer = 0;
         G.timeScale = 0.35;
@@ -6205,12 +6365,24 @@
   /** 飞行中的手雷：弹体 + 引信火花，最后 0.7 秒整颗红闪（准备爆炸警告）。 */
   function drawGrenades() {
     for (const g of G.grenades) {
+      const z = g.z || 0;
+      ctx.save();
+      // 地面阴影留在落点：越高越淡越小，弧线才有「离地」的读感
       ctx.save();
       ctx.translate(g.x, g.y);
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.globalAlpha = clamp(0.34 - z * 0.006, 0.08, 0.34);
+      ctx.fillStyle = '#000000';
       ctx.beginPath();
-      ctx.ellipse(1, 3, 4, 2.6, 0, 0, 6.283);
+      ctx.ellipse(1, 3, Math.max(2.2, 4 - z * 0.035), Math.max(1.3, 2.6 - z * 0.022), 0, 0, 6.283);
       ctx.fill();
+      ctx.restore();
+      // 弹体按离地高度上移；一道细线把弹体和自己的影子连起来，避免像两个物体
+      if (z > 8) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.lineWidth = 0.6;
+        ctx.beginPath(); ctx.moveTo(g.x, g.y - 1); ctx.lineTo(g.x, g.y - z + 3); ctx.stroke();
+      }
+      ctx.translate(g.x, g.y - z);
       const urgent = g.t < GRENADE_BLINK;
       // 红闪：接近爆炸时整颗弹体在灰绿色和红色之间交替
       const blinkOn = Math.sin(g.spin * 14) > 0;
@@ -7585,6 +7757,22 @@
     ctx.fillText('' + (G.score || 0), VIEW_W - 9, 57);
     ctx.fillStyle = '#c8c8d0';
     ctx.fillText('' + (G.score || 0), VIEW_W - 10, 56);
+    // 剧情分数倍率：数字 + 保持时间条，停手了能眼看着它往回掉
+    const sm = G.storyMult || 1;
+    if (sm > 1.01) {
+      const hot = clamp((sm - 1) / (STORY_MULT_MAX - 1), 0, 1);
+      const col = mixColor('#ff9d3c', '#ff2a2a', hot);
+      ctx.font = 'bold 16px Consolas, monospace';
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillText('x' + sm.toFixed(1), VIEW_W - 9, 74);
+      ctx.fillStyle = col;
+      ctx.fillText('x' + sm.toFixed(1), VIEW_W - 10, 73);
+      const frac = clamp(G.storyMultT / STORY_MULT_HOLD, 0, 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(VIEW_W - 66, 95, 56, 4);
+      ctx.fillStyle = col;
+      ctx.fillRect(VIEW_W - 65, 96, Math.max(1, 54 * frac), 2);
+    }
     ctx.restore();
 
     if (!p) return;
@@ -8356,17 +8544,14 @@
     ctx.restore();
   }
 
-  function drawTitle() {
-    const t = performance.now() / 1000;
-    ctx.save();
-    // 红灰白黑背景：纯黑底 + 红色斜向光带
+  /** 菜单统一背景：纯黑底 + 红色斜光带（CRT 后处理由各界面自己套）。 */
+  function drawMenuBackdrop() {
     const bg = ctx.createLinearGradient(0, 0, VIEW_W, VIEW_H);
     bg.addColorStop(0, '#120a0a');
     bg.addColorStop(0.5, '#0a0a0c');
     bg.addColorStop(1, '#160a0a');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    // 斜向红色光带
     ctx.save();
     ctx.globalAlpha = 0.16;
     ctx.fillStyle = MIAMI.red;
@@ -8378,8 +8563,13 @@
     ctx.moveTo(VIEW_W * 0.35, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 40); ctx.lineTo(VIEW_W + 40, VIEW_H + 8); ctx.lineTo(VIEW_W * 0.55, VIEW_H + 8);
     ctx.closePath(); ctx.fill();
     ctx.restore();
-    // 扫描线不在这里画：统一交给 applyCRT() 后处理，避免叠两层
+  }
 
+  function drawTitle() {
+    const t = performance.now() / 1000;
+    ctx.save();
+    // 扫描线不在这里画：统一交给 applyCRT() 后处理，避免叠两层
+    drawMenuBackdrop();
     ctx.textAlign = 'center';
     // 主标题：红黑像素感（双层发光 + 荧光辉光，像电子束打出来的）
     ctx.save();
@@ -8436,6 +8626,126 @@
     ctx.textBaseline = 'alphabetic';
   }
 
+  // ---------------------------------------------------------------- 挑战启动页 / 剧情选关页
+  const INTRO_BTN = {
+    start: { x: VIEW_W / 2 - 90, y: 232, w: 180, h: 40 },
+    back: { x: VIEW_W / 2 - 90, y: 284, w: 180, h: 34 }
+  };
+  const SELECT_BTN = {
+    level: STORY_LEVELS.map((lv, i) => ({ x: VIEW_W / 2 - 160, y: 112 + i * 36, w: 320, h: 30 })),
+    fresh: { x: VIEW_W / 2 - 160, y: 266, w: 155, h: 34 },
+    back: { x: VIEW_W / 2 + 5, y: 266, w: 155, h: 34 }
+  };
+
+  /** 从标题进入一个纯菜单状态：世界清空、音乐停，只留一份存档快照给界面读。 */
+  function openMenuState(state) {
+    G.introSave = loadSave();
+    G.state = state;
+    G.paused = false;
+    G.timeScale = 1;
+    G.slowTimer = 0;
+    G.centerText = '';
+    G.centerTimer = 0;
+    W = null;
+    G.player = null;
+    G.grenades = [];
+    BLASTS.length = 0;
+    Music.stop();
+    Sfx.play('hit');
+  }
+  function openChallengeIntro() { openMenuState('challengeIntro'); }
+  function openStorySelect() { openMenuState('storySelect'); }
+
+  /** 挑战模式启动页：上次分数 / 最高分数 / 最高波次 + 开始按钮。 */
+  function drawChallengeIntro() {
+    const t = performance.now() / 1000;
+    const s = G.introSave || loadSave();
+    ctx.save();
+    drawMenuBackdrop();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = 'bold 30px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.white;
+    ctx.fillText('挑战模式', VIEW_W / 2, 82);
+    ctx.font = '12px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.gray;
+    ctx.fillText('一波比一波狠 · 撑到第几波？', VIEW_W / 2, 108);
+
+    const cells = [
+      { label: '上次分数', value: s.lastScore, color: MIAMI.white },
+      { label: '最高分数', value: s.bestScore, color: MIAMI.red },
+      { label: '最高波次', value: s.bestWave, color: MIAMI.grayLight }
+    ];
+    for (let i = 0; i < cells.length; i++) {
+      const cx = 110 + i * 210;
+      ctx.font = 'bold 11px "Microsoft YaHei", monospace';
+      ctx.fillStyle = MIAMI.gray;
+      ctx.fillText(cells[i].label, cx, 150);
+      ctx.font = 'bold 26px Consolas, monospace';
+      ctx.fillStyle = cells[i].color;
+      ctx.fillText('' + cells[i].value, cx, 184);
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(VIEW_W / 2 - 160, 206, 320, 1);
+
+    drawMenuButton(INTRO_BTN.start, '开始游戏', MIAMI.red);
+    drawMenuButton(INTRO_BTN.back, '返回主菜单', MIAMI.gray);
+    ctx.font = '11px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.dim;
+    ctx.fillText('回车 / 空格开始 · ESC 返回', VIEW_W / 2, 338);
+    ctx.restore();
+    applyCRT(t);
+  }
+
+  /** 选关页的一行：左边关卡名、右边该关历史最高分。 */
+  function drawLevelButton(b, i) {
+    const lv = STORY_LEVELS[i];
+    const hover = mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    ctx.save();
+    ctx.fillStyle = hover ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.42)';
+    ctx.strokeStyle = i === 0 ? MIAMI.red : MIAMI.grayLight;
+    ctx.lineWidth = hover ? 2 : 1.2;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 4); }
+    else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
+    ctx.fill();
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+    ctx.fillStyle = hover ? '#ffffff' : MIAMI.white;
+    ctx.fillText(lv.title, b.x + 12, b.y + b.h / 2 + 1);
+    ctx.textAlign = 'right';
+    ctx.font = '12px Consolas, monospace';
+    const best = (G.introSave && G.introSave.storyBest && G.introSave.storyBest[i]) || 0;
+    ctx.fillStyle = best > 0 ? MIAMI.red : MIAMI.dim;
+    ctx.fillText(best > 0 ? 'BEST ' + best : '—', b.x + b.w - 12, b.y + b.h / 2 + 1);
+    ctx.restore();
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /** 剧情选关页：只在全部关卡通关之后才会走到这里。 */
+  function drawStorySelect() {
+    const t = performance.now() / 1000;
+    ctx.save();
+    drawMenuBackdrop();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = 'bold 26px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.red;
+    ctx.fillText('剧情模式 · 选关', VIEW_W / 2, 62);
+    ctx.font = '12px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.gray;
+    ctx.fillText('全部关卡通关已解锁 · 挑一关重打', VIEW_W / 2, 88);
+    for (let i = 0; i < SELECT_BTN.level.length; i++) drawLevelButton(SELECT_BTN.level[i], i);
+    drawMenuButton(SELECT_BTN.fresh, '从头开始', MIAMI.white);
+    drawMenuButton(SELECT_BTN.back, '返回主菜单', MIAMI.gray);
+    ctx.font = '11px "Microsoft YaHei", monospace';
+    ctx.fillStyle = MIAMI.dim;
+    ctx.fillText('ESC 返回主菜单', VIEW_W / 2, 328);
+    ctx.restore();
+    applyCRT(t);
+  }
+
   // 剧情结算按钮区域
   const CLEAR_BTN = {
     next: { x: VIEW_W / 2 - 90, y: 238, w: 180, h: 36 },
@@ -8478,6 +8788,10 @@
     ctx.fillStyle = '#c8c8d0';
     ctx.fillText('击杀 ' + (G.storyKills || 0) + ' · 最佳连击 x' + (G.storyComboBest || 0) +
       ' · 受击 ' + (G.storyHits || 0), VIEW_W / 2, 200);
+    // 本关得分 / 最高倍率：剧情分数倍率系统的收尾反馈
+    ctx.font = 'bold 13px Consolas, monospace';
+    ctx.fillStyle = MIAMI.red;
+    ctx.fillText('得分 ' + (G.score || 0) + '  ·  最高倍率 x' + (G.storyMultBest || 1).toFixed(1), VIEW_W / 2, 222);
 
     // 按钮
     if (last) {
@@ -8796,6 +9110,8 @@
     if (G.state === 'settings') { drawSettings(); return; }
     if (G.state === 'keys') { drawKeySettings(); return; }
     if (G.state === 'layout') { drawLayout(); return; }
+    if (G.state === 'challengeIntro') { drawChallengeIntro(); return; }
+    if (G.state === 'storySelect') { drawStorySelect(); return; }
     if (G.state === 'title' || !W) { drawTitle(); return; }
     if (G.state === 'storyclear') { drawStoryClear(); return; }
 
@@ -8840,7 +9156,17 @@
     // 先画尸体（最底层活物）。被砍飞胳膊/打掉头的，画"剩下的躯干"而不是整张尸体图，
     // 否则地上躺着一只手、身上还长着一只手（之前就是只把肢体甩出去、尸体原样留着）。
     for (const e of W.enemies) {
-      if (!e.alive || e.downed) drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+      if (!e.alive || e.downed) {
+        const fade = e.corpseFade;
+        if (fade !== undefined && fade < 1) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, fade);
+          drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+          ctx.restore();
+        } else {
+          drawActor(e, ENEMY_KIND[e.kind].tex, false, ENEMY_KIND[e.kind].corpse);
+        }
+      }
     }
     // 拾取物压在尸体上面，避免血包/弹药被尸体盖住捡不到
     drawPickups();
@@ -8893,6 +9219,8 @@
   let last = 0;
   let acc = 0;
   const STEP = 1 / 60;
+  const MENU_STATES = ['title', 'settings', 'keys', 'layout', 'challengeIntro', 'storySelect'];
+  function isMenuState(s) { return MENU_STATES.indexOf(s) >= 0; }
 
   function loop(now) {
     if (!last) last = now;
@@ -8905,9 +9233,9 @@
     // 这一下按键就被吞了，表现就是"按 4 要按好多下才切出护甲板"。
     // 所以只在跑到过 update 的帧末尾清空，没跑到的帧把按键留到下一帧。
     let advanced = false;
-    if (G && (G.state === 'title' || G.state === 'settings' || G.state === 'keys' || G.state === 'layout')) advanced = true;   // 标题/设置/键位/编辑画面不跑逻辑，按键当帧作废
+    if (G && isMenuState(G.state)) advanced = true;   // 菜单画面不跑逻辑，按键当帧作废
 
-    if (G && G.state !== 'title' && G.state !== 'settings' && G.state !== 'keys' && G.state !== 'layout') {
+    if (G && !isMenuState(G.state)) {
       if (G.paused || G.freeze) {
         // 暂停时主循环提前返回，所以这里的按键得自己处理，否则暂停后恢复不了
         if (G.paused) handlePauseKeys();
@@ -8999,6 +9327,7 @@
 
   /** 返回主菜单：清空世界和玩家，state 回 title（标题页纯 UI，不跑游戏逻辑）。 */
   function goTitle() {
+    commitChallengeScore();      // 从暂停主动回标题也算一局结束
     G.state = 'title';
     G.paused = false;
     G.pauseSel = 0;
@@ -9059,6 +9388,15 @@
         pressed = Object.create(null);
         return;
       }
+    }
+    // 挑战启动页 / 选关页：回车或空格直接开打，ESC 回标题；其余按键一律吃掉
+    if (G.state === 'challengeIntro' || G.state === 'storySelect') {
+      if (pressed['escape']) goTitle();
+      else if (pressed['enter'] || pressed[' ']) {
+        startGame({ mode: G.state === 'challengeIntro' ? 'challenge' : 'story' });
+      }
+      pressed = Object.create(null);
+      return;
     }
     // 剧情结算：回车/空格进入下一关（或重开）
     if (G.state === 'storyclear') {
@@ -9229,6 +9567,10 @@
       storyClearT: 0,
       storyStartT: 0,
       goBack: 0,           // 剧情清场后 GO BACK 提示的计时（0 = 未触发）
+      storyMult: 1,        // 剧情分数倍率（挑战模式永远保持 1）
+      storyMultBest: 1,
+      storyMultT: 0,
+      introSave: null,     // 挑战启动页 / 选关页读到的存档快照
       score: 0,
       cash: 0,
       wave: 0,
@@ -9654,6 +9996,7 @@
     swap() { return swapWeapon(); },
     /** 手雷：投掷 / 直接炸开（测试用） */
     grenade() { return throwGrenade(); },
+    grenadeBlocked(world, x, y, z) { return grenadeBlocked(world, x, y, z); },
     explode(x, y, r, dmg) { explodeAt(x, y, r || GRENADE_RADIUS, dmg || GRENADE_DMG, true); },
     ignite(b) { return igniteBarrel(b); },
     /** 直接对敌人造成伤害（测试用） */
@@ -9678,6 +10021,21 @@
     nextStoryLevel,
     retryStoryLevel,
     get storyLevels() { return STORY_LEVELS; },
+    /** 跨局存档：读取 / 写补丁 / 清空（启动页与选关页的数据来源） */
+    get save() { return loadSave(); },
+    setSave(patch) { return writeSave(patch); },
+    clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (err) { /* ignore */ } },
+    openChallengeIntro,
+    openStorySelect,
+    get introSave() { return G ? G.introSave : null; },
+    get introButtons() { return INTRO_BTN; },
+    get selectButtons() { return SELECT_BTN; },
+    get storyMult() { return G ? (G.storyMult || 1) : 1; },
+    get storyMultBest() { return G ? (G.storyMultBest || 1) : 1; },
+    get execSlow() { return { scale: EXEC_SLOW_SCALE, time: EXEC_SLOW_TIME }; },
+    get corpseMax() { return CORPSE_MAX; },
+    updateCorpses,
+    get corpses() { return W ? W.enemies.filter(e => !e.alive && !e.downed) : []; },
     get barrels() { return W ? W.barrels : []; },
     get grenades() { return G ? G.grenades : []; },
     /** 数字键直达手持物：'main' | 'side' | 'medkit' | 'plate' */
