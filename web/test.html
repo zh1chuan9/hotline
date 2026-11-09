@@ -2419,6 +2419,80 @@
     check('切回键鼠清掉未松手的摇杆', H.throwStick.active === false);
     H.setInputMode('touch');
 
+    // ============ 40. 门的三种破坏各有独立音效 ============
+    H.setInputMode('pc');
+    H.startGame({ mode: 'story' });   // 挑战地图没有门，必须用剧情第一关
+    const dw40W = H.world, dw40D = (dw40W.doors || [])[0];
+    const dw40Snd = [];
+    const dw40Orig = H.sfx.play;
+    H.sfx.play = function (n) { dw40Snd.push(n); return dw40Orig.call(this, n); };
+    const dw40Reset = function () {
+      dw40D.open = false; dw40D.broken = false; dw40D.flying = false;
+      dw40W.flyingDoors.length = 0;
+      dw40Snd.length = 0;
+    };
+    const dw40ClearVoices = function () {
+      ['door_open', 'door_slam', 'door_shatter'].forEach(function (k) { H.sfx.voices[k] = []; });
+    };
+    dw40ClearVoices();
+
+    dw40Reset(); H.openDoor(dw40D, dw40D.x, dw40D.y - 30);
+    const dw40A = dw40Snd.slice();
+    check('推门 → 开门音 door_open（' + dw40A.join(',') + '）', dw40A.indexOf('door_open') >= 0);
+
+    dw40Reset(); H.breakDoor(dw40D, { x: dw40D.x, y: dw40D.y - 30 });
+    const dw40B = dw40Snd.slice();
+    check('子弹弹开门 → 急促破门音 door_break（' + dw40B.join(',') + '）',
+      dw40B.indexOf('door_break') >= 0 && dw40B.indexOf('door_open') < 0);
+
+    dw40Reset(); H.shatterDoor(dw40D, { x: dw40D.x, y: dw40D.y });
+    const dw40C = dw40Snd.slice();
+    check('霰弹/近战打碎门 → 碎门音 door_shatter（' + dw40C.join(',') + '）',
+      dw40C.indexOf('door_shatter') >= 0);
+
+    dw40Reset(); H.knockDoor(dw40D, 0, 1);
+    const dw40D2 = dw40Snd.slice();
+    check('身体撞倒门 → 撞门音 door_slam（' + dw40D2.join(',') + '）',
+      dw40D2.indexOf('door_slam') >= 0);
+
+    check('四条门路径各播各的、不串音',
+      dw40A.indexOf('door_slam') < 0 && dw40A.indexOf('door_shatter') < 0 &&
+      dw40B.indexOf('door_shatter') < 0 && dw40B.indexOf('door_slam') < 0 &&
+      dw40C.indexOf('door_open') < 0 && dw40C.indexOf('door_slam') < 0 &&
+      dw40D2.indexOf('door_open') < 0 && dw40D2.indexOf('door_shatter') < 0);
+
+    // 三份 wav 内容确实不同，且都已内嵌（不是同一段采样换个名字）
+    const dw40Wav = window.SFX_SAMPLES || {};
+    check('三份门采样已内嵌且内容互不相同',
+      !!dw40Wav.door_open && !!dw40Wav.door_slam && !!dw40Wav.door_shatter &&
+      dw40Wav.door_open !== dw40Wav.door_slam &&
+      dw40Wav.door_slam !== dw40Wav.door_shatter &&
+      dw40Wav.door_open !== dw40Wav.door_shatter);
+    const dw40Ready = H.sfx.sampleReady('door_open') && H.sfx.sampleReady('door_slam') &&
+      H.sfx.sampleReady('door_shatter');
+    check('三份门采样解码状态正常（state=' + H.sfx.sampleState + '，就绪=' + dw40Ready + '）',
+      H.sfx.sampleState !== 3 && (H.sfx.sampleState !== 2 || dw40Ready));
+
+    // 采样可用时 play 返回 true；采样被摘掉时走合成兜底，不抛错也不静默
+    dw40ClearVoices();
+    const dw40ReadySlam = H.sfx.sampleReady('door_slam');
+    const dw40Hit = dw40Orig.call(H.sfx, 'door_slam');
+    check('采样可用时撞门音真的走采样（就绪=' + dw40ReadySlam + '，返回 ' + dw40Hit + '）',
+      dw40ReadySlam ? dw40Hit === true : !dw40Hit);
+    const dw40Saved = H.sfx.samples;
+    H.sfx.samples = null;
+    let dw40Fb = 'threw';
+    try { dw40Fb = dw40Orig.call(H.sfx, 'door_slam'); } catch (err) { dw40Fb = 'threw'; }
+    H.sfx.samples = dw40Saved;
+    check('采样不可用时降级到合成音且不报错（返回 ' + dw40Fb + '）',
+      dw40Fb !== 'threw' && !dw40Fb);
+
+    // 老的 'door' 名保留为开门别名，漏改的调用点不会变静音
+    dw40Snd.length = 0;
+    dw40Orig.call(H.sfx, 'door');
+    check('老 door 名仍兼容（转到 door_open）', dw40Snd.indexOf('door_open') >= 0);
+    H.sfx.play = dw40Orig;
+
     report();
   }
 

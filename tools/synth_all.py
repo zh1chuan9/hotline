@@ -17,6 +17,9 @@
   melee_swing  挥刀/挥棍破空声
   flesh_hit    打中躯干：低沉湿黏的闷"噗"
   head_hit     打中头部：又脆又硬的"咔"
+  door_open    开门：铰链吱呀 + 门扇到位的轻"咔"（敌人推门 / 玩家开门的常规开门声）
+  door_slam    撞门：身体撞上木板 → 铰链扯脱 → 整扇门拍地的沉"轰"
+  door_shatter 碎门：木板纤维爆裂 + 木屑先后弹开落地
 
 所有音效先在这里生成 wav，再跑 tools/make_sfx.py 内嵌进 web/js/sfx_samples.js。
 
@@ -376,6 +379,92 @@ def make_head_hit(rng=None):
     return out, dur
 
 
+def make_door_open(rng=None):
+    """开门：木质铰链转动的"吱——呀"，末尾门扇靠墙/到位的轻"咔"。
+
+    中频为主、干净短促；刻意不加重低频冲击，好和"撞门""碎门"一听就分开。
+    固定独立随机种子，完全不消耗主链 rng。
+    """
+    r = random.Random(20261111)
+    dur = 0.34
+    n = int(SR * dur)
+    out = [0.0] * n
+    nz = noise(n, r)
+    # 铰链：两段中心频率错开的窄带摩擦，错开起手做出转动时的滑音
+    hinge_a = run_filter(nz, lambda i: biquad_bp(760, 5.0))
+    add_into(out, mul(hinge_a, env(n, 0.035, 0.085, hold=0.02)), 1.35, at=0.01)
+    hinge_b = run_filter(nz, lambda i: biquad_bp(1180, 6.0))
+    add_into(out, mul(hinge_b, env(n, 0.060, 0.075)), 0.85, at=0.05)
+    # 门扇划过空气：只留一点点低频，别让开门声也变成"轰"
+    air = run_filter(nz, lambda i: biquad_lp(320, 0.8))
+    add_into(out, mul(air, env(n, 0.050, 0.100)), 0.10)
+    # 到位的"咔"：短木质撞击 + 一声很轻的木腔共鸣
+    knock = run_filter(noise(int(SR * 0.06), r), lambda i: biquad_bp(620, 1.2))
+    add_into(out, mul(knock, env(len(knock), 0.0008, 0.016)), 1.5, at=0.245)
+    add_into(out, mul(sine(190, 92, 0.07, 0.65), env(int(SR * 0.07), 0.001, 0.030)), 0.55, at=0.245)
+    return out, dur
+
+
+def make_door_slam(rng=None):
+    """撞门：身体把整扇门撞倒、门板拍在地上。
+
+    时间上是三段：撞上木板（闷砰）→ 铰链扯脱（咔）→ 整扇拍地（更沉的轰 + 余震）。
+    低频主导、时长最长，是三种里最有重量的一声。
+    """
+    r = random.Random(20261112)
+    dur = 0.48
+    n = int(SR * dur)
+    out = [0.0] * n
+    nz = noise(n, r)
+    # 1) 肩膀/身体撞上木板
+    add_into(out, mul(sine(125, 46, 0.13, 1.0), env(int(SR * 0.13), 0.002, 0.055)), 1.0)
+    impact = run_filter(nz, lambda i: biquad_lp(240, 0.9))
+    add_into(out, mul(impact, env(n, 0.001, 0.045)), 1.3)
+    # 2) 铰链被扯脱的短"咔"
+    crack = run_filter(noise(int(SR * 0.045), r), lambda i: biquad_bp(1500, 1.5))
+    add_into(out, mul(crack, env(len(crack), 0.0005, 0.012)), 1.1, at=0.035)
+    # 3) 整扇门拍地（稍晚一点点，才听得出"倒下去"而不是"撞一下"）
+    slam = run_filter(nz, lambda i: biquad_lp(150, 0.8))
+    add_into(out, mul(slam, env(int(SR * 0.34), 0.003, 0.110)), 1.5, at=0.115)
+    add_into(out, mul(sine(88, 32, 0.26, 1.0), env(int(SR * 0.26), 0.002, 0.100)), 1.2, at=0.115)
+    # 4) 门板落地后的一小跳余震
+    rattle = run_filter(nz, lambda i: biquad_bp(420, 1.0))
+    add_into(out, mul(rattle, env(int(SR * 0.16), 0.004, 0.055)), 0.35, at=0.29)
+    return out, dur
+
+
+def make_door_shatter(rng=None):
+    """碎门：霰弹/近战把门板打碎成木屑。
+
+    高频瞬态群（纤维同时断）+ 随机撒开的木片弹跳声，跟另外两种的"整块木头"质感区分开。
+    """
+    r = random.Random(20261113)
+    dur = 0.42
+    n = int(SR * dur)
+    out = [0.0] * n
+    nz = noise(n, r)
+    # 爆裂瞬态：高频"咔嚓" + 中频撕裂
+    crack = run_filter(nz, lambda i: biquad_bp(3100, 1.8))
+    add_into(out, mul(crack, env(n, 0.0002, 0.016)), 2.2)
+    splinter = run_filter(nz, lambda i: biquad_bp(1700, 1.2))
+    add_into(out, mul(splinter, env(n, 0.0008, 0.055)), 1.3)
+    # 一点中低频木腔，免得只剩刺耳的高频
+    body = run_filter(nz, lambda i: biquad_lp(520, 0.9))
+    add_into(out, mul(body, env(n, 0.001, 0.045)), 0.9)
+    add_into(out, mul(sine(260, 110, 0.09, 0.55), env(int(SR * 0.09), 0.001, 0.030)), 0.9)
+    # 9 片木屑先后弹开/落地：短促的高频小脉冲随机撒在前 0.26s
+    for k in range(9):
+        at = 0.025 + r.uniform(0.0, 0.24)
+        ln = int(SR * r.uniform(0.010, 0.026))
+        freq = r.uniform(1800, 4200)
+        chip = run_filter(noise(ln, r), lambda i: biquad_bp(freq, 2.0))
+        add_into(out, mul(chip, env(ln, 0.0003, 0.0055)), r.uniform(0.35, 0.80), at=at)
+    # 细碎尾巴
+    tail = run_filter(nz, lambda i: biquad_bp(2100, 1.0))
+    add_into(out, mul(tail, env(int(SR * 0.20), 0.006, 0.075)), 0.28, at=0.20)
+    return out, dur
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     only = None
@@ -397,6 +486,10 @@ def main(argv=None):
         # 新增的挂在最后，且用独立 rng —— 不影响上面这些的随机序列
         'flesh_hit': make_flesh_hit,
         'head_hit': make_head_hit,
+        # 门的三种破坏：各自固定独立种子，即使全量重跑也不碰主链
+        'door_open': make_door_open,
+        'door_slam': make_door_slam,
+        'door_shatter': make_door_shatter,
     }
     if not os.path.isdir(OUT_DIR):
         os.makedirs(OUT_DIR)

@@ -1533,6 +1533,11 @@
     // 否则默认 0.10s 的淡出会把整声都压掉（长度才 0.14/0.18s）。
     flesh_hit: { trim: 0, len: 0.14, gain: 0.85, maxVoices: 6, fade: 0.035 },
     head_hit:  { trim: 0, len: 0.18, gain: 0.90, maxVoices: 4, fade: 0.045 },
+    // 门的三种破坏：开门（中频铰链吱呀）/ 撞门（低频整扇拍地）/ 碎门（高频木片爆裂）。
+    // 三段都不长，fade 显式调小，别用默认 0.10s 把尾音压掉。
+    door_open:    { trim: 0, len: 0.34, gain: 0.90, maxVoices: 3, fade: 0.045 },
+    door_slam:    { trim: 0, len: 0.48, gain: 1.00, maxVoices: 2, fade: 0.060 },
+    door_shatter: { trim: 0, len: 0.42, gain: 0.95, maxVoices: 3, fade: 0.055 },
   };
   const Sfx = {
     ac: null,
@@ -1755,7 +1760,24 @@
         case 'shellout': this.noise(0.05, 1200, 2.6, 0.06, 0.04); this.tone(620, 480, 0.03, 0.04, 'triangle'); break;
         case 'pickup': this.tone(660, 990, 0.07, 0.10, 'triangle'); break;
         case 'throw': this.noise(0.18, 1400, 2.0, 0.12, 0.2); break;
-        case 'door': this.noise(0.22, 380, 3.0, 0.18, 0.2); this.tone(220, 180, 0.16, 0.06, 'triangle'); break;
+        // 门的三种破坏各有独立音色（tools/synth_all.py 合成的 wav，解码没就绪走下面的合成兜底）。
+        // 开门：中频铰链吱呀、峰值在末尾"咔"；撞门：低频整扇拍地；碎门：高频木片爆裂。
+        case 'door_open':
+          if (this.sample('door_open', 0.92 + Math.random() * 0.12, 0.97 + Math.random() * 0.06)) return true;
+          this.noise(0.20, 900, 3.0, 0.10, 0.12); this.tone(190, 95, 0.06, 0.07, 'triangle'); break;
+        // 子弹把门弹开：仍是"开门"，但比敌人手推更急、更冲，另补一层木板受击的瞬态
+        case 'door_break':
+          this.noise(0.035, 1500, 1.4, 0.12, 0.02);
+          if (this.sample('door_open', 1.0, 1.12)) return true;
+          this.noise(0.13, 620, 1.6, 0.20, 0.08); this.tone(170, 80, 0.09, 0.10, 'triangle'); break;
+        case 'door_slam':
+          if (this.sample('door_slam', 1.0, 1.0)) return true;
+          this.noise(0.30, 170, 0.8, 0.34, 0.16); this.tone(105, 38, 0.24, 0.24, 'sine'); break;
+        case 'door_shatter':
+          if (this.sample('door_shatter', 0.96 + Math.random() * 0.08, 0.98 + Math.random() * 0.04)) return true;
+          this.noise(0.05, 2800, 2.0, 0.24, 0.02); this.noise(0.26, 1500, 1.2, 0.16, 0.14); break;
+        // 老的 'door' 保留为开门别名，防止漏改的调用点变成静音
+        case 'door': return this.play('door_open');
         case 'clear': this.tone(523, 784, 0.30, 0.12, 'triangle'); this.tone(659, 988, 0.44, 0.09, 'triangle'); break;
         case 'step': this.noise(0.05, 260, 1.5, 0.05, 0.05); break;
         // 爆炸：一团低频轰响 + 一点烧裂声，比枪声长得多才有分量
@@ -2504,7 +2526,7 @@
     d.t = 0;
     d.swing = doorSwing(d, fromX, fromY);
     W._solidDirty = true;
-    Sfx.play('door');
+    Sfx.play('door_open');
   }
 
   /** 门被打碎（近战/霰弹）：整扇门碎成木屑，直接消失，不再挡路。 */
@@ -2514,7 +2536,7 @@
     d.open = true;
     d.t = 0;
     W._solidDirty = true;
-    Sfx.play('door');
+    Sfx.play('door_shatter');
     // 碎门木屑：一大团飞散的浅色木片，比"弹开"的粒子更碎、更多
     const px = hitPos ? hitPos.x : d.x, py = hitPos ? hitPos.y : d.y;
     FX.addParticles(px, py, 18, '#a8a08a', 210, 0.4);
@@ -2558,7 +2580,7 @@
         e.deathVel = { x: nx * 210, y: ny * 210 };
       }
     }
-    Sfx.play('door');
+    Sfx.play('door_slam');
     FX.kick(5, 0.18);
     emitNoise(d.x, d.y, 320);
   }
@@ -2571,7 +2593,7 @@
     d.t = 0;
     d.swing = doorSwing(d, hitPos.x, hitPos.y);
     W._solidDirty = true;
-    Sfx.play('door');
+    Sfx.play('door_break');
     // 门后敌人被惊动：破门那一瞬间，门后房间里的敌人都知道玩家来了
     emitNoise(d.x, d.y, 320);
     // 木屑/碎门粒子
