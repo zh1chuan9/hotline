@@ -689,6 +689,19 @@
     ],
     btnR: 22
   };
+  /**
+   * 某个虚拟动作键在指定游戏模式下是否可见 / 可点。绘制、命中判定、布局编辑器共用这一张表，
+   * 免得出现「画出来了却点不动」或「藏起来了还占着布局位」。
+   * 剧情模式是一击必杀、没有备弹、不掉落道具、身上只有一把枪：
+   *   换弹 r / 换枪 q / 手雷 g / 医疗包 3 / 护甲板 4 按下去都不会有任何反应 → 全部隐藏。
+   *   交互 e（捡枪、终局处决）与扔枪 f（剧情的投掷武器）必须保留。
+   * 挑战模式恒 true —— 可见性和原来逐字一致。
+   */
+  const STORY_TOUCH_KEYS = ['e', 'f'];
+  function touchButtonVisible(key, mode) {
+    if (mode !== 'story') return true;
+    return STORY_TOUCH_KEYS.indexOf(key) >= 0;
+  }
   // 暂停按钮（左上角，菜单态也显示）
   const TOUCH_PAUSE = { x: 30, y: 30, r: 20 };
   // 跳过按钮（整备倒计时期间显示，屏幕中下方）
@@ -713,6 +726,21 @@
   ];
   const LAYOUT_DEFAULTS = LAYOUT_ITEMS.map(it => ({ id: it.id, x: it.ref.x, y: it.ref.y }));
   const LAYOUT_KEY = 'hotline.touchLayout';
+  // 剧情 / 挑战各存一套布局：两模式可见的按键完全不同，共用一份坐标会互相挤位置。
+  // layoutGameMode = 当前编辑 / 正在使用的那套；startGame 会把它同步成 G.mode。
+  let layoutGameMode = 'challenge';
+  function layoutKeyFor(mode) { return LAYOUT_KEY + '.' + mode; }
+  function hudKeyFor(mode) { return HUD_KEY + '.' + mode; }
+  /** 读存档：新模式 key 不存在时回退到旧版唯一的全局 key，老玩家的自定义布局不丢。 */
+  function readSavedJSON(key, legacyKey) {
+    try {
+      const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) { return null; }   // 隐私模式 / 坏数据
+  }
+  function writeSavedJSON(key, data) {
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (err) { /* 忽略 */ }
+  }
 
   // ---- HUD 元素自定义布局（手机模式下可拖动 HUD 元素位置）----
   // 每个 HUD 元素一个锚点（默认位置）+ 可持久化的偏移 dx/dy。绘制时坐标 += 偏移。
@@ -728,26 +756,33 @@
   // 每个 HUD 元素的偏移（运行时读写，persist 时落盘）
   const HUD_OFF = {};
   for (const it of HUD_ITEMS) HUD_OFF[it.id] = { x: 0, y: 0 };
-
-  /** 读取持久化的 HUD 偏移。 */
-  function loadHudLayout() {
-    try {
-      const s = localStorage.getItem(HUD_KEY);
-      if (!s) return;
-      const saved = JSON.parse(s);
-      for (const it of HUD_ITEMS) {
-        const sv = saved[it.id];
-        if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
-          HUD_OFF[it.id].x = sv.x; HUD_OFF[it.id].y = sv.y;
-        }
-      }
-    } catch (err) { /* 忽略损坏数据 */ }
+  // 剧情 HUD 是极简版：只有「右上人数/分数」和「左下武器/子弹」两块。
+  // 分别复用 cash / loadout 两个偏移锚点，两套布局的存储结构因此一致，切换时不会串。
+  const STORY_HUD_ITEMS = [
+    { id: 'cash',    label: '人数', x: VIEW_W - 40, y: 30 },
+    { id: 'loadout', label: '武器', x: 44, y: VIEW_H - 30 }
+  ];
+  function hudItemsForMode(mode) {
+    return mode === 'story' ? STORY_HUD_ITEMS : HUD_ITEMS;
   }
-  /** 持久化 HUD 偏移。 */
+
+  /** 读取当前模式持久化的 HUD 偏移（先清零，避免上一套的偏移串过来）。 */
+  function loadHudLayout() {
+    for (const it of HUD_ITEMS) { HUD_OFF[it.id].x = 0; HUD_OFF[it.id].y = 0; }
+    const saved = readSavedJSON(hudKeyFor(layoutGameMode), HUD_KEY);
+    if (!saved) return;
+    for (const it of HUD_ITEMS) {
+      const sv = saved[it.id];
+      if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
+        HUD_OFF[it.id].x = sv.x; HUD_OFF[it.id].y = sv.y;
+      }
+    }
+  }
+  /** 持久化当前模式的 HUD 偏移。 */
   function saveHudLayout() {
     const out = {};
     for (const it of HUD_ITEMS) out[it.id] = { x: HUD_OFF[it.id].x, y: HUD_OFF[it.id].y };
-    try { localStorage.setItem(HUD_KEY, JSON.stringify(out)); } catch (err) { /* 忽略 */ }
+    writeSavedJSON(hudKeyFor(layoutGameMode), out);
   }
   /** 恢复默认 HUD 偏移（清零）。 */
   function resetHudLayout() {
@@ -756,25 +791,26 @@
   }
 
 
-  /** 读取持久化的自定义布局，覆盖 TOUCH_LAYOUT 里的坐标。 */
+  /** 读取当前模式的自定义布局。先恢复默认，否则没存过的控件会留着上一套的坐标。 */
   function loadTouchLayout() {
-    try {
-      const s = localStorage.getItem(LAYOUT_KEY);
-      if (!s) return;
-      const saved = JSON.parse(s);
-      for (const it of LAYOUT_ITEMS) {
-        const sv = saved[it.id];
-        if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
-          it.ref.x = sv.x; it.ref.y = sv.y;
-        }
+    for (const d of LAYOUT_DEFAULTS) {
+      const it = LAYOUT_ITEMS.find(i => i.id === d.id);
+      if (it) { it.ref.x = d.x; it.ref.y = d.y; }
+    }
+    const saved = readSavedJSON(layoutKeyFor(layoutGameMode), LAYOUT_KEY);
+    if (!saved) return;
+    for (const it of LAYOUT_ITEMS) {
+      const sv = saved[it.id];
+      if (sv && typeof sv.x === 'number' && typeof sv.y === 'number') {
+        it.ref.x = sv.x; it.ref.y = sv.y;
       }
-    } catch (err) { /* 忽略损坏数据 */ }
+    }
   }
-  /** 把当前 TOUCH_LAYOUT 坐标持久化。 */
+  /** 把当前 TOUCH_LAYOUT 坐标持久化到当前模式那套。 */
   function saveTouchLayout() {
     const out = {};
     for (const it of LAYOUT_ITEMS) out[it.id] = { x: it.ref.x, y: it.ref.y };
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(out)); } catch (err) { /* 忽略 */ }
+    writeSavedJSON(layoutKeyFor(layoutGameMode), out);
   }
   /** 恢复默认布局。 */
   function resetTouchLayout() {
@@ -790,24 +826,53 @@
   let layoutDrag = null;
   // layoutMode：编辑界面当前调节对象 'buttons'（按键）| 'ui'（HUD 元素）
   let layoutMode = 'buttons';
-  // 编辑界面按钮区域（屏幕空间）
+  // 编辑界面按钮区域（屏幕空间）：顶部两个切换并排 —— 游戏模式 / 调节对象
   const LAYOUT_BTN = {
-    toggle: { x: VIEW_W / 2 - 120, y: 74, w: 240, h: 32 },
+    mode: { x: VIEW_W / 2 - 120, y: 58, w: 115, h: 32 },
+    toggle: { x: VIEW_W / 2 + 5, y: 58, w: 115, h: 32 },
     reset: { x: VIEW_W / 2 - 160, y: VIEW_H - 44, w: 150, h: 34 },
     done: { x: VIEW_W / 2 + 10, y: VIEW_H - 44, w: 150, h: 34 }
   };
 
-  /** 进入按键自定义编辑界面。 */
+  /** 进入按键自定义编辑界面：默认编辑当前这一局的模式（标题页进设置则是挑战）。 */
   function openTouchLayout() {
     layoutDrag = null;
     layoutMode = 'buttons';
+    const gm = G && G.mode === 'story' ? 'story' : 'challenge';
+    if (gm !== layoutGameMode) {
+      layoutGameMode = gm;
+      loadTouchLayout();
+      loadHudLayout();
+    }
     G.state = 'layout';
+  }
+
+  /** 切换编辑的游戏模式：当前这套先落盘，再载入另一套，拖好的位置不会互相覆盖。 */
+  function switchLayoutMode() {
+    saveTouchLayout();
+    saveHudLayout();
+    layoutGameMode = layoutGameMode === 'story' ? 'challenge' : 'story';
+    loadTouchLayout();
+    loadHudLayout();
+    layoutDrag = null;
+    Sfx.play('hit');
+  }
+
+  /** 编辑界面里某个控件在当前模式下要不要画出来（隐藏的键不该还能拖）。 */
+  function layoutItemVisible(it, mode) {
+    if (it.id === 'skip') return mode !== 'story';   // 跳过只在挑战模式波次整备期出现
+    if (it.ref && it.ref.key) return touchButtonVisible(it.ref.key, mode);
+    return true;
   }
 
   /** 编辑界面：判定点击落在哪个控件/按钮上，处理拖拽开始与按钮点击。 */
   function handleLayoutClick() {
     // 底部按钮优先
     const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    if (hit(LAYOUT_BTN.mode)) {
+      switchLayoutMode();     // 剧情 <-> 挑战，两套布局各自保存
+      return;
+    }
     if (hit(LAYOUT_BTN.toggle)) {
       // 切换调节对象：按键 <-> UI
       layoutMode = layoutMode === 'buttons' ? 'ui' : 'buttons';
@@ -821,7 +886,9 @@
       return;
     }
     if (hit(LAYOUT_BTN.done)) {
-      if (layoutMode === 'ui') saveHudLayout(); else saveTouchLayout();
+      // 两套都落盘：在按键 / UI 之间来回看过之后点完成，别漏存另一边的调整
+      saveTouchLayout();
+      saveHudLayout();
       closeSettings();
       return;
     }
@@ -831,7 +898,7 @@
   /** 只做"命中可拖控件并开始拖拽"（不处理底部按钮），供桌面 mousedown 复用。 */
   function beginLayoutDrag() {
     if (layoutMode === 'ui') {
-      for (const it of HUD_ITEMS) {
+      for (const it of hudItemsForMode(layoutGameMode)) {
         if (Math.hypot(mouse.x - (it.x + HUD_OFF[it.id].x), mouse.y - (it.y + HUD_OFF[it.id].y)) <= 16) {
           layoutDrag = 'hud:' + it.id;
           return;
@@ -839,6 +906,7 @@
       }
     } else {
       for (const it of LAYOUT_ITEMS) {
+        if (!layoutItemVisible(it, layoutGameMode)) continue;   // 该模式隐藏的键不能拖
         const r = it.kind === 'rect' ? Math.max(it.ref.w, it.ref.h) / 2 + 8 : (it.ref.r || TOUCH_LAYOUT.btnR) + 10;
         if (Math.hypot(mouse.x - it.ref.x, mouse.y - it.ref.y) <= r) {
           layoutDrag = it.id;
@@ -854,7 +922,7 @@
     const m = 8; // 边距
     if (layoutDrag.startsWith('hud:')) {
       const id = layoutDrag.slice(4);
-      const it = HUD_ITEMS.find(i => i.id === id);
+      const it = hudItemsForMode(layoutGameMode).find(i => i.id === id);
       if (!it) return;
       // HUD 偏移 = 当前位置 - 默认锚点
       HUD_OFF[id].x = clamp(mouse.x - it.x, -VIEW_W, VIEW_W);
@@ -870,10 +938,13 @@
   /** 编辑界面：结束拖拽。 */
   function handleLayoutUp() { layoutDrag = null; }
 
-  /** UI 调节模式下：用一份演示数据渲染真实 HUD 原样，让用户看清元素本来长什么样。 */
+  /** UI 调节模式下：按当前选的游戏模式，用演示数据渲染真实 HUD 原样。 */
   function drawDemoHUD() {
     // 备份并临时替换 G 里 drawHUD 依赖的字段，渲染完再恢复，不污染真实游戏状态。
-    const saved = { player: G.player, wave: G.wave, cash: G.cash, combo: G.combo, comboTimer: G.comboTimer, state: G.state, W: W };
+    const saved = {
+      player: G.player, wave: G.wave, cash: G.cash, combo: G.combo, comboTimer: G.comboTimer,
+      state: G.state, W: W, mode: G.mode, score: G.score
+    };
     // 演示玩家：有血有甲、手上拿枪有弹药、背包有消耗品，让血条/装备栏/换弹提示都画得出来。
     G.player = makePlayer(VIEW_W / 2, VIEW_H / 2);
     G.player.weapon = 'w_smg';
@@ -884,12 +955,15 @@
     G.player.side = { weapon: 'w_pistol', ammo: 8, reserve: 32 };
     G.wave = 3;
     G.cash = 1750;
+    G.score = 12340;
     G.combo = 5; G.comboTimer = 1;
     G.state = 'play';             // 让 drawReloadHint 的换弹提示能显示
-    if (!W) W = { cleared: false };   // 防止 drawHUD 里 W.cleared 对 null 取值报错
+    G.mode = layoutGameMode;      // 剧情模式渲染极简 HUD，挑战模式渲染完整 HUD
+    if (!W || !W.enemies) W = { cleared: false, enemies: [{ alive: true }, { alive: true }] };
     drawHUD();
     W = saved.W;
     G.state = saved.state;
+    G.mode = saved.mode; G.score = saved.score;
     G.player = saved.player;
     G.wave = saved.wave; G.cash = saved.cash;
     G.combo = saved.combo; G.comboTimer = saved.comboTimer;
@@ -901,32 +975,36 @@
     ctx.fillStyle = 'rgba(6,6,8,0.92)';
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.textAlign = 'center';
+    const isStory = layoutGameMode === 'story';
     ctx.font = 'bold 20px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#f2f2f4';
-    ctx.fillText(layoutMode === 'ui' ? '自定义 HUD 位置' : '自定义按键位置', VIEW_W / 2, 40);
+    ctx.fillText('自定义 ' + (layoutMode === 'ui' ? 'HUD' : '按键') + ' 位置 · ' + (isStory ? '剧情模式' : '挑战模式'), VIEW_W / 2, 40);
     ctx.font = '12px "Microsoft YaHei", monospace';
     ctx.fillStyle = '#9c90a8';
-    ctx.fillText('按住元素拖动到想要的位置 · 完成后点「完成」', VIEW_W / 2, 106);
+    ctx.fillText('按住元素拖动 · 剧情 / 挑战各存一套 · 完成后点「完成」', VIEW_W / 2, 110);
 
-    // 顶部切换按钮
+    // 顶部并排两个切换：游戏模式（剧情/挑战） + 调节对象（按键/UI）
     const hit = (b) => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
-    {
-      const b = LAYOUT_BTN.toggle;
-      const hov = hit(b);
+    for (const spec of [
+      { b: LAYOUT_BTN.mode, label: isStory ? '模式：剧情' : '模式：挑战', color: isStory ? '#ff8a7a' : '#f2f2f4' },
+      { b: LAYOUT_BTN.toggle, label: layoutMode === 'ui' ? '对象：UI' : '对象：按键', color: '#c8c8d0' }
+    ]) {
+      const b = spec.b, hov = hit(b);
       ctx.fillStyle = hov ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = hov ? '#c8c8d0' : 'rgba(255,255,255,0.25)';
+      ctx.strokeStyle = hov ? (b === LAYOUT_BTN.mode ? '#e02929' : '#c8c8d0') : 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1.5;
       if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); }
       else { ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); }
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle = hov ? '#fff' : '#c8c8d0';
-      ctx.font = 'bold 14px "Microsoft YaHei", monospace';
-      ctx.fillText('当前：' + (layoutMode === 'ui' ? '调节 UI（点击切换按键）' : '调节按键（点击切换 UI）'), b.x + b.w / 2, b.y + b.h / 2 + 1);
+      ctx.fillStyle = hov ? '#fff' : spec.color;
+      ctx.font = 'bold 13px "Microsoft YaHei", monospace';
+      ctx.fillText(spec.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
 
     if (layoutMode === 'ui') {
       // ---- UI 模式：先渲染真实 HUD 原样（用演示数据），再叠加可拖锚点 ----
       drawDemoHUD();
-      for (const it of HUD_ITEMS) {
+      for (const it of hudItemsForMode(layoutGameMode)) {
         const cx = it.x + HUD_OFF[it.id].x, cy = it.y + HUD_OFF[it.id].y;
         const dragging = layoutDrag === 'hud:' + it.id;
         ctx.globalAlpha = dragging ? 0.95 : 0.55;
@@ -941,8 +1019,9 @@
         ctx.fillText(it.label, cx, cy + 1);
       }
     } else {
-      // ---- 按键模式：绘制每个可拖控件（高亮正在拖拽的那个）----
+      // ---- 按键模式：只画当前游戏模式真正可见的控件（隐藏的键不该还能拖）----
       for (const it of LAYOUT_ITEMS) {
+        if (!layoutItemVisible(it, layoutGameMode)) continue;
         const dragging = layoutDrag === it.id;
         const col = dragging ? '#e02929' : (it.kind === 'stick' ? '#c8c8d0' : '#c8c8d0');
         ctx.globalAlpha = dragging ? 0.95 : 0.55;
@@ -985,6 +1064,7 @@
   /** 判断一个触控点落在哪个控件：'move' | 'aim' | 'fire' | 'btn:r' | 'btn:q' ... | 'pause' | null */
   function classifyTouch(x, y) {
     const L = TOUCH_LAYOUT;
+    const mode = G ? G.mode : 'challenge';
     const near = (c, r) => Math.hypot(x - c.x, y - c.y) <= r;
     // 左摇杆（仅在未激活时，或按距离就近归因）
     if (near(L.moveBase, L.moveBase.r * 1.4)) return 'move';
@@ -994,11 +1074,10 @@
     // 独立瞄准键（按住抬枪），也在右摇杆边缘外
     if (near(L.aimBtn, L.aimBtn.r * 1.2)) return 'aimbtn';
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
-    // 动作按钮
+    // 动作按钮：先按模式过滤隐藏键（剧情只留交互/扔枪），挑战模式沿用原有的扔枪判定
     for (const b of L.buttons) {
-      // 剧情模式没有换弹（没有备弹），挑战模式没有扔枪：不放按了没反应的键
-      if (b.key === 'r' && G.mode === 'story') continue;
-      if (b.key === 'f' && G.mode !== 'story') continue;
+      if (!touchButtonVisible(b.key, mode)) continue;
+      if (b.key === 'f' && mode !== 'story') continue;
       if (near(b, L.btnR * 1.2)) return 'btn:' + b.key;
     }
     if (near(TOUCH_PAUSE, TOUCH_PAUSE.r * 1.4)) return 'pause';
@@ -5415,6 +5494,10 @@
     // opts.mode: 'challenge'（默认，无限波次生存）| 'story'（剧情模式，逐关推进）
     // opts.prep: false 时跳过开局准备期（测试/调试用）
     const mode = (opts && opts.mode) || 'challenge';
+    // 手机触控：开局自动套用这个模式自己的那套虚拟按键 / HUD 布局
+    layoutGameMode = mode;
+    loadTouchLayout();
+    loadHudLayout();
     // 点「剧情模式 / 挑战模式」的那一下左键此刻可能还按着，不清掉进战斗第一帧就打出一枪
     resetFireInput();
     const withPrep = !(opts && opts.prep === false);
@@ -7049,10 +7132,9 @@
       ctx.fillText('瞄准', ab.x, ab.y + 1);
     }
 
-    // ---- 动作按钮 ----
+    // ---- 动作按钮（剧情模式只留 交互 / 扔枪，其余都是按了没反应的死键）----
     for (const b of L.buttons) {
-      // 「换弹」只有挑战模式有（剧情没有备弹）；「扔枪」两种模式都能用
-      if (b.key === 'r' && G.mode === 'story') continue;
+      if (!touchButtonVisible(b.key, G.mode)) continue;
       const act = !!touchPressed[b.key];
       ctx.globalAlpha = act ? 0.55 : 0.30;
       ctx.fillStyle = act ? '#c8c8d0' : '#3a3a40';
@@ -7476,6 +7558,9 @@
     let alive = 0;
     for (const e of W.enemies) if (e.alive) alive++;
 
+    // 右上整组数字跟随 HUD 布局的 cash 锚点（挑战模式同锚点是右上信息块）
+    ctx.save();
+    ctx.translate(HUD_OFF.cash.x, HUD_OFF.cash.y);
     ctx.textAlign = 'right';
     ctx.textBaseline = 'top';
     // 剩余人数（LAST 标签 + 大数字）
@@ -7500,11 +7585,12 @@
     ctx.fillText('' + (G.score || 0), VIEW_W - 9, 57);
     ctx.fillStyle = '#c8c8d0';
     ctx.fillText('' + (G.score || 0), VIEW_W - 10, 56);
+    ctx.restore();
 
     if (!p) return;
-    // 左下：武器剪影 + 弹匣内子弹（近战没子弹，就只画枪）
+    // 左下：武器剪影 + 弹匣内子弹（近战没子弹，就只画枪），跟随 loadout 锚点
     const def = p.weapon ? WEAPONS[p.weapon] : null;
-    const bx = 8, by = VIEW_H - 34;
+    const bx = 8 + HUD_OFF.loadout.x, by = VIEW_H - 34 + HUD_OFF.loadout.y;
     if (def) {
       drawWeaponSprite(def.icon, bx + 28, by - 12, 54, 26, 0.95);
       if (!def.melee) {
@@ -9458,6 +9544,21 @@
     setHudOff(id, x, y) { if (HUD_OFF[id]) { HUD_OFF[id].x = x; HUD_OFF[id].y = y; } },
     get layoutMode() { return layoutMode; },
     openTouchLayout,
+    /** 布局编辑器的模式切换与可见性（测试用） */
+    get layoutGameMode() { return layoutGameMode; },
+    switchLayoutMode,
+    touchButtonVisible,
+    visibleTouchKeys(mode) {
+      return TOUCH_LAYOUT.buttons.filter(b => touchButtonVisible(b.key, mode)).map(b => b.key);
+    },
+    hudItemsForMode(mode) { return hudItemsForMode(mode).map(i => i.id); },
+    layoutItemsForMode(mode) {
+      return LAYOUT_ITEMS.filter(it => layoutItemVisible(it, mode)).map(it => it.id);
+    },
+    layoutItemVisible,
+    get layoutBtn() {
+      return { mode: LAYOUT_BTN.mode, toggle: LAYOUT_BTN.toggle, reset: LAYOUT_BTN.reset, done: LAYOUT_BTN.done };
+    },
     /** 键位设置：动作表 / 当前绑定 / 改绑 / 物理键→逻辑键翻译（测试用） */
     get keyActions() { return KEY_ACTIONS.map(a => ({ id: a.id, label: a.label, def: a.def })); },
     get keyBinds() { return Object.assign({}, keyBind); },

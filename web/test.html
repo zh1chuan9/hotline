@@ -2114,6 +2114,81 @@
     check('挑战·清空后仍走波次整备而非等处决（intermission=' + gCh.intermission.toFixed(1) + '）',
       gCh.intermission > 0);
 
+    // ============ 33. 手机 UI：剧情 / 挑战分开布局 + 剧情隐藏无用按键 ============
+    H.setInputMode('touch');
+    H.startGame();
+    const zmStoryKeys = H.visibleTouchKeys('story');
+    const zmChalKeys = H.visibleTouchKeys('challenge');
+    check('剧情·虚拟按键只留 交互 / 扔枪（' + zmStoryKeys.join(',') + '）',
+      zmStoryKeys.length === 2 && zmStoryKeys.indexOf('e') >= 0 && zmStoryKeys.indexOf('f') >= 0);
+    check('剧情·换弹 / 换枪 / 手雷 / 医疗包 / 护甲板全部隐藏',
+      ['r', 'q', 'g', '3', '4'].every(k => zmStoryKeys.indexOf(k) < 0));
+    check('挑战·虚拟按键仍是原来的 7 个（' + zmChalKeys.length + '）', zmChalKeys.length === 7);
+
+    // 隐藏键不仅不画，也绝不能被点中；保留的两个仍要能点
+    H.startGame({ mode: 'story' });
+    for (const zmK of ['r', 'q', 'g', '3', '4']) {
+      const zmP = H.getLayoutPos(zmK);
+      check('剧情·' + zmK + ' 键位置不再命中 btn:' + zmK, H.classifyTouch(zmP.x, zmP.y) !== 'btn:' + zmK);
+    }
+    for (const zmK of ['e', 'f']) {
+      const zmP = H.getLayoutPos(zmK);
+      check('剧情·' + zmK + ' 键仍然可点', H.classifyTouch(zmP.x, zmP.y) === 'btn:' + zmK);
+    }
+
+    // 编辑器顶部两个切换并排，不重叠
+    const zmB = H.layoutBtn;
+    check('编辑器有独立的「模式」切换按钮', !!zmB.mode);
+    check('模式 / 对象两个切换按钮不重叠', zmB.mode.x + zmB.mode.w <= zmB.toggle.x);
+
+    // 两套布局各自保存、互不串档
+    H.startGame();                       // → 挑战
+    H.setLayoutPos('fire', 111, 122);
+    H.setHudOff('cash', 10, 20);
+    H.switchLayoutMode();                // → 剧情（切换时自动落盘挑战那套）
+    check('编辑器切到剧情模式（' + H.layoutGameMode + '）', H.layoutGameMode === 'story');
+    H.setLayoutPos('fire', 211, 222);
+    H.setHudOff('cash', 30, 40);
+    H.switchLayoutMode();                // → 挑战
+    const zmFC = H.getLayoutPos('fire'), zmHC = H.getHudOff('cash');
+    check('切回挑战恢复挑战那套按键坐标（' + zmFC.x + ',' + zmFC.y + '）', zmFC.x === 111 && zmFC.y === 122);
+    check('切回挑战恢复挑战那套 HUD 偏移（' + zmHC.x + ',' + zmHC.y + '）', zmHC.x === 10 && zmHC.y === 20);
+    H.switchLayoutMode();                // → 剧情
+    const zmFS = H.getLayoutPos('fire'), zmHS = H.getHudOff('cash');
+    check('剧情那套按键坐标独立（' + zmFS.x + ',' + zmFS.y + '）', zmFS.x === 211 && zmFS.y === 222);
+    check('剧情那套 HUD 偏移独立（' + zmHS.x + ',' + zmHS.y + '）', zmHS.x === 30 && zmHS.y === 40);
+
+    // 编辑器只列当前模式真正可见的控件 / HUD 锚点
+    const zmStoryItems = H.layoutItemsForMode('story');
+    const zmChalItems = H.layoutItemsForMode('challenge');
+    check('剧情·编辑器不列隐藏键和跳过键',
+      ['r', 'q', 'g', '3', '4', 'skip'].every(k => zmStoryItems.indexOf(k) < 0));
+    check('剧情·编辑器仍列 交互 / 扔枪', zmStoryItems.indexOf('e') >= 0 && zmStoryItems.indexOf('f') >= 0);
+    check('挑战·编辑器保留全部 13 个控件（' + zmChalItems.length + '）', zmChalItems.length === 13);
+    const zmHudS = H.hudItemsForMode('story'), zmHudC = H.hudItemsForMode('challenge');
+    check('剧情·HUD 只调 人数/分数 与 武器/子弹（' + zmHudS.join(',') + '）',
+      zmHudS.length === 2 && zmHudS.indexOf('cash') >= 0 && zmHudS.indexOf('loadout') >= 0);
+    check('挑战·HUD 仍是 6 个锚点（' + zmHudC.length + '）', zmHudC.length === 6);
+
+    // 开局 / 进编辑器都自动跟随当前游戏模式
+    H.startGame({ mode: 'story' });
+    check('剧情开局自动套用剧情布局（' + H.layoutGameMode + '）', H.layoutGameMode === 'story');
+    H.openTouchLayout();
+    check('从剧情局进编辑器默认编辑剧情（' + H.layoutGameMode + '）',
+      H.layoutGameMode === 'story' && H.g.state === 'layout');
+    H.startGame();
+    check('挑战开局自动套用挑战布局（' + H.layoutGameMode + '）', H.layoutGameMode === 'challenge');
+    H.openTouchLayout();
+    check('从挑战局进编辑器默认编辑挑战（' + H.layoutGameMode + '）',
+      H.layoutGameMode === 'challenge' && H.g.state === 'layout');
+
+    // 收尾：两套布局都恢复默认，别把测试坐标留进 localStorage
+    H.startGame({ mode: 'story' });
+    H.resetTouchLayout(); H.resetHudLayout();
+    H.startGame();
+    H.resetTouchLayout(); H.resetHudLayout();
+    H.setInputMode('pc');
+
     report();
   }
 
