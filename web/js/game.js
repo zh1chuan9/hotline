@@ -662,7 +662,12 @@
     // 独立开火按钮（右摇杆区域左上角）：按住连发
     fireBtnActive: false, fireId: -1,
     // 独立瞄准按钮（按住抬枪 ADS）：按住 = 右键瞄准，松开收回
-    aimBtnActive: false, aimBtnId: -1
+    aimBtnActive: false, aimBtnId: -1,
+    // 丢枪小摇杆：按住「扔枪」键弹出，拖出死区定方向，松手投出
+    throwActive: false, throwId: -1, throwOrigin: null,
+    throwX: 0, throwY: 0,             // 摇杆头偏移（绘制用）
+    throwDirX: 0, throwDirY: 0,       // 归一化投掷方向
+    throwDragged: false               // 当前是否停在死区外
   };
   // 虚拟按钮点击态（本帧刚按下），由按钮 hit 检测填充，注入到 pressed 表
   let touchPressed = Object.create(null);
@@ -677,7 +682,7 @@
     fireBtn: { x: VIEW_W - 176, y: VIEW_H - 150, r: 30 },
     // 独立瞄准键：右摇杆右上（按住抬枪 ADS）
     aimBtn: { x: VIEW_W - 176, y: VIEW_H - 210, r: 30 },
-    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互 / 扔枪（仅剧情）
+    // 动作按钮（右侧竖排）：换弹 / 换枪 / 手雷 / 医疗包 / 护甲板 / 交互 / 扔枪
     buttons: [
       { key: 'r', label: '换弹', x: VIEW_W - 30, y: VIEW_H - 236 },
       { key: 'q', label: '换枪', x: VIEW_W - 30, y: VIEW_H - 198 },
@@ -689,13 +694,29 @@
     ],
     btnR: 22
   };
+
+  // ---- 手机「丢枪」小摇杆 ----
+  // 按住「扔枪」键弹出：拖出死区定方向、松手投出；轻点不拖仍按原逻辑朝准心扔。
+  // 半径比左右大摇杆小；圆心跟随自定义布局，并夹在屏幕内，避免贴边被裁掉。
+  // 半径刻意只比动作按钮（btnR=22）大一点：f 键默认就在 SCORE 数字正下方，
+  // 圈再大就会把分数压住。方向控制不需要大幅度，24px 足够。
+  const THROW_STICK_R = 24;
+  const THROW_STICK_DEAD = 6;
+  function throwStickCenter() {
+    const b = TOUCH_LAYOUT.buttons[6];
+    return {
+      x: clamp(b.x, THROW_STICK_R + 2, VIEW_W - THROW_STICK_R - 2),
+      y: clamp(b.y, THROW_STICK_R + 2, VIEW_H - THROW_STICK_R - 2)
+    };
+  }
+
   /**
    * 某个虚拟动作键在指定游戏模式下是否可见 / 可点。绘制、命中判定、布局编辑器共用这一张表，
    * 免得出现「画出来了却点不动」或「藏起来了还占着布局位」。
    * 剧情模式是一击必杀、没有备弹、不掉落道具、身上只有一把枪：
    *   换弹 r / 换枪 q / 手雷 g / 医疗包 3 / 护甲板 4 按下去都不会有任何反应 → 全部隐藏。
-   *   交互 e（捡枪、终局处决）与扔枪 f（剧情的投掷武器）必须保留。
-   * 挑战模式恒 true —— 可见性和原来逐字一致。
+   *   交互 e（捡枪、终局处决）与扔枪 f（投掷武器 / 手机小摇杆）必须保留。
+   * 挑战模式恒 true —— 可见性和原来逐字一致（f 从「画出来点不动」改成真能用）。
    */
   const STORY_TOUCH_KEYS = ['e', 'f'];
   function touchButtonVisible(key, mode) {
@@ -1074,10 +1095,11 @@
     // 独立瞄准键（按住抬枪），也在右摇杆边缘外
     if (near(L.aimBtn, L.aimBtn.r * 1.2)) return 'aimbtn';
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
-    // 动作按钮：先按模式过滤隐藏键（剧情只留交互/扔枪），挑战模式沿用原有的扔枪判定
+    // 动作按钮：先按模式过滤隐藏键（剧情只留交互/扔枪）。
+    // f 以前在挑战模式被跳过（画得出来点不动），现在两种模式都归为 btn:f，
+    // 由 pointerdown 决定是「轻点直接扔」还是「按住弹小摇杆」。
     for (const b of L.buttons) {
       if (!touchButtonVisible(b.key, mode)) continue;
-      if (b.key === 'f' && mode !== 'story') continue;
       if (near(b, L.btnR * 1.2)) return 'btn:' + b.key;
     }
     if (near(TOUCH_PAUSE, TOUCH_PAUSE.r * 1.4)) return 'pause';
@@ -1092,6 +1114,53 @@
   /** 虚拟按钮 → 键盘按键：只触发"本帧按下"（pressed），按钮都是瞬时动作，不需要按住语义。 */
   function onVirtualKey(key) {
     pressed[key] = true;
+  }
+
+  // ---- 手机「丢枪」小摇杆：按下 / 拖动 / 松手 ----------------------------
+  // 触摸事件与测试辅助共用这三个入口，避免两套逻辑走偏。
+  function resetThrowStick() {
+    touch.throwActive = false; touch.throwId = -1; touch.throwOrigin = null;
+    touch.throwX = 0; touch.throwY = 0;
+    touch.throwDirX = 0; touch.throwDirY = 0;
+    touch.throwDragged = false;
+  }
+  function beginThrowStick(pt, id) {
+    if (touch.throwActive) return false;
+    // 手上没枪就别弹摇杆：拖半天什么都不会发生，看着像坏了
+    if (!G || G.state !== 'play' || G.paused || !G.player || !G.player.weapon) return false;
+    resetThrowStick();
+    touch.throwActive = true; touch.throwId = id;
+    touch.throwOrigin = { x: pt.x, y: pt.y };
+    return true;
+  }
+  function moveThrowStick(pt) {
+    if (!touch.throwActive) return;
+    const c = throwStickCenter();
+    const dx = pt.x - c.x, dy = pt.y - c.y;
+    const len = Math.hypot(dx, dy);
+    touch.throwOrigin = { x: pt.x, y: pt.y };
+    if (len > THROW_STICK_DEAD) {
+      const cl = Math.min(len, THROW_STICK_R);
+      const nx = dx / len, ny = dy / len;
+      touch.throwX = nx * cl; touch.throwY = ny * cl;
+      touch.throwDirX = nx; touch.throwDirY = ny;
+      touch.throwDragged = true;
+    } else {
+      // 拖回死区内 = 取消定向，松手按原来的「朝准心扔」处理
+      touch.throwX = dx; touch.throwY = dy;
+      touch.throwDirX = 0; touch.throwDirY = 0;
+      touch.throwDragged = false;
+    }
+  }
+  function endThrowStick(cancel) {
+    if (!touch.throwActive) return;
+    const dragged = touch.throwDragged;
+    const dx = touch.throwDirX, dy = touch.throwDirY;
+    resetThrowStick();
+    if (cancel || !G || G.state !== 'play' || G.paused) return;
+    // 摇杆只给方向、力度固定（速度仍是 THROW_SPEED）；没拖动就是轻点，朝准心扔
+    if (dragged && (dx || dy)) throwWeapon(dx, dy);
+    else throwWeapon();
   }
 
   /** 每帧把触控摇杆状态折算成 keys / mouse 输入。在 updatePlayer 之前调用。 */
@@ -1211,6 +1280,7 @@
       touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
       touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
       touch.aimBtnActive = false; touch.aimBtnId = -1;
+      resetThrowStick();
       keys['a'] = keys['d'] = keys['w'] = keys['s'] = false;
     }
   }
@@ -1368,8 +1438,14 @@
       skipIntermission();
     } else if (ctl && ctl.startsWith('btn:')) {
       const key = ctl.slice(4);
-      touchPressed[key] = true;
-      onVirtualKey(key);
+      // 扔枪特殊：按住不扔，弹出小摇杆；松手才按拖动方向投出。
+      // 手上没枪时 beginThrowStick 返回 false，仍走原来的瞬时按键（一次空操作）。
+      if (key === 'f' && beginThrowStick(pt, e.pointerId)) {
+        touchPressed['f'] = true;
+      } else {
+        touchPressed[key] = true;
+        onVirtualKey(key);
+      }
     }
   });
 
@@ -1390,6 +1466,8 @@
       touch.moveOrigin = pt;
     } else if (e.pointerId === touch.aimId) {
       touch.aimOrigin = pt;
+    } else if (touch.throwActive && e.pointerId === touch.throwId) {
+      moveThrowStick(pt);
     }
   });
 
@@ -1402,7 +1480,10 @@
     }
     e.preventDefault();
     if (inputMode !== 'touch') return;
-    if (e.pointerId === touch.moveId) {
+    // 丢枪摇杆必须最先判：endThrowStick 会把 throwId 清成 -1
+    if (touch.throwActive && e.pointerId === touch.throwId) {
+      endThrowStick(false);
+    } else if (e.pointerId === touch.moveId) {
       touch.moveActive = false; touch.moveId = -1; touch.moveX = 0; touch.moveY = 0;
     } else if (e.pointerId === touch.aimId) {
       touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
@@ -1422,6 +1503,7 @@
     touch.aimActive = false; touch.aimId = -1; touch.aimX = 0; touch.aimY = 0;
     touch.firing = false; touch.fireBtnActive = false; touch.fireId = -1;
     touch.aimBtnActive = false; touch.aimBtnId = -1;
+    resetThrowStick();              // 系统打断（来电/切后台）：取消投掷，别把枪误扔出去
     touchPressed = Object.create(null);
   });
 
@@ -3271,19 +3353,24 @@
   const THROW_SPEED = 560;
   const THROW_DMG = 55;      // 挑战模式的钝击伤害（剧情模式仍然是一击必杀）
 
-  function throwWeapon() {
+  function throwWeapon(dirX, dirY) {
     const p = G.player;
     if (!p || !p.alive || !W) return false;
     if (!p.weapon) return false;
     if (p.reload > 0) return false;
     const def = WEAPONS[p.weapon];
-    const a = Math.atan2(p.facing.y, p.facing.x);
+    // 手机小摇杆给方向；键盘 F / 轻点按钮不传方向，仍朝当前准心（facing）扔。
+    // 只覆盖方向，力度恒定 THROW_SPEED，摇杆推出多远都不会改变飞行距离。
+    const aimed = typeof dirX === 'number' && typeof dirY === 'number' && (dirX || dirY);
+    const fx = aimed ? dirX : p.facing.x;
+    const fy = aimed ? dirY : p.facing.y;
+    const a = Math.atan2(fy, fx);
     W.thrown.push({
       def: p.weapon,
       ammo: def.melee ? 0 : p.ammo,     // 枪里剩多少子弹就带着飞
       reserve: def.melee ? 0 : (p.reserve || 0),
-      x: p.x + p.facing.x * 10,
-      y: p.y + p.facing.y * 10,
+      x: p.x + fx * 10,
+      y: p.y + fy * 10,
       vx: Math.cos(a) * THROW_SPEED,
       vy: Math.sin(a) * THROW_SPEED,
       rot: a,
@@ -3381,6 +3468,39 @@
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
       ctx.restore();
     }
+  }
+
+  /** 手机丢枪摇杆：世界里画一条投掷轨迹（方向来自小摇杆，力度固定所以长度恒定，
+   *  撞墙/出界就截断，末端小圈就是枪会落地的地方）。松开摇杆立刻消失。 */
+  function drawThrowPreview() {
+    if (inputMode !== 'touch' || !touch.throwActive || !touch.throwDragged) return;
+    const p = G.player;
+    if (!p || !W) return;
+    const dx = touch.throwDirX, dy = touch.throwDirY;
+    if (!dx && !dy) return;
+    // 投掷物匀速飞行、life=1.1s，所以最远就是 THROW_SPEED * 1.1
+    const maxLen = THROW_SPEED * 1.1;
+    let len = 12;
+    while (len < maxLen) {
+      const x = p.x + dx * len, y = p.y + dy * len;
+      if (x < 0 || y < 0 || x > W.pxW || y > W.pxH || pointSolid(W, x, y, 2)) break;
+      len += 8;
+    }
+    const endLen = Math.min(len, maxLen);
+    const ex = p.x + dx * endLen, ey = p.y + dy * endLen;
+    ctx.save();
+    ctx.globalAlpha = 0.70;
+    ctx.strokeStyle = '#ff9c72';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(p.x + dx * 12, p.y + dy * 12);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
   }
 
   function castShot(origin, angle, range, shooter) {
@@ -6121,6 +6241,9 @@
 
   function update(dt) {
     if (!W) return;
+    // 离开战斗态（死亡 / 过关 / 回标题）时收掉还没松手的丢枪摇杆，
+    // 免得下一局开局挂着一个幽灵摇杆。暂停时不收，松手仍可继续投掷。
+    if (touch.throwActive && G.state !== 'play') resetThrowStick();
     // 连击衰减随倍率加快：combo 越高，窗口掉得越快，高倍率更难维持（也更有压迫感）。
     // combo=2 时正常速度，每多 1 连击快 18%，combo=8 时约 2 倍速。
     // 右上角那个进度条显示的"剩余时间/2.5"就会随着倍率增高而回退得更快。
@@ -7307,14 +7430,57 @@
     // ---- 动作按钮（剧情模式只留 交互 / 扔枪，其余都是按了没反应的死键）----
     for (const b of L.buttons) {
       if (!touchButtonVisible(b.key, G.mode)) continue;
-      const act = !!touchPressed[b.key];
+      // 扔枪按住期间摇杆是激活态，按钮要一直亮着，别一帧就灭
+      const act = !!touchPressed[b.key] || (b.key === 'f' && touch.throwActive);
       ctx.globalAlpha = act ? 0.55 : 0.30;
       ctx.fillStyle = act ? '#c8c8d0' : '#3a3a40';
       ctx.beginPath(); ctx.arc(b.x, b.y, L.btnR, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 11px "Microsoft YaHei", monospace';
-      ctx.fillText(b.label, b.x, b.y + 1);
+      // 按住扔枪时标签就地变成操作提示，不用在拥挤的右上角再塞一行字
+      const label = (b.key === 'f' && touch.throwActive)
+        ? (touch.throwDragged ? '松手扔' : '拖方向') : b.label;
+      ctx.fillText(label, b.x, b.y + 1);
+    }
+
+    // ---- 丢枪小摇杆：只有按住「扔枪」键时才出现，松开即消失 ----
+    if (touch.throwActive && G.state === 'play') {
+      const tc = throwStickCenter();
+      ctx.save();
+      // 底盘 + 外圈
+      ctx.globalAlpha = 0.20;
+      ctx.fillStyle = '#e05040';
+      ctx.beginPath(); ctx.arc(tc.x, tc.y, THROW_STICK_R, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.60;
+      ctx.strokeStyle = '#ff9c82';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(tc.x, tc.y, THROW_STICK_R, 0, Math.PI * 2); ctx.stroke();
+      // 死区圈：拖出去才算定向，拖回来就是取消
+      ctx.globalAlpha = 0.35;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(tc.x, tc.y, THROW_STICK_DEAD, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      // 摇杆头：拖出死区后画成指向投掷方向的小三角。
+      // 显示位置乘 0.75 做视觉阻尼，让整个指示都留在外圈内 —— 右上角紧贴 SCORE
+      // 数字，任何向外伸的箭头都会压字；精确方向由世界里的橙色虚线 + 落点圈表达。
+      if (touch.throwDragged) {
+        const hx = tc.x + touch.throwX * 0.75, hy = tc.y + touch.throwY * 0.75;
+        ctx.globalAlpha = 0.92;
+        ctx.fillStyle = '#ffd7c0';
+        ctx.save();
+        ctx.translate(hx, hy);
+        ctx.rotate(Math.atan2(touch.throwDirY, touch.throwDirX));
+        ctx.beginPath();
+        ctx.moveTo(5, 0); ctx.lineTo(-4, -4.5); ctx.lineTo(-4, 4.5);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      // 未拖出死区时不画摇杆头：它会正好落在按钮标签中间，把「拖方向」压掉一个字。
+      // 此时虚线死区圈已经足够表示「这里可以拖」。
+      // 操作提示不另画文字（右上角压 HUD、压墙砖都难读），
+      // 直接让「扔枪」按钮的标签原地变成「拖方向 / 松手扔」，见下面的动作按钮循环。
+      ctx.restore();
     }
 
     // ---- 暂停键（左上角）----
@@ -9179,6 +9345,7 @@
 
     drawGrenades();
     drawThrown();
+    drawThrowPreview();
     drawEffects();
     drawBlasts();
     drawWorldTexts();
@@ -10013,9 +10180,22 @@
     /** 门的四种破坏方式（测试用）：打开 / 打碎 / 撞倒 */
     openDoor, shatterDoor, knockDoor,
     get flyingDoors() { return W ? W.flyingDoors : []; },
-    /** 剧情模式：把手上的枪扔出去（测试用） */
-    throwWeapon() { return throwWeapon(); },
+    /** 把手上的枪扔出去（测试用）；传 dx,dy 则按指定方向扔 */
+    throwWeapon(dx, dy) { return throwWeapon(dx, dy); },
     get thrown() { return W ? W.thrown : []; },
+    /** 手机丢枪小摇杆（测试用）：按住 / 拖动 / 松手（cancel=true 为系统打断） */
+    throwStickDown(x, y) { return beginThrowStick({ x: x, y: y }, 1); },
+    throwStickMove(x, y) { moveThrowStick({ x: x, y: y }); },
+    throwStickUp(cancel) { endThrowStick(!!cancel); },
+    get throwStick() {
+      return {
+        active: touch.throwActive, dragged: touch.throwDragged,
+        dx: touch.throwDirX, dy: touch.throwDirY,
+        x: touch.throwX, y: touch.throwY
+      };
+    },
+    get throwStickBase() { return throwStickCenter(); },
+    get throwStickTuning() { return { r: THROW_STICK_R, dead: THROW_STICK_DEAD }; },
     /** 剧情模式：评分 / 下一关 / 重开（测试用） */
     storyGrade,
     nextStoryLevel,

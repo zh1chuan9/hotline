@@ -2317,6 +2317,108 @@
       H.save.storyAllClear === true && H.g.state === 'title');
     H.clearSave();
 
+    // ============ 39. 手机「丢枪」小摇杆 ============
+    H.setInputMode('touch');
+    H.setFireMode('button');
+    H.startGame({ mode: 'challenge' });
+    const tsG = H.g, tsP = tsG.player, tsW = H.world;
+    tsW.enemies.length = 0;
+    check('39 测试局处于战斗态（state=' + tsG.state + '）', tsG.state === 'play');
+    const tsF = H.getLayoutPos('f');
+    const tsBase = H.throwStickBase;
+    const tsTune = H.throwStickTuning;
+    const tsArm = () => { tsP.weapon = 'pistol'; tsP.ammo = 6; tsP.reload = 0; tsP.side = null; };
+    const tsClear = () => { tsW.thrown.length = 0; };
+
+    // 挑战模式那个「画出来却点不动」的扔枪键：现在两种模式都能命中
+    check('挑战·「扔枪」键可命中（原死键已修）', H.classifyTouch(tsF.x, tsF.y) === 'btn:f');
+
+    // 按住只弹摇杆，不扔枪
+    tsArm(); tsClear();
+    tsP.facing = { x: 1, y: 0 };
+    check('按住「扔枪」弹出小摇杆', H.throwStickDown(tsF.x, tsF.y) === true && H.throwStick.active === true);
+    check('刚按下未拖动 → 不是定向态', H.throwStick.dragged === false);
+    check('按住期间还没把枪扔出去', H.thrown.length === 0);
+
+    // 轻点（按下即松手）= 原逻辑，朝准心方向
+    H.throwStickUp(false);
+    const tsT0 = H.thrown[0];
+    check('轻点松手才扔出（thrown=1）', H.thrown.length === 1);
+    check('轻点朝准心方向扔（vx>0, vy≈0）', !!tsT0 && tsT0.vx > 550 && Math.abs(tsT0.vy) < 1);
+    check('轻点后摇杆收起', H.throwStick.active === false);
+
+    // 拖出死区定方向：准心故意朝右，摇杆往上推 → 必须往上飞
+    tsArm(); tsClear();
+    tsP.facing = { x: 1, y: 0 };
+    H.throwStickDown(tsF.x, tsF.y);
+    H.throwStickMove(tsBase.x, tsBase.y - 25);
+    check('拖出死区 → 定向态且方向朝上', H.throwStick.dragged === true &&
+      Math.abs(H.throwStick.dx) < 0.01 && H.throwStick.dy < -0.99);
+    check('拖动过程中仍没扔', H.thrown.length === 0);
+    H.throwStickUp(false);
+    const tsT1 = H.thrown[0];
+    check('松手按摇杆方向扔，不跟准心', !!tsT1 && tsT1.vy < -550 && Math.abs(tsT1.vx) < 1);
+    check('力度固定：速度仍是 560（' + (tsT1 ? Math.hypot(tsT1.vx, tsT1.vy).toFixed(1) : '-') + '）',
+      !!tsT1 && Math.abs(Math.hypot(tsT1.vx, tsT1.vy) - 560) < 0.01);
+    check('出手位置也跟着摇杆方向偏', !!tsT1 && tsT1.y < tsP.y);
+
+    // 斜 45°：方向必须归一化，速度大小不变
+    tsArm(); tsClear();
+    H.throwStickDown(tsF.x, tsF.y);
+    H.throwStickMove(tsBase.x + 20, tsBase.y + 20);
+    check('斜向拖动方向归一化（长度=' + Math.hypot(H.throwStick.dx, H.throwStick.dy).toFixed(3) + '）',
+      Math.abs(Math.hypot(H.throwStick.dx, H.throwStick.dy) - 1) < 0.001);
+    H.throwStickUp(false);
+    const tsT3 = H.thrown[0];
+    check('斜向 45° 扔出（vx≈vy>0）', !!tsT3 && Math.abs(tsT3.vx - tsT3.vy) < 0.01 && tsT3.vx > 300);
+
+    // 拖回死区内 = 取消定向，回落到原来的「朝准心扔」
+    tsArm(); tsClear();
+    tsP.facing = { x: 1, y: 0 };
+    H.throwStickDown(tsF.x, tsF.y);
+    H.throwStickMove(tsBase.x, tsBase.y - 25);
+    H.throwStickMove(tsBase.x + 2, tsBase.y - 2);
+    check('拖回死区内取消定向', H.throwStick.dragged === false);
+    H.throwStickUp(false);
+    const tsT2 = H.thrown[0];
+    check('取消定向后仍按准心方向扔', !!tsT2 && tsT2.vx > 550);
+
+    // 系统打断（来电 / 切后台 / pointercancel）不能把枪误扔出去
+    tsArm(); tsClear();
+    H.throwStickDown(tsF.x, tsF.y);
+    H.throwStickMove(tsBase.x + 24, tsBase.y);
+    H.throwStickUp(true);
+    check('系统打断不会把枪扔出去', H.thrown.length === 0 && H.throwStick.active === false);
+
+    // 摇杆头夹在外圈半径内；空手不弹摇杆
+    tsArm();
+    H.throwStickDown(tsF.x, tsF.y);
+    H.throwStickMove(tsBase.x + 80, tsBase.y);
+    check('摇杆头被夹在外圈半径内（x=' + H.throwStick.x.toFixed(1) + '，r=' + tsTune.r + '）',
+      Math.abs(H.throwStick.x) <= tsTune.r + 0.001);
+    H.throwStickUp(true);
+    tsP.weapon = null; tsP.side = null;
+    check('空手按住不弹摇杆', H.throwStickDown(tsF.x, tsF.y) === false && H.throwStick.active === false);
+
+    // 剧情模式同样可用（两套布局各自存坐标，重新读一次 f）
+    H.startGame({ mode: 'story' });
+    const tsP2 = H.g.player, tsF2 = H.getLayoutPos('f'), tsBase2 = H.throwStickBase;
+    tsP2.weapon = 'pistol'; tsP2.ammo = 6; tsP2.facing = { x: 1, y: 0 };
+    H.world.thrown.length = 0;
+    check('剧情·「扔枪」键可命中', H.classifyTouch(tsF2.x, tsF2.y) === 'btn:f');
+    check('剧情模式也能弹小摇杆', H.throwStickDown(tsF2.x, tsF2.y) === true);
+    H.throwStickMove(tsBase2.x - 25, tsBase2.y);
+    H.throwStickUp(false);
+    const tsT4 = H.thrown[0];
+    check('剧情模式按摇杆方向往左扔（vx<0）', !!tsT4 && tsT4.vx < -550);
+
+    // 切回电脑键鼠时收掉未松手的摇杆，别把手机状态带进键鼠局
+    tsP2.weapon = 'pistol';
+    H.throwStickDown(tsF2.x, tsF2.y);
+    H.setInputMode('pc');
+    check('切回键鼠清掉未松手的摇杆', H.throwStick.active === false);
+    H.setInputMode('touch');
+
     report();
   }
 
