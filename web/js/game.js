@@ -713,12 +713,14 @@
   /**
    * 某个虚拟动作键在指定游戏模式下是否可见 / 可点。绘制、命中判定、布局编辑器共用这一张表，
    * 免得出现「画出来了却点不动」或「藏起来了还占着布局位」。
-   * 剧情模式是一击必杀、没有备弹、不掉落道具、身上只有一把枪：
-   *   换弹 r / 换枪 q / 手雷 g / 医疗包 3 / 护甲板 4 按下去都不会有任何反应 → 全部隐藏。
-   *   交互 e（捡枪、终局处决）与扔枪 f（投掷武器 / 手机小摇杆）必须保留。
+   * 剧情模式是一击必杀、没有备弹、不掉落消耗品：
+   *   换弹 r / 手雷 g / 医疗包 3 / 护甲板 4 按下去确实没反应 → 隐藏。
+   *   切枪 q 必须保留：swapWeapon() 不分模式，能把当前枪背到 p.side 再按 E 捡另一把，
+   *   凑出主副两把；pickupWeapon() 的剧情分支也明确保护「背上那把」不被顶掉。
+   *   交互 e（捡枪、终局处决）与扔枪 f（投掷武器 / 手机小摇杆）同理保留。
    * 挑战模式恒 true —— 可见性和原来逐字一致（f 从「画出来点不动」改成真能用）。
    */
-  const STORY_TOUCH_KEYS = ['e', 'f'];
+  const STORY_TOUCH_KEYS = ['e', 'f', 'q'];
   function touchButtonVisible(key, mode) {
     if (mode !== 'story') return true;
     return STORY_TOUCH_KEYS.indexOf(key) >= 0;
@@ -1095,7 +1097,7 @@
     // 独立瞄准键（按住抬枪），也在右摇杆边缘外
     if (near(L.aimBtn, L.aimBtn.r * 1.2)) return 'aimbtn';
     if (near(L.aimBase, L.aimBase.r * 1.4)) return 'aim';
-    // 动作按钮：先按模式过滤隐藏键（剧情只留交互/扔枪）。
+    // 动作按钮：先按模式过滤隐藏键（剧情只留交互/切枪/扔枪）。
     // f 以前在挑战模式被跳过（画得出来点不动），现在两种模式都归为 btn:f，
     // 由 pointerdown 决定是「轻点直接扔」还是「按住弹小摇杆」。
     for (const b of L.buttons) {
@@ -7449,7 +7451,7 @@
       ctx.fillText('瞄准', ab.x, ab.y + 1);
     }
 
-    // ---- 动作按钮（剧情模式只留 交互 / 扔枪，其余都是按了没反应的死键）----
+    // ---- 动作按钮（剧情模式只留 交互 / 切枪 / 扔枪，其余都是按了没反应的死键）----
     for (const b of L.buttons) {
       if (!touchButtonVisible(b.key, G.mode)) continue;
       // 扔枪按住期间摇杆是激活态，按钮要一直亮着，别一帧就灭

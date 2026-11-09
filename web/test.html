@@ -2122,22 +2122,36 @@
     H.startGame();
     const zmStoryKeys = H.visibleTouchKeys('story');
     const zmChalKeys = H.visibleTouchKeys('challenge');
-    check('剧情·虚拟按键只留 交互 / 扔枪（' + zmStoryKeys.join(',') + '）',
-      zmStoryKeys.length === 2 && zmStoryKeys.indexOf('e') >= 0 && zmStoryKeys.indexOf('f') >= 0);
-    check('剧情·换弹 / 换枪 / 手雷 / 医疗包 / 护甲板全部隐藏',
-      ['r', 'q', 'g', '3', '4'].every(k => zmStoryKeys.indexOf(k) < 0));
+    check('剧情·虚拟按键留 交互 / 切枪 / 扔枪（' + zmStoryKeys.join(',') + '）',
+      zmStoryKeys.length === 3 && ['e', 'q', 'f'].every(k => zmStoryKeys.indexOf(k) >= 0));
+    check('剧情·换弹 / 手雷 / 医疗包 / 护甲板仍然隐藏',
+      ['r', 'g', '3', '4'].every(k => zmStoryKeys.indexOf(k) < 0));
     check('挑战·虚拟按键仍是原来的 7 个（' + zmChalKeys.length + '）', zmChalKeys.length === 7);
 
-    // 隐藏键不仅不画，也绝不能被点中；保留的两个仍要能点
+    // 隐藏键不仅不画，也绝不能被点中；保留的三个仍要能点
     H.startGame({ mode: 'story' });
-    for (const zmK of ['r', 'q', 'g', '3', '4']) {
+    for (const zmK of ['r', 'g', '3', '4']) {
       const zmP = H.getLayoutPos(zmK);
       check('剧情·' + zmK + ' 键位置不再命中 btn:' + zmK, H.classifyTouch(zmP.x, zmP.y) !== 'btn:' + zmK);
     }
-    for (const zmK of ['e', 'f']) {
+    for (const zmK of ['e', 'q', 'f']) {
       const zmP = H.getLayoutPos(zmK);
       check('剧情·' + zmK + ' 键仍然可点', H.classifyTouch(zmP.x, zmP.y) === 'btn:' + zmK);
     }
+
+    // 切枪在剧情模式确实有反应（不是"画出来点不动"）：Q 走 swapWeapon()，
+    // 手上有枪时把它收进 p.side，再按 E 捡另一把就能凑出主副两把来回切。
+    H.startGame({ mode: 'story', prep: false });
+    const zmQP = H.getLayoutPos('q'), zmQPly = H.g.player;
+    zmQPly.weapon = 'pistol'; zmQPly.ammo = 8; zmQPly.reserve = 0;
+    zmQPly.side = null; zmQPly.swapT = 0; zmQPly.curSlot = 'main';
+    check('剧情·切枪键位置能命中 btn:q', H.classifyTouch(zmQP.x, zmQP.y) === 'btn:q');
+    check('剧情·按 Q 真能切枪（swap 返回 true）', H.swap() === true);
+    check('剧情·切枪后枪进副武器槽、手上空出来（side=' +
+      (zmQPly.side ? zmQPly.side.weapon : 'null') + '）',
+      !!zmQPly.side && !zmQPly.weapon);
+    zmQPly.swapT = 0;   // 换枪动画期间不允许连按，先放行
+    check('剧情·再按 Q 把枪拿回手上', H.swap() === true && !!zmQPly.weapon && !zmQPly.side);
 
     // 编辑器顶部两个切换并排，不重叠
     const zmB = H.layoutBtn;
@@ -2165,8 +2179,9 @@
     const zmStoryItems = H.layoutItemsForMode('story');
     const zmChalItems = H.layoutItemsForMode('challenge');
     check('剧情·编辑器不列隐藏键和跳过键',
-      ['r', 'q', 'g', '3', '4', 'skip'].every(k => zmStoryItems.indexOf(k) < 0));
-    check('剧情·编辑器仍列 交互 / 扔枪', zmStoryItems.indexOf('e') >= 0 && zmStoryItems.indexOf('f') >= 0);
+      ['r', 'g', '3', '4', 'skip'].every(k => zmStoryItems.indexOf(k) < 0));
+    check('剧情·编辑器仍列 交互 / 切枪 / 扔枪',
+      ['e', 'q', 'f'].every(k => zmStoryItems.indexOf(k) >= 0));
     check('挑战·编辑器保留全部 13 个控件（' + zmChalItems.length + '）', zmChalItems.length === 13);
     const zmHudS = H.hudItemsForMode('story'), zmHudC = H.hudItemsForMode('challenge');
     check('剧情·HUD 只调 人数/分数 与 武器/子弹（' + zmHudS.join(',') + '）',
